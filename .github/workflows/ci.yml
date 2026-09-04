@@ -40,6 +40,11 @@ jobs:
         run: npm ci && npm run build:ts
       - name: Install
         run: bun install --frozen-lockfile
+      # config.toml is gitignored (it holds keys), and several tests load it.
+      # The example is the documented starting point and the right CI baseline:
+      # placeholder keys, every optional subsystem off.
+      - name: Configure
+        run: cp config.example.toml config.toml
       - name: Typecheck
         run: bun run typecheck
       - name: Lint and format
