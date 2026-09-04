@@ -19,6 +19,17 @@ updates:
       # tool schema would need porting (701 type errors on a trial bump).
       - dependency-name: zod
         update-types: [version-update:semver-major]
+      # Biome 2 turns on new rules by default: 250 findings, and the automated
+      # fixes are not all safe (one introduced a type error in the credits
+      # code on a trial run). Worth doing as its own reviewed change.
+      - dependency-name: "@biomejs/biome"
+        update-types: [version-update:semver-major]
+      # The MCP SDK 1.30 deprecates the positional tool() overloads and its
+      # zod-3 compatibility types reject the ghost server's schema. The
+      # dependency is pinned to ~1.29.0 until that migration is done
+      # deliberately.
+      - dependency-name: "@modelcontextprotocol/sdk"
+        update-types: [version-update:semver-minor, version-update:semver-major]
 
   - package-ecosystem: npm
     directory: /dashboard/web
