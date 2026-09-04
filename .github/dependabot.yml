@@ -47,6 +47,11 @@ updates:
       # Tailwind 4 replaces the config file with CSS-first configuration.
       - dependency-name: tailwindcss
         update-types: [version-update:semver-major]
+      # React Router 7 changes runtime routing behaviour and nothing here
+      # exercises the dashboard's routes, so a clean build proves too little.
+      # Take it with a smoke test, not on its own.
+      - dependency-name: react-router-dom
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: npm
     directory: /dashboard/user-web
