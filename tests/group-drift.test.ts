@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { GROUP_CONSOLIDATION_PROMPT, CONSOLIDATION_PROMPT } from "../src/persona/consolidate.ts";
+import { CONSOLIDATION_PROMPT, GROUP_CONSOLIDATION_PROMPT } from "../src/persona/consolidate.ts";
 import { renderPrinciples } from "../src/persona/principles.ts";
 
 /**

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { compactConfigFor } from "../src/model/runner.ts";
 import type { Config } from "../src/config/config.ts";
+import { compactConfigFor } from "../src/model/runner.ts";
 
 /**
  * Codex must not inherit Claude's numbers.

@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { z } from "zod";
 import { peekPending } from "../../bridge/session-queue.ts";
 import { markdownToPlaintext, sanitizeOutbound } from "../../channels/sanitize-outbound.ts";
+import { appleMapsLink } from "../../imessage/maps-link.ts";
 import {
   type ResolvedMessage,
   chatRowIdForGuids,
@@ -25,7 +26,6 @@ import { isMirrorSession } from "../../sessions/key.ts";
 import { chatIdFromKey, isGroupSession } from "../../sessions/key.ts";
 import { StateStore } from "../../sessions/store.ts";
 import { assertPathSafe } from "../../util/path-safety.ts";
-import { appleMapsLink } from "../../imessage/maps-link.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
 
@@ -198,12 +198,17 @@ function normalizeReaction(input: string): string {
 const SendLocationInput = z.object({
   name: z.string().optional().describe('Place name — "Sabrina\'s Cafe". Becomes the card title.'),
   address: z.string().optional().describe("Street address. Shown as-is, not searched."),
-  latitude: z.number().optional().describe("Preferred over address when known — cannot geocode wrong."),
+  latitude: z
+    .number()
+    .optional()
+    .describe("Preferred over address when known — cannot geocode wrong."),
   longitude: z.number().optional(),
   note: z
     .string()
     .optional()
-    .describe("Optional context, sent as its own message BEFORE the card so the preview still renders."),
+    .describe(
+      "Optional context, sent as its own message BEFORE the card so the preview still renders.",
+    ),
 });
 
 export function recordToolSend(
@@ -385,7 +390,9 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
       handler: async (args) => {
         if (isMirrorSession(ctx.sessionKey)) {
           return {
-            content: [{ type: "text", text: "send_location is an iMessage action; the mirror has no chat" }],
+            content: [
+              { type: "text", text: "send_location is an iMessage action; the mirror has no chat" },
+            ],
             isError: true,
           };
         }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { personArchivableSections, SECTION_KEEP_RECENT } from "../src/persona/archive.ts";
+import { SECTION_KEEP_RECENT, personArchivableSections } from "../src/persona/archive.ts";
 import { renderPrinciples } from "../src/persona/principles.ts";
 
 /**

@@ -209,7 +209,7 @@ export type ActivityEvent =
     }
   | { kind: "error"; ts: number; tag: string | null; text: string };
 
-type BgJobDto = {
+export type BgJobDto = {
   id: string;
   sessionKey: string;
   label: string;
@@ -307,7 +307,7 @@ export type PoolStatsDto = {
   windowStartMs: number;
 };
 
-type PeopleRunDto = {
+export type PeopleRunDto = {
   id: number;
   sessionKey: string;
   label: string;

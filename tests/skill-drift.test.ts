@@ -35,6 +35,15 @@ const BUILTINS = new Set([
   "toolsearch",
 ]);
 
+/**
+ * vendor/ is gitignored and rebuilt per machine, so it is absent on a fresh
+ * checkout and in CI. Reading it unconditionally threw outside any test,
+ * which made the run exit non-zero while reporting no failures. The two
+ * checks that need those tool names say so and skip instead.
+ */
+const VENDORED_SERVER = join(REPO, "vendor", "radaromega-mcp", "src", "index.ts");
+const HAS_VENDORED = existsSync(VENDORED_SERVER);
+
 function harvestToolNames(): Set<string> {
   const names = new Set<string>();
   const fromSource = (path: string) => {
@@ -52,7 +61,7 @@ function harvestToolNames(): Set<string> {
   };
   walk(join(REPO, "src", "mcp", "tools"));
   walk(join(REPO, "integrations"));
-  fromSource(join(REPO, "vendor", "radaromega-mcp", "src", "index.ts"));
+  if (HAS_VENDORED) fromSource(VENDORED_SERVER);
   return names;
 }
 
@@ -76,25 +85,31 @@ describe("skill drift", () => {
   const tools = harvestToolNames();
   const files = skillFiles();
 
-  test("harvest sanity: a healthy tool count and known anchors present", () => {
-    expect(tools.size).toBeGreaterThan(100);
-    for (const anchor of ["send_message", "generate_audio", "capture_view", "search_history"]) {
-      expect(tools.has(anchor)).toBe(true);
-    }
-  });
-
-  test("every backticked tool call in every SKILL.md resolves to a real tool", () => {
-    const unresolved: string[] = [];
-    for (const f of files) {
-      const body = readFileSync(f, "utf8").replace(/```[\s\S]*?```/g, "");
-      for (const m of body.matchAll(/`([a-z_][a-z0-9_]*)\(/g)) {
-        const name = m[1]!;
-        if (tools.has(name) || BUILTINS.has(name.toLowerCase())) continue;
-        unresolved.push(`${f.slice(REPO.length + 1)} → \`${name}(\``);
+  test.skipIf(!HAS_VENDORED)(
+    "harvest sanity: a healthy tool count and known anchors present",
+    () => {
+      expect(tools.size).toBeGreaterThan(100);
+      for (const anchor of ["send_message", "generate_audio", "capture_view", "search_history"]) {
+        expect(tools.has(anchor)).toBe(true);
       }
-    }
-    expect(unresolved).toEqual([]);
-  });
+    },
+  );
+
+  test.skipIf(!HAS_VENDORED)(
+    "every backticked tool call in every SKILL.md resolves to a real tool",
+    () => {
+      const unresolved: string[] = [];
+      for (const f of files) {
+        const body = readFileSync(f, "utf8").replace(/```[\s\S]*?```/g, "");
+        for (const m of body.matchAll(/`([a-z_][a-z0-9_]*)\(/g)) {
+          const name = m[1]!;
+          if (tools.has(name) || BUILTINS.has(name.toLowerCase())) continue;
+          unresolved.push(`${f.slice(REPO.length + 1)} → \`${name}(\``);
+        }
+      }
+      expect(unresolved).toEqual([]);
+    },
+  );
 
   test("every SKILL.md has frontmatter with a description", () => {
     const bad: string[] = [];

@@ -12,13 +12,25 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../src/config/config.ts";
+import { type Config, loadConfig } from "../src/config/config.ts";
 import { GhostPrefsStore, autoEnrollSessions } from "../src/ghost/prefs.ts";
 import { describeEngagementTrend, parseGhostOutput, runGhostTick } from "../src/ghost/think.ts";
 import { ChatDb } from "../src/imessage/db.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import type { SessionKey } from "../src/sessions/key.ts";
+import { emptyChatDb } from "./helpers/chat-db.ts";
+
+/**
+ * These tests exercise the per-session gates, so the global switch has to be
+ * on regardless of what the machine running them has in config.toml. Reading
+ * the operator's own setting made the active-hours test pass at home and fail
+ * on a fresh checkout, where the example config ships brown_nose off.
+ */
+function ghostConfig(): Config {
+  const config = loadConfig();
+  return { ...config, brown_nose: { ...config.brown_nose, enabled: true } };
+}
 
 const JORDAN: SessionKey = "imessage:dm:+19995550042" as SessionKey;
 
@@ -39,7 +51,7 @@ describe("runGhostTick — gated tests (no Haiku call)", () => {
   test("returns act:false with reason when session has no prefs row", async () => {
     const { prefs, cleanup } = tempStore();
     try {
-      const config = loadConfig();
+      const config = ghostConfig();
       // No ChatDb / ContactBook reads happen — we bail before history fetch.
       const fakeChatDb = {} as unknown as ChatDb;
       const fakeContacts = new ContactBook([], new AddressBook());
@@ -57,7 +69,7 @@ describe("runGhostTick — gated tests (no Haiku call)", () => {
   test("active-hours gate blocks ticks outside the window (no Haiku call)", async () => {
     const { prefs, cleanup } = tempStore();
     try {
-      const config = loadConfig();
+      const config = ghostConfig();
       autoEnrollSessions(prefs, [{ sessionKey: JORDAN, isGroup: false }], {
         dmEnabled: true,
         groupEnabled: false,
@@ -83,7 +95,7 @@ describe("runGhostTick — gated tests (no Haiku call)", () => {
   test("disabled session bails before any other check", async () => {
     const { prefs, cleanup } = tempStore();
     try {
-      const config = loadConfig();
+      const config = ghostConfig();
       autoEnrollSessions(prefs, [{ sessionKey: JORDAN, isGroup: false }], {
         dmEnabled: false, // enrolled disabled
         groupEnabled: false,
@@ -116,14 +128,14 @@ describeMaybe("runGhostTick (live haiku)", () => {
   test("runs a real tick against an enrolled session and parses the decision", async () => {
     const { prefs, cleanup } = tempStore();
     try {
-      const config = loadConfig();
+      const config = ghostConfig();
       autoEnrollSessions(prefs, [{ sessionKey: JORDAN, isGroup: false }], {
         dmEnabled: true,
         groupEnabled: false,
         timezone: "America/New_York",
         weeklyCap: 3,
       });
-      const chatDb = new ChatDb(config.paths.chat_db);
+      const chatDb = new ChatDb(emptyChatDb().path);
       const contacts = new ContactBook(config.contacts, new AddressBook());
       const dec = await runGhostTick(
         { sessionKey: JORDAN, bypassActiveHours: true, bypassBudgets: true },
