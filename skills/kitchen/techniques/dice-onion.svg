@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 640" font-family="Georgia, 'Times New Roman', serif">
+  <rect width="1100" height="640" fill="#faf7f0"/>
+  <!-- panel frames -->
+  <g stroke="#d8d2c4" fill="none">
+    <rect x="20" y="20" width="520" height="290"/>
+    <rect x="560" y="20" width="520" height="290"/>
+    <rect x="20" y="330" width="520" height="290"/>
+    <rect x="560" y="330" width="520" height="290"/>
+  </g>
+
+  <!-- P1: whole onion, halve through root -->
+  <g>
+    <text x="40" y="56" font-size="26" fill="#2b2a26" font-weight="bold">1. Halve it through the root, then peel</text>
+    <!-- onion body -->
+    <ellipse cx="270" cy="185" rx="95" ry="85" fill="#e9d9b8" stroke="#2b2a26" stroke-width="3"/>
+    <!-- root tuft (right side) -->
+    <g stroke="#8a6b3f" stroke-width="3" fill="none">
+      <path d="M363 180 l26 -10"/><path d="M364 188 l28 0"/><path d="M363 196 l26 10"/>
+    </g>
+    <text x="400" y="160" font-size="20" fill="#8a6b3f">root end</text>
+    <text x="400" y="184" font-size="18" fill="#8a6b3f">(keep it on,</text>
+    <text x="400" y="204" font-size="18" fill="#8a6b3f">it holds the</text>
+    <text x="400" y="224" font-size="18" fill="#8a6b3f">onion together)</text>
+    <!-- top sprout -->
+    <path d="M262 102 q8 -18 16 0" fill="none" stroke="#2b2a26" stroke-width="3"/>
+    <!-- cut line pole to pole -->
+    <path d="M175 185 L365 185" stroke="#b5563a" stroke-width="4" stroke-dasharray="12 9"/>
+    <text x="40" y="284" font-size="17" fill="#55524a">One cut top-to-root, lay the halves flat,</text>
+    <text x="40" y="304" font-size="17" fill="#55524a">peel off the papery skin.</text>
+  </g>
+
+  <!-- P2: lengthwise cuts toward root -->
+  <g>
+    <text x="580" y="56" font-size="26" fill="#2b2a26" font-weight="bold">2. Long cuts toward the root</text>
+    <!-- onion half dome, flat side down, root at right -->
+    <path d="M660 250 A150 105 0 0 1 960 250 Z" fill="#e9d9b8" stroke="#2b2a26" stroke-width="3"/>
+    <!-- layer arcs -->
+    <path d="M700 250 A110 78 0 0 1 920 250" fill="none" stroke="#cbb287" stroke-width="2"/>
+    <path d="M740 250 A70 50 0 0 1 880 250" fill="none" stroke="#cbb287" stroke-width="2"/>
+    <!-- root tuft right -->
+    <g stroke="#8a6b3f" stroke-width="3" fill="none">
+      <path d="M958 238 l22 -8"/><path d="M960 248 l24 0"/>
+    </g>
+    <!-- vertical dashed cuts, stopping short of the root side -->
+    <g stroke="#b5563a" stroke-width="3.5" stroke-dasharray="9 7">
+      <path d="M700 250 L700 176"/>
+      <path d="M740 250 L740 158"/>
+      <path d="M780 250 L780 148"/>
+      <path d="M820 250 L820 148"/>
+      <path d="M860 250 L860 158"/>
+      <path d="M900 250 L900 178"/>
+    </g>
+    <text x="580" y="284" font-size="17" fill="#55524a">Long cuts, about finger-width apart.</text>
+    <text x="580" y="304" font-size="17" fill="#55524a">Stop short of the root.</text>
+  </g>
+
+  <!-- P3: crosswise cuts -->
+  <g>
+    <text x="40" y="366" font-size="26" fill="#2b2a26" font-weight="bold">3. Now slice across them</text>
+    <path d="M120 560 A150 105 0 0 1 420 560 Z" fill="#e9d9b8" stroke="#2b2a26" stroke-width="3"/>
+    <!-- previous cuts, faint -->
+    <g stroke="#d9a894" stroke-width="2.5" stroke-dasharray="6 6">
+      <path d="M160 560 L160 486"/><path d="M200 560 L200 468"/><path d="M240 560 L240 458"/>
+      <path d="M280 560 L280 458"/><path d="M320 560 L320 468"/><path d="M360 560 L360 488"/>
+    </g>
+    <!-- crosswise cut with knife arrow -->
+    <path d="M150 470 Q270 430 405 505" fill="none" stroke="#b5563a" stroke-width="4" stroke-dasharray="12 9"/>
+    <path d="M395 498 l18 9 -12 -17" fill="#b5563a"/>
+    <text x="40" y="594" font-size="17" fill="#55524a">Slice straight down across the first cuts.</text>
+    <text x="40" y="614" font-size="17" fill="#55524a">Cubes fall off on their own.</text>
+  </g>
+
+  <!-- P4: result size -->
+  <g>
+    <text x="580" y="366" font-size="26" fill="#2b2a26" font-weight="bold">4. What you want at the end</text>
+    <g fill="#e9d9b8" stroke="#2b2a26" stroke-width="2.5">
+      <rect x="640" y="460" width="34" height="34"/>
+      <rect x="690" y="472" width="34" height="34" transform="rotate(12 707 489)"/>
+      <rect x="742" y="455" width="34" height="34" transform="rotate(-9 759 472)"/>
+      <rect x="796" y="470" width="34" height="34" transform="rotate(20 813 487)"/>
+      <rect x="846" y="452" width="34" height="34" transform="rotate(-15 863 469)"/>
+      <rect x="900" y="468" width="34" height="34" transform="rotate(7 917 485)"/>
+    </g>
+    <!-- size bracket -->
+    <g stroke="#2b2a26" stroke-width="2" fill="none">
+      <path d="M640 530 L640 542 L674 542 L674 530"/>
+    </g>
+    <text x="628" y="568" font-size="20" fill="#2b2a26">about 1/4 inch — "small dice"</text>
+    <text x="580" y="596" font-size="17" fill="#55524a">Uneven is fine. Close in size matters</text>
+    <text x="580" y="616" font-size="17" fill="#55524a">more than perfect squares.</text>
+  </g>
+</svg>

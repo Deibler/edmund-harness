@@ -1,0 +1,62 @@
+# Glossary
+
+Terms as the code uses them. One sentence each.
+
+- **Ack (durable inbound ack)**: a row written to `state.db` before the cursor advances, cleared only when a turn has covered the message, so a crash never loses one.
+- **Archive**: append-only files the size gate moves aged bullets into; indexed for recall, never in the prompt.
+- **Auto-recall**: the search run before each turn that pulls relevant history, notes and at most one skill into the envelope.
+- **Barge-in**: a bare cancel or redirect message that aborts the turn in flight.
+- **Batch**: the messages a session's debounce window collected for one turn.
+- **Bridge**: the `imcore-bridge` dylib inside Messages.app plus the socket the daemon talks to it over.
+- **Brown-nose**: the proactive outreach subsystem and its `[brown_nose]` config section.
+- **Campaign**: an operator-configured access key and context file that admits a stranger as a keyed guest.
+- **Catch-up**: the boot pass that answers the whole backlog with one coalesced turn per conversation before the live watcher starts.
+- **chat_mismatch**: the bridge's pre-send refusal when the resolved chat is not the addressed one; always a true positive.
+- **Coalesce**: re-running a finished turn with its draft plus messages that arrived mid turn, so the reply answers everything.
+- **Cold start**: a turn with no resumable provider thread, seeded from persona, recall and history.
+- **Consolidator**: the pass that derives operating principles from accumulated observations and may rewrite, merge or retire them.
+- **Control socket**: the Unix socket through which MCP servers and other subprocesses ask the daemon to perform Messages operations.
+- **Cursor**: the `chat.db` ROWID high-water mark the watcher has processed.
+- **Debounce**: the per-session idle window that groups rapid messages into one turn.
+- **Domain note**: a subject-level lesson in `persona/domains/`, reached only through recall.
+- **Echo cache**: a short-lived record of just-sent text and GUIDs so outbound never re-enters as inbound.
+- **e: and p: prefixes**: IMCore's type tags on email and phone handles, stripped when computing a session key.
+- **Envelope**: the framed block of header, context, history, recall and messages that the model receives as the user turn.
+- **Errand**: a relay to another person that expects a report back.
+- **Fire**: a proactive decision reaching the main model as a cron row.
+- **Ghost**: the observer agent that decides whether to reach out to someone unprompted.
+- **Guest**: a sender not on the allowlist admitted by campaign key (keyed) or by sharing a group with the bot (vouched), on a reduced tool surface.
+- **Healer**: a structural fix keyed by failure class, run before a single retry.
+- **House key**: the operator's global OpenRouter key, used when a session has no wallet of its own.
+- **Intensity**: the 1 to 10 proactive setting mapping to cooldown, weekly cap and sweep cadence.
+- **Integration**: an optional package under `integrations/` that contributes tools, runtimes or a channel through a manifest, never imported directly by core.
+- **KEEP_QUIET**: the sentinel a model reply carries to say nothing should be sent.
+- **Maintainer**: the small-model pass that appends dated observations to a person or group file after a reply.
+- **Mission**: a recurring job with a brief and a notes file whose routine checks stay silent.
+- **Operator**: the human who runs the daemon, reachable at `alerts.operator_handle`.
+- **Orchestrator**: a named persona with its own session namespace, persona overrides and sandbox.
+- **Outbox**: one undelivered reply per session, drained before any new model call for that session.
+- **Pending queue**: messages parked in `data/pending/` behind a turn in flight.
+- **Persona**: the `persona/` directory: identity, rules, venue behaviour and memory as markdown.
+- **Persona fingerprint**: a hash of the shared persona files; a change forces a fresh worker.
+- **Person file**: `persona/people/<slug>.md`, injected whole into that person's DM turns.
+- **Principle**: an imperative rule with supporting dates in a file's Operating Principles section.
+- **Rebind**: recycling a warm worker because a spawn-time property changed.
+- **Recall**: the local vector and full text index over messages, persona and artifacts.
+- **Recovery turn**: a model invocation over unanswered messages with an honest internal failure note.
+- **Refresh script**: a model-authored deterministic job that runs with no model tokens.
+- **Registry heal**: relaunching Messages.app so IMCore rebuilds its chat registry from disk.
+- **Relay**: cross-session delivery of a message as a one-shot cron into the recipient's session, depth capped at three.
+- **Sandbox**: `sandbox/<slug>/`, a session's working directory and only writable tree.
+- **Self-route poisoning**: IMCore relabelling a chat with the account's own address so sends land in the bot's own thread.
+- **Session**: one conversation's memory unit, keyed by session key, holding the provider thread id.
+- **Session key**: `imessage:dm:<handle>`, `imessage:group:<guid>`, or the `sms:`, `trading:`, `mirror:`, `agent:` and `orch:` equivalents.
+- **Skill**: a markdown document with frontmatter under `skills/` that teaches the model a procedure on demand.
+- **SOUL**: `persona/SOUL.md`, the assistant's evolving character, present in every turn of every conversation.
+- **Tapback**: an iMessage reaction; surfaced to the model, never a turn of its own.
+- **Trigger**: a model-authored probe and predicate the daemon evaluates without the model.
+- **Turn**: one pass from batch to envelope to model to delivery to bookkeeping.
+- **Vouched**: admitted as a guest by sharing a registered group chat with the bot.
+- **Wallet**: a per-person OpenRouter key whose limit tracks what that person paid through Stripe.
+- **Warm pool**: resident Claude Code processes, one per session, that receive turns on stdin.
+- **Watcher**: the loop that drains new `chat.db` rows past the cursor.

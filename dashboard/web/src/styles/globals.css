@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 11 13 16;
+  --fg: 229 231 235;
+  --muted: 148 163 184;
+  --accent: 99 102 241;
+  --border: 38 42 48;
+  --card: 17 20 25;
+  --danger: 248 113 113;
+  --warn: 251 191 36;
+  --ok: 74 222 128;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-feature-settings: "cv11", "ss01", "ss03";
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted) / 0.5);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-state="open"] > .reveal,
+.reveal {
+  animation: fadeIn 120ms ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}

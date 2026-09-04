@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# edmund-harness operator CLI. Routes to cli/main.ts which dispatches into
+# cli/commands/*. Safe to symlink into /opt/homebrew/bin (use `edmund install`).
+set -euo pipefail
+
+# Resolve the real path of this script even when invoked via a symlink.
+# macOS bash 3.x doesn't have `readlink -f`; walk the chain manually.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+REPO_ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+
+exec bun run "$REPO_ROOT/cli/main.ts" "$@"

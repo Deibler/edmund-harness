@@ -1,0 +1,10 @@
+[{"id":"brief","intent":"answer","component":"brief",
+  "props":{"greeting":"Morning, Edmund.","items":[
+    {"time":"7:30","text":"Trash and recycling out — recycling week."},
+    {"time":"9:40","text":"Dentist, Dr. Feldman. Bring the night guard."},
+    {"text":"Pat wants the eligibility numbers before Friday."},
+    {"time":"6:15","text":"Sam's game at Regency. You are driving."},
+    {"text":"Rain most of the afternoon, clearing by seven."}],
+   "closing":"Nothing else is on fire."}},
+ {"id":"draft","intent":"focus","component":"message_draft",
+  "props":{"recipient":"Sam","body":"Running about fifteen minutes behind — start warmups without me and I'll be there before the first period.","confirm":"Say send it"}}]

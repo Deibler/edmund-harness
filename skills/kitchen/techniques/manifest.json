@@ -1,0 +1,10 @@
+{
+  "purpose": "Reusable technique diagram library for recipe pages. Copy the needed SVGs into the artifact's img/ dir and reference them at the step where the technique first appears. Hand-authored line art, drawn to real culinary dimensions (1 in = 120px in cut-sizes.svg). Style: cream #faf7f0 background, ink #2b2a26, accent #b5563a, Georgia labels. New diagrams must match.",
+  "diagrams": [
+    {"file": "dice-onion.svg", "terms": ["dice", "small dice", "chop an onion"], "shows": "4 panels: halve through root and peel, lengthwise cuts stopping at root, crosswise slicing, 1/4in result size"},
+    {"file": "mince-garlic.svg", "terms": ["mince", "smash and peel"], "shows": "3 panels: smash under flat blade to peel, slice thin, rock-chop to 1/16in"},
+    {"file": "cut-sizes.svg", "terms": ["mince", "brunoise", "small dice", "medium dice", "cube", "large dice"], "shows": "to-scale size chart of the five cut words against a 1-inch bar"},
+    {"file": "strip-chicken-thigh.svg", "terms": ["cut the thighs", "across the grain", "strips", "trim the thigh", "chicken thigh"], "shows": "3 panels: open out and trim the fat flap, spot the fibres running end to end, cut across them into 3/4in strips shown to scale"}
+  ],
+  "wanted_next": ["slice-scallions", "julienne", "chiffonade-herbs", "trim-green-beans", "break-down-bell-pepper"]
+}

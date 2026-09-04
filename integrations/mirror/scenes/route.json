@@ -1,0 +1,108 @@
+[
+ {
+  "id": "route",
+  "intent": "answer",
+  "component": "route_map",
+  "props": {
+   "origin": "Home",
+   "destination": "Philadelphia",
+   "distance": "63 mi",
+   "duration": "1 hr 12 min",
+   "detail": "via US-30 and I-76, light traffic",
+   "points": [
+    {
+     "lat": 40.038,
+     "lng": -76.306
+    },
+    {
+     "lat": 40.052,
+     "lng": -76.245
+    },
+    {
+     "lat": 40.07,
+     "lng": -76.16
+    },
+    {
+     "lat": 40.078,
+     "lng": -76.075
+    },
+    {
+     "lat": 40.062,
+     "lng": -75.99
+    },
+    {
+     "lat": 40.045,
+     "lng": -75.905
+    },
+    {
+     "lat": 40.038,
+     "lng": -75.82
+    },
+    {
+     "lat": 40.028,
+     "lng": -75.735
+    },
+    {
+     "lat": 40.01,
+     "lng": -75.65
+    },
+    {
+     "lat": 39.995,
+     "lng": -75.565
+    },
+    {
+     "lat": 39.968,
+     "lng": -75.48
+    },
+    {
+     "lat": 39.952,
+     "lng": -75.395
+    },
+    {
+     "lat": 39.95,
+     "lng": -75.31
+    },
+    {
+     "lat": 39.953,
+     "lng": -75.24
+    },
+    {
+     "lat": 39.952,
+     "lng": -75.163
+    }
+   ]
+  }
+ },
+ {
+  "id": "tab",
+  "intent": "answer",
+  "component": "receipt",
+  "props": {
+   "merchant": "Luca",
+   "date": "Friday",
+   "items": [
+    {
+     "name": "Cacio e pepe",
+     "amount": "24.00"
+    },
+    {
+     "name": "Branzino",
+     "amount": "38.00"
+    },
+    {
+     "name": "Rocket and pecorino",
+     "amount": "14.00"
+    },
+    {
+     "name": "Nebbiolo",
+     "qty": "2 x",
+     "amount": "36.00"
+    }
+   ],
+   "subtotal": "112.00",
+   "tax": "6.72",
+   "tip": "22.40",
+   "total": "141.12"
+  }
+ }
+]

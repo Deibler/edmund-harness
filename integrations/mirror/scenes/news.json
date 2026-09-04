@@ -1,0 +1,6 @@
+[{"id":"news","zone":"bottom_left","lifespan":"session","component":"story_list",
+  "props":{"title":"This morning","stories":[
+    {"headline":"Federal Reserve holds rates steady as inflation cools to 2.4 percent","source":"Reuters","age":"2h"},
+    {"headline":"Lancaster County approves $18M for the Route 30 interchange rebuild","source":"LNP","age":"4h"},
+    {"headline":"Flyers trade for a second-round pick ahead of Friday's deadline","source":"The Athletic","age":"6h"},
+    {"headline":"NASA delays Artemis IV to 2029 after heat shield testing","source":"Ars Technica","age":"yesterday"}]}}]

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 360" font-family="Georgia, 'Times New Roman', serif">
+  <rect width="1100" height="360" fill="#faf7f0"/>
+  <text x="40" y="52" font-size="26" fill="#2b2a26" font-weight="bold">Cutting words, actual sizes</text>
+  <text x="40" y="80" font-size="18" fill="#55524a">Squares below are drawn to scale against the 1-inch bar. When a recipe says a word, this is the size it means.</text>
+
+  <!-- 1 inch scale bar: 1 inch = 120px -->
+  <g stroke="#2b2a26" stroke-width="2">
+    <line x1="880" y1="60" x2="1000" y2="60"/>
+    <line x1="880" y1="52" x2="880" y2="68"/>
+    <line x1="1000" y1="52" x2="1000" y2="68"/>
+  </g>
+  <text x="915" y="48" font-size="18" fill="#2b2a26">1 inch</text>
+
+  <!-- baseline at y=250; squares sit on it. scale: 1in = 120px -->
+  <!-- mince 1/16" = 7.5px -->
+  <g fill="#e9d9b8" stroke="#2b2a26" stroke-width="1.5">
+    <rect x="96" y="242.5" width="7.5" height="7.5"/>
+    <rect x="107" y="244" width="7.5" height="7.5" transform="rotate(15 110 247)"/>
+    <rect x="88" y="246" width="7.5" height="7.5" transform="rotate(-12 91 249)"/>
+  </g>
+  <text x="70" y="285" font-size="21" fill="#2b2a26" font-weight="bold">Mince</text>
+  <text x="60" y="310" font-size="17" fill="#55524a">1/16 in · garlic,</text>
+  <text x="60" y="330" font-size="17" fill="#55524a">herbs, ginger</text>
+
+  <!-- brunoise 1/8" = 15px -->
+  <rect x="280" y="235" width="15" height="15" fill="#e9d9b8" stroke="#2b2a26" stroke-width="1.8"/>
+  <text x="242" y="285" font-size="21" fill="#2b2a26" font-weight="bold">Brunoise</text>
+  <text x="240" y="310" font-size="17" fill="#55524a">1/8 in · fancy-</text>
+  <text x="240" y="330" font-size="17" fill="#55524a">restaurant dice</text>
+
+  <!-- small dice 1/4" = 30px -->
+  <rect x="450" y="220" width="30" height="30" fill="#e9d9b8" stroke="#2b2a26" stroke-width="2"/>
+  <text x="418" y="285" font-size="21" fill="#2b2a26" font-weight="bold">Small dice</text>
+  <text x="412" y="310" font-size="17" fill="#55524a">1/4 in · onions for</text>
+  <text x="412" y="330" font-size="17" fill="#55524a">a sauce, salsa</text>
+
+  <!-- medium dice 1/2" = 60px -->
+  <rect x="630" y="190" width="60" height="60" fill="#e9d9b8" stroke="#2b2a26" stroke-width="2.2"/>
+  <text x="608" y="285" font-size="21" fill="#2b2a26" font-weight="bold">Medium dice</text>
+  <text x="600" y="310" font-size="17" fill="#55524a">1/2 in · "cube the</text>
+  <text x="600" y="330" font-size="17" fill="#55524a">tomato", most veg</text>
+
+  <!-- large dice 3/4" = 90px -->
+  <rect x="850" y="160" width="90" height="90" fill="#e9d9b8" stroke="#2b2a26" stroke-width="2.5"/>
+  <text x="852" y="285" font-size="21" fill="#2b2a26" font-weight="bold">Large dice</text>
+  <text x="842" y="310" font-size="17" fill="#55524a">3/4 in · stew chunks,</text>
+  <text x="842" y="330" font-size="17" fill="#55524a">roasting potatoes</text>
+</svg>

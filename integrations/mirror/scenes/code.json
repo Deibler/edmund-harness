@@ -1,0 +1,16 @@
+[{"id":"diff","intent":"answer","component":"code_diff",
+  "props":{"path":"integrations/mirror/src/protocol.ts","summary":"Weather icons now match a compound that names the glyph",
+   "lines":[
+     {"number":"337","kind":"context","text":"  for (const [needle, icon] of Object.entries(ALIASES)) {"},
+     {"number":"338","kind":"context","text":"    if (key.includes(needle)) return icon;"},
+     {"number":"339","kind":"context","text":"  }"},
+     {"kind":"removed","text":"  return undefined;"},
+     {"number":"340","kind":"added","text":"  for (const icon of WEATHER_ICONS) {"},
+     {"number":"341","kind":"added","text":"    if (key.includes(icon)) return icon;"},
+     {"number":"342","kind":"added","text":"  }"},
+     {"number":"343","kind":"context","text":"  return undefined;"}],
+   "test":"26 passed, 0 failed","testState":"pass"}},
+ {"id":"place","intent":"answer","component":"place_detail",
+  "props":{"name":"Luca","kind":"Italian · $$","rating":"4.6","ratingCount":"312 reviews",
+   "address":"436 W James St","hours":"Open until 10","phone":"(717) 553-5199",
+   "detail":"The closest of the four, and the only one still seating at nine."}}]

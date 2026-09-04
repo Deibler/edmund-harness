@@ -1,0 +1,60 @@
+name: trading
+display_name: Quant — autonomous trading
+version: 1.0.0
+description: >-
+  Autonomous Robinhood trading sub-persona. Researches, decides, and executes
+  real trades inside deterministic, code-enforced risk limits. Reachable only
+  from its own dedicated session namespace and only by allowlisted handles.
+
+enabled: true
+
+# Trading owns the `trading:` session namespace. Combined with
+# dedicated_session_only below, this is what keeps Robinhood tools out of every
+# ordinary chat: the tools do not exist unless the session key starts `trading:`.
+session_namespace: trading
+
+# Reads [trading] from config.toml (handles, risk limits, MCP url, account).
+config_key: trading
+
+external_deps:
+  - "Robinhood agentic MCP (https://agent.robinhood.com/mcp/trading)"
+
+access:
+  # Only the dedicated trading session. This is the security boundary — real
+  # money is on the other side of these tools.
+  dedicated_session_only: true
+  sessions: [trading]
+  # Handle allowlist is enforced at routing time from [trading].handles in
+  # config.toml (it holds the live numbers, which are not committed). Leaving
+  # this empty means "defer to that list" rather than duplicating secrets here.
+  handles: []
+
+tools:
+  - export_name: tradingTools
+    description: >-
+      Policy read/update, risk-gated propose/execute/confirm, journal, P&L,
+      kill switch, price triggers, and self-scheduling.
+    provides:
+      - get_policy
+      - update_policy
+      - propose_trade
+      - execute_trade
+      - confirm_order
+      - get_journal
+      - get_pnl
+      - set_kill_switch
+      - set_price_trigger
+      - list_price_triggers
+      - cancel_price_trigger
+
+instructions:
+  # The trading persona (identity + operating rules) lives in persona/trading/
+  # and is loaded by the system-prompt builder for trading sessions.
+  skills:
+    - trading-loop
+
+runtime:
+  # Price-trigger watcher. Polls armed triggers; wakes the model only on a real
+  # threshold cross, so an idle watchlist costs zero model tokens.
+  export_name: startTradingRuntime
+  lazy: false

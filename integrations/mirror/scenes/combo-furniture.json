@@ -1,0 +1,14 @@
+[
+ {"id":"lights","intent":"ambient","component":"home_control",
+  "props":{"room":"Downstairs","devices":[
+   {"name":"Kitchen","on":true,"detail":"60%"},
+   {"name":"Living room","on":true},
+   {"name":"Porch","on":false},
+   {"name":"Dining","on":false}]}},
+ {"id":"music","intent":"ambient","component":"now_playing",
+  "props":{"track":"Harvest Moon","artist":"Neil Young","room":"Kitchen","progress":38}},
+ {"id":"trip","intent":"ambient","component":"tracker",
+  "props":{"title":"Boston","label":"Flight 14 Aug","status":"7 days","detail":"BOS 6:40pm"}},
+ {"id":"backup","intent":"ambient","component":"status",
+  "props":{"label":"Backups","detail":"Last run 3:00 am","state":"success"}}
+]

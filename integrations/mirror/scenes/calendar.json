@@ -1,0 +1,19 @@
+[
+  {
+    "id": "calendar",
+    "zone": "lower_third",
+    "lifespan": "session",
+    "component": "calendar",
+    "props": {
+      "month": "2026-08",
+      "marks": [
+        { "day": 7, "label": "Sam's dinner, 7:30" },
+        { "day": 12 },
+        { "day": 14, "label": "Flight to Boston" },
+        { "day": 15 },
+        { "day": 22, "label": "Pat — eligibility review" },
+        { "day": 29 }
+      ]
+    }
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "name": "@edmund-harness/integration-kitchen",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Per-household kitchen ledgers, meal planning, deals and recaps for edmund-harness",
+  "main": "./tools.ts",
+  "exports": { ".": "./tools.ts" }
+}

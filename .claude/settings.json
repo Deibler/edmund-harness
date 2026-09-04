@@ -1,0 +1,29 @@
+{
+  "skills": {
+    "path": "./skills"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run $CLAUDE_PROJECT_DIR/scripts/guard-path.ts"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__edmund-harness__generate_image|mcp__edmund-harness__generate_video|mcp__edmund-harness__generate_audio",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run $CLAUDE_PROJECT_DIR/scripts/post-tool-deliver.ts"
+          }
+        ]
+      }
+    ]
+  }
+}

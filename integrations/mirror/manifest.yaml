@@ -1,0 +1,51 @@
+name: mirror
+display_name: Smart Mirror — Edmund on glass
+version: 1.0.0
+description: >-
+  Voice + display channel running on a Raspberry Pi smart mirror. Wake word,
+  speech in, spoken replies, and a typed component system rendered on the
+  glass. A conversational medium like iMessage, not a tool surface.
+
+enabled: true
+session_namespace: mirror
+config_key: mirror
+
+external_deps:
+  - "Raspberry Pi mirror bridge reachable at [mirror].host:[mirror].port"
+  - "Kokoro-82M TTS + Whisper STT sidecar (scripts/install-kokoro.sh) — falls back to OpenRouter"
+
+access:
+  # The mirror's own tools (render/update/remove content, speak, widget state)
+  # only make sense from the mirror session — a text chat has no glass to draw
+  # on. Dedicated gating keeps ~13 display tools out of every iMessage turn.
+  dedicated_session_only: true
+  sessions: [mirror]
+
+tools:
+  - export_name: mirrorTools
+    description: >-
+      Render/update/remove/list glass content, set page and rotation, reset
+      baseline, overlay, push asset, speak, widget state get/set, and audit.
+    provides:
+      - render_mirror_content
+      - update_mirror_content
+      - remove_mirror_content
+      - list_mirror_content
+      - set_mirror_page
+      - reset_mirror_baseline
+      - speak_on_mirror
+      - mirror_widget_state_get
+      - mirror_widget_state_set
+
+instructions:
+  # Channel guidance (component catalog, zone widths, lifespans) is injected by
+  # mirrorEnvelopeBlock() per turn, since it embeds the LIVE glass inventory.
+  # The venue-level persona layer lives in persona/VENUE_MIRROR.md.
+  envelope_note: ""
+
+runtime:
+  # Channel runtime: WebSocket bridge to the Pi, voice orchestrator, speech
+  # sidecar warm-up, and background-work watch. Requires the host's `channel`
+  # capabilities — see integrations/mirror/index.ts.
+  export_name: startMirrorRuntime
+  lazy: false

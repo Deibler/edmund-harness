@@ -1,0 +1,5 @@
+[{"id":"system:agents","zone":"lower_third","priority":-20,
+  "lifespan":{"mode":"ephemeral","ttl_seconds":300},"component":"agent_activity",
+  "props":{"jobs":[
+    {"task":"pull the CPIHL eligibility numbers for Pat","since":"3 min"},
+    {"task":"check flights to Boston on the 14th","since":"just now"}]}}]

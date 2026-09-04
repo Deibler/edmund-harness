@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.edmund-harness</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__HARNESS_ROOT__/scripts/launchd/run-daemon.sh</string>
+    </array>
+
+    <!-- NOTE: bash wrapper, not `bun` directly. Under launchd, invoking bun
+         directly as the ProgramArguments entrypoint hangs at startup for
+         reasons that aren't obvious (never reaches main.ts, stays at 2.5MB
+         RSS, nothing in stderr). Going through /bin/bash gives bun a normal
+         process environment and it initializes reliably. -->
+
+
+    <key>WorkingDirectory</key>
+    <string>__HARNESS_ROOT__</string>
+
+    <!-- Start on login; relaunch if it exits (crash or shutdown). -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Throttle: don't respawn more than once every 30s. Prevents a tight
+         crash loop from burning CPU / rate-limiting the model provider. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- launchctl-managed logs. The app also writes its own structured log to
+         data/daemon.log; these capture anything printed BEFORE logging init
+         (stderr from bun, pre-log errors, etc.). -->
+    <key>StandardOutPath</key>
+    <string>__HARNESS_ROOT__/data/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HARNESS_ROOT__/data/launchd.err.log</string>
+
+    <!-- PATH needs ~/.local/bin for `claude`, Homebrew for bun/imsg/gifgrep
+         /summarize/magick/rsvg-convert, plus the system dirs. Codex and other
+         npm-global binaries are also resolved from ~/.nvm by the harness.
+         launchd's default PATH is minimal (/usr/bin:/bin). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <!-- Resource caps (optional safety nets). -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>

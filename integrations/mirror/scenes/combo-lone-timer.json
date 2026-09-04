@@ -1,0 +1,4 @@
+[
+ {"id":"pasta","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":1800},"component":"timer",
+  "props":{"label":"Pasta","endsAtMs":1786214000000,"detail":"then rest 10 minutes"}}
+]

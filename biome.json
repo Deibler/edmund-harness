@@ -1,0 +1,42 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "off",
+        "noUnusedTemplateLiteral": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "noControlCharactersInRegex": "off",
+        "noArrayIndexKey": "warn"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "warn"
+      }
+    }
+  },
+  "files": {
+    "include": [
+      "src/**/*.ts",
+      "cli/**/*.ts",
+      "tests/**/*.ts",
+      "scripts/**/*.ts",
+      "integrations/**/*.ts",
+      "dashboard/server/**/*.ts",
+      "dashboard/web/src/**/*.ts",
+      "dashboard/web/src/**/*.tsx",
+      "dashboard/user-web/src/**/*.ts",
+      "dashboard/user-web/src/**/*.tsx"
+    ],
+    "ignore": ["**/node_modules", "**/dist", "data", "sandbox", "vendor", "persona", "**/bun.lock"]
+  }
+}

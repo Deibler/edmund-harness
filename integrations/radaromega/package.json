@@ -1,0 +1,9 @@
+{
+  "name": "@edmund-harness/integration-radaromega",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "RadarOmega weather radar integration for edmund-harness",
+  "main": "./index.ts",
+  "exports": { ".": "./index.ts", "./tools": "./tools.ts" }
+}

@@ -1,0 +1,122 @@
+{
+  "digest": "7261913269baf90a",
+  "version": 2,
+  "zones": [
+    "top_bar",
+    "top_left",
+    "top_center",
+    "top_right",
+    "upper_third",
+    "middle_center",
+    "lower_third",
+    "bottom_left",
+    "bottom_center",
+    "bottom_right",
+    "bottom_bar",
+    "fullscreen_above",
+    "fullscreen_below"
+  ],
+  "components": [
+    "text_block",
+    "list_card",
+    "image_card",
+    "image_gallery",
+    "video",
+    "audio",
+    "link_card",
+    "file_card",
+    "progress",
+    "stats",
+    "table",
+    "agenda",
+    "calendar",
+    "tracker",
+    "recipe",
+    "chart",
+    "menu",
+    "story_list",
+    "weather",
+    "clock",
+    "date",
+    "status",
+    "timer",
+    "place_list",
+    "now_playing",
+    "home_control",
+    "brief",
+    "message_draft",
+    "route_map",
+    "receipt",
+    "agent_activity",
+    "place_detail",
+    "code_diff"
+  ],
+  "presentations": [
+    "widget",
+    "page",
+    "slideshow"
+  ],
+  "lifespans": [
+    "ephemeral",
+    "session",
+    "persistent"
+  ],
+  "overlayPhases": [
+    "idle",
+    "listening",
+    "thinking",
+    "working",
+    "responding",
+    "speaking",
+    "showing"
+  ],
+  "overlayFields": [
+    "phase",
+    "messages",
+    "detail",
+    "agents",
+    "userText",
+    "userFinal",
+    "botText"
+  ],
+  "frameTypes": [
+    "snapshot",
+    "content_upsert",
+    "content_remove",
+    "page_set",
+    "overlay_set",
+    "audio_play",
+    "followup_listen",
+    "audio_resume",
+    "audio_stop",
+    "ping"
+  ],
+  "piEventTypes": [
+    "hello",
+    "ack",
+    "wake",
+    "utterance",
+    "wake_timeout",
+    "followup_timeout",
+    "screen_status",
+    "audio_done",
+    "pong"
+  ],
+  "wakeFields": [
+    "v",
+    "type",
+    "id",
+    "score",
+    "label"
+  ],
+  "audioFormats": [
+    "mp3",
+    "wav",
+    "aac",
+    "ogg"
+  ],
+  "limits": {
+    "maxContentItems": 64,
+    "maxAudioBase64": 12000000
+  }
+}

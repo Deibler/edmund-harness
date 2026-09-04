@@ -1,0 +1,37 @@
+name: radaromega
+display_name: RadarOmega — live weather radar
+version: 1.0.0
+description: >-
+  Drives the RadarOmega desktop app (Electron + Mapbox GL) over the Chrome
+  DevTools Protocol: radar products, model guidance, warnings, lightning,
+  METARs, NHC data, map drawing, and annotated screenshots.
+
+enabled: true
+config_key: radaromega
+
+external_deps:
+  - "/Applications/RadarOmega.app"
+  - "vendor/radaromega-mcp (built: cd vendor/radaromega-mcp && ./node_modules/.bin/tsc)"
+  - "ffmpeg (only for capture_loop animations)"
+
+access:
+  # Weather is general-purpose: any persona may ask. The heavy tool surface is
+  # supplied by the vendored MCP server, which the worker loads separately.
+  sessions: ["*"]
+
+# No `tools:` entry: RadarOmega's ~26 tools come from the vendored stdio MCP
+# server wired in src/claude/mcp-config.ts, not from a factory in this package.
+# The manifest still owns the runtime + docs so the integration is one unit.
+tools: []
+
+instructions:
+  skills:
+    - radaromega
+    - radaromega-pro
+    - radaromega-fastpath
+
+runtime:
+  # Freshness watchdog: relaunches the app after `refresh_hours` of uptime,
+  # deferred while any worker is mid-turn.
+  export_name: startRadarOmegaRuntime
+  lazy: false

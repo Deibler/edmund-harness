@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 340" font-family="Georgia, 'Times New Roman', serif">
+  <rect width="1100" height="340" fill="#faf7f0"/>
+  <g stroke="#d8d2c4" fill="none">
+    <rect x="20" y="20" width="340" height="300"/>
+    <rect x="380" y="20" width="340" height="300"/>
+    <rect x="740" y="20" width="340" height="300"/>
+  </g>
+
+  <!-- P1: trim -->
+  <g>
+    <text x="40" y="56" font-size="24" fill="#2b2a26" font-weight="bold">1. Open it out and trim</text>
+    <!-- thigh, smooth side down, unfolded -->
+    <path d="M95 190 q-8 -34 34 -48 q46 -16 96 -8 q56 9 74 34 q18 25 2 48 q-20 28 -78 32 q-60 4 -98 -18 q-24 -14 -30 -40 Z"
+          fill="#f2ded0" stroke="#2b2a26" stroke-width="3"/>
+    <!-- yellow fat flap along one edge -->
+    <path d="M228 152 q34 -12 62 6 q16 12 8 26 q-30 6 -56 -8 q-16 -10 -14 -24 Z"
+          fill="#f0e2b8" stroke="#b5563a" stroke-width="2.5"/>
+    <!-- silverskin streak -->
+    <path d="M132 214 q40 12 84 6" stroke="#cfc6b4" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <path d="M262 100 L268 134" stroke="#b5563a" stroke-width="4"/>
+    <path d="M259 126 L268 144 L277 126" fill="#b5563a"/>
+    <text x="150" y="90" font-size="18" fill="#b5563a">cut the yellow fat off</text>
+    <text x="40" y="300" font-size="18" fill="#55524a">Lay it flat, smooth side down.</text>
+    <text x="40" y="322" font-size="18" fill="#55524a">Big fat flaps off, marbling stays.</text>
+  </g>
+
+  <!-- P2: find the grain -->
+  <g>
+    <text x="400" y="56" font-size="24" fill="#2b2a26" font-weight="bold">2. Find the grain</text>
+    <path d="M455 190 q-8 -34 34 -48 q46 -16 96 -8 q56 9 74 34 q18 25 2 48 q-20 28 -78 32 q-60 4 -98 -18 q-24 -14 -30 -40 Z"
+          fill="#f2ded0" stroke="#2b2a26" stroke-width="3"/>
+    <!-- muscle fibres running lengthwise -->
+    <g stroke="#c9a894" stroke-width="2.5" fill="none" stroke-linecap="round">
+      <path d="M470 168 q60 -10 130 -4 q40 4 62 12"/>
+      <path d="M462 186 q64 -8 134 -2 q42 4 66 12"/>
+      <path d="M466 204 q62 -6 132 0 q42 4 62 10"/>
+      <path d="M478 222 q58 -4 124 2 q38 4 56 8"/>
+    </g>
+    <path d="M492 264 L628 264" stroke="#b5563a" stroke-width="4"/>
+    <path d="M616 255 L634 264 L616 273" fill="#b5563a"/>
+    <text x="400" y="300" font-size="18" fill="#55524a">The pale lines are the fibres.</text>
+    <text x="400" y="322" font-size="18" fill="#55524a">On a thigh they run end to end.</text>
+  </g>
+
+  <!-- P3: cut across it -->
+  <g>
+    <text x="760" y="56" font-size="24" fill="#2b2a26" font-weight="bold">3. Cut across the grain</text>
+    <path d="M815 190 q-8 -34 34 -48 q46 -16 96 -8 q56 9 74 34 q18 25 2 48 q-20 28 -78 32 q-60 4 -98 -18 q-24 -14 -30 -40 Z"
+          fill="#f2ded0" stroke="#2b2a26" stroke-width="3"/>
+    <!-- cut lines, perpendicular to the fibres -->
+    <g stroke="#b5563a" stroke-width="3" stroke-dasharray="8 6">
+      <path d="M866 141 L860 243"/>
+      <path d="M911 136 L907 249"/>
+      <path d="M956 138 L954 251"/>
+      <path d="M1001 148 L1000 246"/>
+    </g>
+    <!-- 3/4 inch scale, 1 in = 120px -->
+    <g stroke="#2b2a26" stroke-width="2">
+      <path d="M866 268 L956 268"/>
+      <path d="M866 262 L866 274"/>
+      <path d="M956 262 L956 274"/>
+    </g>
+    <text x="964" y="274" font-size="16" fill="#2b2a26">3/4 in</text>
+    <text x="760" y="300" font-size="18" fill="#55524a">Knife across the fibres, never</text>
+    <text x="760" y="322" font-size="18" fill="#55524a">along. Short fibres chew tender.</text>
+  </g>
+</svg>

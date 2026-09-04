@@ -1,0 +1,630 @@
+# Copy to config.toml and fill in.
+
+# Your own iMessage handles (phone numbers + Apple IDs).
+# Inbound messages FROM these are ignored (that's you typing on your own Mac).
+[self]
+handles = ["+15551234567", "you@icloud.com"]
+
+# Contacts allowed to DM the assistant. Use E.164 or Apple ID.
+# If empty, DMs from anyone are accepted (not recommended).
+[allowlist]
+dm = ["+15557654321", "friend@icloud.com"]
+
+
+# Trust decisions, in one place. These defaults are the safe choice for a new
+# install. Loosen them deliberately; each line is a decision other operators
+# may not want to make.
+[security]
+# What the model may touch on this Mac outside its own tools.
+#   "sandboxed"  Claude Code's built in Bash/Read/Write/Edit/Glob/Grep tools
+#                are disallowed for every session (guests already get this);
+#                Codex keeps its sandbox; model authored scripts (trigger
+#                predicates, refresh scripts) are not executed. The MCP tools
+#                (send, remember, search, generate, schedule) still work.
+#   "full"       bypassPermissions for Claude, sandbox and approvals off for
+#                Codex. The model can do anything your user account can.
+model_host_access = "sandboxed"
+# What an allowlisted contact who is not an operator gets.
+#   "contact"    this conversation only: no messaging other people, no contact
+#                list, no cross chat recall, no writes to the global self
+#                memory, no publishing or installing skills.
+#   "operator"   everything.
+contact_tier = "contact"
+# Who counts as the operator. Empty falls back to [alerts].operator_handle.
+operator_handles = []
+# With [allowlist].dm empty, admit everyone who can reach the number? Off means
+# an empty list admits nobody (guest access still applies if enabled).
+open_dm_allowlist = false
+# With [allowlist].groups empty, answer in any group that mentions the bot?
+open_group_allowlist = false
+
+# Group chats the assistant participates in (by chat GUID).
+# In groups, the assistant only responds when @-mentioned or name-prefixed.
+# Leave empty to disable group support.
+groups = []
+
+# Keyed guest access. Off = unknown DM senders are silently dropped (the
+# classic behavior). On = an unknown sender who DMs an active campaign key
+# gets a persistent, capped conversation with the full persona but a reduced
+# tool surface (no memory/history search, person files, cron, agents, skills,
+# filesystem, or integrations); handles that share a registered group chat
+# with the bot are "vouched" and may DM without a key. See
+# docs/design/guest-access-plan.md.
+[guest_access]
+enabled = false
+
+# One campaign per audience: key + context file + limits. The context file
+# is appended to keyed guests' system prompts, so write it for the model.
+# [[guest_campaigns]]
+# key = "opensesame2026"                    # >= 8 chars; matched case-insensitively
+# label = "Example campaign"
+# context = "campaigns/example.md"       # must exist and be readable at boot
+# expires = "2026-11-01"                # optional; past this the key is inert AND replies stop
+# max_spend_usd = 25                    # optional lifetime cap via the spend ledger
+# max_messages_per_day = 40             # optional per-campaign daily cap
+
+# How the assistant is addressed in groups.
+[identity]
+names = ["claude", "edmund-bot"]
+
+# The human operator who runs this assistant. Surfaced in the system prompt
+# (e.g. "an AI that <name> built"). Leave blank to use the generic "your operator".
+[owner]
+name = ""
+
+# Model runtime settings. The [claude] section name is retained for config
+# compatibility, but both Claude Code and Codex CLI consume these values.
+[claude]
+# Default model for chat replies. The model name selects the CLI automatically:
+#   gpt-*, o1-..o9-, chatgpt-*, codex-*  -> Codex CLI
+#   claude-* and existing custom aliases -> Claude Code
+# Switching providers cold-starts a native provider thread and carries recent
+# iMessage history + persona/memory; opaque provider transcript formats never mix.
+# Append "[1m]" for the 1M-context variant, e.g. "claude-opus-4-8[1m]".
+model = "claude-opus-4-8[1m]"
+# Example: model = "gpt-5.6"
+# Seconds before we abort an idle headless model run.
+timeout_seconds = 180
+# Thinking effort: low | medium | high | xhigh | max. Codex maps `max` to
+# its highest supported `xhigh` setting.
+effort = "high"
+# Optional explicit context window passed to Codex. Omit to trust model metadata.
+# context_window_tokens = 272000
+# Detached research/sub-agent model. Uses the same automatic CLI selection.
+agent_model = "claude-sonnet-5"
+# Omit to inherit `effort`.
+# agent_effort = "high"
+
+# Paths.
+[paths]
+chat_db = "~/Library/Messages/chat.db"
+data_dir = "./data"
+
+# API keys for skill tools. Leave blank to disable that tool.
+[keys]
+openai = ""
+gemini = ""
+elevenlabs = ""
+brave = ""     # Brave Search API key — enables web_search tool (https://brave.com/search/api/)
+# For [credits] (per-person generation wallets). All three are required
+# before enabling it; each fails closed on its own when empty.
+openrouter_provisioning = ""   # OpenRouter MANAGEMENT key (they renamed provisioning → management; same page: openrouter.ai/settings/provisioning-keys). Mints/edits keys, cannot run models
+stripe_secret = ""             # sk_live_… or sk_test_… — creates Checkout Sessions (real values go in config.toml, never here)
+stripe_publishable = ""        # pk_… — not used by the hosted checkout; kept for a future embedded form
+stripe_webhook_secret = ""     # whsec_… from the webhook endpoint's settings
+
+# Cloudflare Browser Run — headless Chrome on Cloudflare's global network.
+# Create a token at: https://dash.cloudflare.com/profile/api-tokens with "Browser Rendering - Edit" permission.
+[cloudflare]
+account_id = ""
+api_token  = ""
+
+# Tool defaults.
+[tools]
+image_provider = "openai"        # "openai" | "gemini"
+image_model = "gpt-image-1"      # or "imagen-3.0-generate-002" for gemini
+tts_voice = "nova"                # openai tts voice
+stt_model = "whisper-1"
+
+# RadarOmega desktop MCP integration.
+# 1. Unzip radaromega-mcp.zip to ./vendor/radaromega-mcp.
+# 2. Launch RadarOmega with CDP enabled:
+#    ./vendor/radaromega-mcp/launch.sh 9222
+# 3. Set enabled=true so Edmund gets mcp__radaromega__* tools.
+# Model-authored data triggers: the model arms watch conditions (URL or
+# in-app JS probes + predicates); the daemon evaluates them for free and
+# invokes the model only when one fires.
+[triggers]
+enabled = true
+tick_seconds = 60
+
+[radaromega]
+enabled = false
+package_path = "./vendor/radaromega-mcp"
+cdp_port = 9222
+# Preventative freshness restart: relaunch the app after this many hours of
+# uptime (its model engine wedges if left up too long), only while no worker
+# is mid-turn. 0 disables; the MCP tools still self-heal reactively on use.
+refresh_hours = 6
+
+# Operator dashboard. It is a PIN gated http UI, so it listens on this Mac
+# only by default. Set bind = "0.0.0.0" to reach it from other devices on your
+# LAN, knowingly; put it behind HTTPS (a tunnel or Tailscale) before going
+# further than that.
+[dashboard]
+bind = "127.0.0.1"
+port = 4747
+# external_url = ""   # Public URL if you've fronted the dashboard with a tunnel
+#                     # (cloudflared, ngrok, tailscale funnel). Used by tools that
+#                     # build links for the user's phone, e.g. request_image_annotation.
+#                     # Leave empty to fall back to http://<LAN-IP>:<port> (same-Wi-Fi only).
+
+# Behavior tuning.
+[behavior]
+chunk_chars = 1800
+# Idle window for batching rapid-fire text messages — resets on each new
+# message, so a burst flushes as one turn once the sender pauses. 0 = off.
+debounce_ms = 1500
+# Hard cap on how long a burst can hold the batch open (ms from the first
+# queued message), so a non-stop typer doesn't stall forever. Keep it >=
+# bare_attachment_debounce_ms + a few seconds.
+debounce_max_ms = 10000
+# Window when a message carries an attachment AND its own caption text —
+# short, the message is self-contained.
+attachment_debounce_ms = 600
+# Window for a BARE attachment (photo/file with no text) — longer, because a
+# caption or follow-up question ("here's the thing" -> "what do you think?")
+# almost always lands a beat later, and answering the photo first = two
+# replies to what was meant as one message.
+bare_attachment_debounce_ms = 4000
+# Window for VOICE sessions (the mirror). Deliberately tiny: the mic's VAD has
+# already decided the speaker stopped, so the transcript is a finished thought,
+# not a still-typing burst. Charging it debounce_ms added that much dead air to
+# every spoken turn before the model even started. Non-zero so two utterances
+# landing back-to-back still fold into one turn.
+voice_debounce_ms = 250
+# If a message lands while Claude is mid-turn for that thread, re-run the turn
+# once with the drafted reply + the new message so the model answers everything
+# in one coherent reply (or keeps its draft via KEEP_DRAFT). Off = the new
+# message just becomes the next turn.
+coalesce_pending = true
+reply_threading = true
+history_messages = 20
+history_always = false
+participant_roster = true
+
+# Multi-handle contacts. If the same person reaches you via phone AND email,
+# list both handles here so they share one session.
+# [[contacts]]
+# name = "Alex"
+# handles = ["+15557654321", "alex@icloud.com"]
+
+# Mid-Atlantic fishing data platform. Eligible model sessions get the direct
+# `fishing_query` and `fishing_viz` tools plus the `fishing` skill.
+# Requires ~/fishing-data-platform serving on api_url.
+[fishing]
+# enabled = false
+# api_url = "http://127.0.0.1:8087/api/v1"
+
+# Stuck-session recovery sweep. See docs/recovery-plan.md.
+[recovery]
+# enabled = true
+# sweep_interval_seconds = 60
+# stale_threshold_seconds = 90
+# cooldown_minutes = 30
+# max_heal_failures_before_alert = 3
+# max_age_hours = 24
+# Never-go-silent backstop: one short "still on it" note per unanswered burst
+# once it's owed past the deadline. A new inbound after the notice re-arms it.
+# fallback_notice_enabled = true
+# fallback_notice_after_minutes = 10
+# fallback_notice_text = "hit a snag getting back to you — still on it"
+
+# Cross-session relay (the `send_message` MCP tool). Lets a bot in one
+# session text a contact who has their own session; the message routes
+# through the recipient's session. Recipient must already exist in chat.db
+# (no cold-calling random numbers). Comment out `mode` (or remove the
+# section) to disable entirely.
+#   "*"              — DM and group targets both allowed
+#   "dm_only"        — only DM targets allowed
+#   "groupchat_only" — only group targets allowed
+[outbound]
+# mode = "*"
+
+# Resident claude worker pool. Keeps `claude` subprocesses warm per session
+# instead of spawning fresh on every turn. Eliminates the cold-start tax
+# (~500-1500 ms per turn) and lets Anthropic prompt caching kick in across
+# turns in the same conversation.
+#   enabled       — off by default; flip to true once you've verified the CLI
+#                   is well-behaved in resident mode on your machine.
+#   max_workers   — cap on concurrent workers. Each ≈ 200-400 MB RSS.
+#   idle_evict_ms — evict a worker after this many ms of no activity. Default
+#                   600000 (10 min) — long enough to keep a conversation warm
+#                   through a typical back-and-forth, short enough not to
+#                   hoard memory for dormant sessions.
+# [claude.pool]
+# enabled = false
+# max_workers = 6
+# idle_evict_ms = 600000
+
+# Inbound watcher source — how new messages from chat.db are detected.
+#   "auto" — try `imsg watch` (push-based, sub-100ms). Fall back to fs.watch
+#            on rapid subprocess restart or spawn failure. Recommended.
+#   "imsg" — push-based via `imsg watch --json`. Needs `imsg` on PATH.
+#   "fs"   — fs.watch + 200ms PRAGMA data_version poll. No imsg needed.
+# [imessage_watcher]
+# source = "auto"
+
+# Outbound send-path channel — how outgoing iMessages are actually put on the wire.
+#   "auto"        — bridge if available, else `imsg send` (legacy), else AppleScript.
+#                   Safe default; works on stock macOS AND on machines where you've
+#                   set up the IMCore bridge (SIP disabled + `imsg launch`).
+#   "bridge"      — IMCore bridge only. Use ONLY if you've intentionally disabled
+#                   SIP. Pinning this surfaces a clear error when the bridge is
+#                   down instead of silently falling back.
+#   "legacy"      — `imsg send` (chat.db + AppleScript). The right default if you
+#                   prefer not to disable SIP. No expressive effects / native
+#                   replies, but reliable for plain text + attachments.
+#   "applescript" — pure AppleScript send. No `imsg` CLI needed. Attachments don't
+#                   actually upload on modern macOS — text only.
+# How the bridge into Messages is kept alive. There is a single transport — the
+# injected IMCore bridge — so there is no path to choose. Retries are bounded
+# inside the send and made safe by an idempotency key, so a repeat of a send that
+# already landed comes back as a duplicate instead of arriving twice.
+#
+# What is worth tuning is how fast a wedged bridge is caught: the injected code
+# can hold its socket open and stop answering, and only a probe with a deadline
+# tells that apart from a quiet hour. A miss twice over relaunches Messages.
+# [imessage_send]
+# health_interval_ms = 30000   # how often to prove Messages still answers (0 = off)
+# health_timeout_ms = 5000     # how long a probe may take before it counts as missed
+# block_self_sends = true      # refuse every send to the bot's own address (an agent driving
+#                              # its own account has no note-to-self; leave off for a human account)
+
+# Whitelist for IMCore-bridge "rich" iMessage actions (expressive effects,
+# editing/unsending the bot's own messages, group management, etc.). Every
+# action also requires the bridge to be live (SIP disabled + `imsg launch`) —
+# if it isn't, those tools just aren't offered. Harmless/reversible/self-
+# affecting actions default true; anything that changes a shared chat or
+# another person's experience defaults false. Uncomment to override.
+[imessage_actions]
+# effects = true            # confetti / lasers / slam / invisible ink / … on outgoing messages
+# subject_lines = true      # bold subject-line header
+# edit_messages = true      # edit the bot's OWN recently-sent messages (~15 min window)
+# unsend_messages = true    # retract the bot's OWN recently-sent messages (~2 min window)
+# delete_messages = false   # delete a message from local history (destructive)
+# rename_group = false      # rename a group chat
+# group_photo = false       # set/clear a group chat photo
+# manage_members = false    # add/remove participants, leave a group
+# create_chat = false       # start a brand-new DM or group with arbitrary handles
+
+# Smart mirror channel. The Mac remains the reasoning/state authority and
+# connects outbound to Constellation's authenticated Pi bridge.
+# [mirror]
+# enabled = false
+# host = ""                # LAN address of the mirror bridge, e.g. "192.0.2.10"
+# port = 8789
+# token = ""                # same household token as CONSTELLATION_TOKEN
+# tts_model = "google/gemini-3.1-flash-tts-preview"
+# tts_voice = "Zubenelgenubi"
+# followup_window = true
+# default_ttl_seconds = 300
+# session_key = "mirror:pi-4"
+#
+# Local Kokoro-82M speech, tried before the hosted models above and falling
+# back to them on any failure. Provision with scripts/install-kokoro.sh first;
+# without it the daemon logs once and stays on OpenRouter. Measured on an M4:
+# 0.36s vs 1.40s for a one-liner, 1.44s vs 3.93s for a longer reply, and none
+# of the hosted path's ±2s jitter.
+# kokoro_enabled = false
+# kokoro_voice = "af_heart"   # see Kokoro's VOICES.md; af_bella, am_fenrir also good
+# kokoro_python = ""          # blank = ~/.local/share/edmund-harness/kokoro-venv
+# kokoro_model = ""           # blank = ~/.local/share/edmund-harness/kokoro-models
+# kokoro_voices = ""          # blank = same directory as the model
+# local_stt_model = "base.en" # local recognition in the same sidecar; "" = hosted only
+
+# Instant-share: serve model-generated artifacts (HTML reports, charts, apps)
+# over a temporary authenticated Cloudflare tunnel. The daemon injects this
+# into the share server as INSTANT_SHARE_ADMIN_PASSWORD; it gates the /admin
+# panel (request log, kill switch, expire timer). Never commit a real value —
+# keep it in the gitignored live config.toml only.
+# [instant_share]
+# admin_password = ""        # REQUIRED for /admin login; blank = admin disabled
+# expire_minutes = 120       # default tunnel lifetime for share.sh
+
+# Integrations (plugins) live in integrations/<name>/ as standalone packages.
+# The YAML store below says which of the installed ones this machine runs;
+# per-integration tuning stays in that integration's own section here.
+# Delete an integration's directory to remove it entirely — core does not
+# import them directly.
+[integrations]
+enabled = true
+dir = "./integrations"
+config_file = "./integrations/integrations-config.yaml"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Everything below has working defaults — the harness runs without any of it.
+# Sections are listed so you can discover the subsystems, not because you must
+# configure them.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Operator alerts. When the daemon hits something it can't heal (repeated send
+# failures, a wedged bridge), it texts this handle instead of only logging.
+[alerts]
+operator_handle = ""          # your own number; blank = log only
+min_interval_minutes = 30     # floor between alerts, so a flap can't spam you
+
+# Proactive outreach ("brown-nose mode"). A background ghost periodically
+# decides whether a thread deserves an unprompted message — a nudge on an open
+# item, a follow-up, a heads-up — and stays quiet otherwise. Push-back from the
+# user is a hard signal and tunes the intensity down.
+# Design notes: docs/design/brownnose-plan.md
+[brown_nose]
+enabled = false               # opt in deliberately; it messages people unprompted
+intensity = 5                 # 1-10; drives cadence and how strong a reason must be
+dms_enabled_by_default = true
+groups_enabled_by_default = false
+ghost_model = ""              # blank = inherit [claude].model
+default_timezone = "America/New_York"
+max_ghost_ticks_per_day = 24
+max_concurrent_fires = 5
+min_seconds_between_fires = 90
+# Jitter/defer keep fires from landing on a robotic schedule.
+schedule_jitter_min_minutes = 0
+schedule_jitter_max_minutes = 35
+fire_defer_min_minutes = 5
+fire_defer_max_minutes = 15
+
+# Semantic recall. Embeds message history locally (Transformers.js WASM by
+# default — no API key, no network) and injects the most relevant past context
+# into each turn. Disable to fall back to recent-messages-only context.
+[memory_recall]
+enabled = true
+provider = "transformers"     # "transformers" (local) | "ollama" | "openai"
+model = "Xenova/all-MiniLM-L6-v2"
+dim = 384
+index_db = "recall.sqlite"
+backfill_days = 365           # how far back to index on first boot
+backfill_on_boot = true
+auto_recall_enabled = true
+auto_recall_limit = 10        # max snippets injected per turn
+auto_recall_min_score = 0.2   # cosine floor — below this, don't inject
+auto_recall_mmr_lambda = 0.7  # relevance vs diversity in the selected set
+auto_recall_dedup_threshold = 0.95
+auto_recall_recency_half_life_days = 14
+
+# OpenRouter powers the optional image, video, and audio generation tools.
+# Conversation turns run directly through the CLI selected by [claude].model.
+# Needs OPENROUTER_API_KEY in the environment when these tools are used.
+[openrouter]
+default_image_model = "google/gemini-3.1-flash-image-preview"
+default_video_model = "google/veo-3.1"
+default_audio_model = "openai/gpt-audio-mini"
+max_image_price_usd = 0.5     # refuse a generation above this
+max_video_price_per_second_usd = 0.5
+max_audio_price_usd = 0.5
+
+# Per-person generation credits. Each DM gets its own provisioned OpenRouter
+# key whose spending limit is what that person has paid in; when it runs
+# low the generation result tells the model to send their portal link, and
+# the Credits tab there takes a card payment (Stripe Checkout) that raises
+# the limit. Groups, the operator (alerts.operator_handle), and anyone
+# switched to "house" on the dashboard Credits page (or `edmund credits
+# mode <handle> house`) keep generating on keys.openrouter as before.
+#
+# Money: Stripe keeps 2.9% + $0.30 and OpenRouter charges 5.5% to buy
+# credit, so $10 paid buys about $8.92 of generation. credit_ratio = 0.90
+# means the operator absorbs about a cent on the dollar; 0.87 is neutral.
+# The operator's OpenRouter account must still hold enough credit to cover
+# every wallet's remaining balance — the daemon checks daily and alerts.
+#
+# Needs keys.openrouter_provisioning, keys.stripe_secret and
+# keys.stripe_webhook_secret, a Stripe webhook registered at
+# <dashboard.external_url>/pay/stripe for checkout.session.completed, and a
+# STABLE public hostname for the portal (a quick tunnel rotates and Stripe
+# would lose the endpoint). Inert until enabled.
+[credits]
+enabled = false
+starter_usd = 0               # free credit on first use; 0 = the first request refuses and sends the link
+low_watermark_usd = 1.00      # below this, generations carry a top-up nudge
+credit_ratio = 0.90           # generation credit granted per $1 paid
+min_topup_usd = 5
+max_topup_usd = 200
+presets_usd = [5, 10, 20]     # buttons on the portal's Credits tab
+product_name = "Edmund generation credit"
+stripe_product_id = ""        # prod_… — an existing Stripe Product every top-up rolls up under; empty = inline by name
+stripe_tax_code = "txcd_10105001"   # tax code for the inline product (AI as a Service, personal use). Stripe Managed Payments refuses a product without one — set it on prod_… too
+
+# Background maintainer that keeps persona/people/<handle>.md current from
+# recent conversation — so the model's notes on someone don't go stale.
+[people_maintainer]
+enabled = false
+model = "claude-sonnet-5"
+min_interval_minutes = 10
+recent_messages = 30
+dry_run = false               # true = compute the edit and log it, don't write
+
+# Skill marketplace. The model can search and install skills from allowlisted
+# GitHub repos. Skills that ship executable scripts stay inert until you run
+# `edmund skills approve <name>`.
+[skills_marketplace]
+enabled = true
+allowed_sources = ["anthropics/skills"]
+installed_db = "installed-skills.json"
+require_approval_for_scripts = true
+fetch_timeout_seconds = 20
+
+# The skill curator — a daily background pass that looks across ALL
+# conversations for a job that keeps recurring in unrelated rooms, and writes
+# a "curated" skill for it. Producing nothing is the normal outcome; every
+# number below exists to keep it quiet.
+#
+# A curated skill is instructions only (never scripts), global, and needs no
+# consent from anyone — Edmund distilled it himself, so there is nobody to
+# ask. It is refused if any name, phone number, email or address from the
+# conversations it was distilled from survives into the text.
+#
+# The same pass also deletes. A curated skill nobody has read in
+# retire_unused_after_days is retired and tombstoned so it is not written
+# again; one that IS read gets a reviewer asking whether it addressed a real
+# gap or was merely nearby. Only curated skills are subject to either — a
+# skill a person wrote or published is theirs.
+#
+# Audit with `edmund skills curated`; force a pass with
+# `edmund skills curate-now`.
+[skill_curator]
+enabled = true
+# Curation is judgment, not extraction — deciding a pattern is real and
+# writing a procedure a stranger can follow is the expensive half.
+model = "claude-sonnet-5"
+min_interval_hours = 24
+lookback_days = 14
+max_curated_skills = 12
+retire_unused_after_days = 30
+review_after_reads = 3
+review_interval_days = 14
+
+# Announcements — telling regulars about a new capability, inside a
+# conversation they were already having.
+#
+# Nothing here sends a message and nothing goes to a group. When an eligible
+# person writes in, a short block is added to that turn; the model works it in
+# only if there is a natural opening, and says nothing otherwise. What this
+# config governs is WHO gets the chance and HOW OFTEN.
+#
+# min_active_days is the important one. Set it from the measured distribution
+# of your own conversations rather than picking a number: sort the people who
+# wrote to the bot in the last 30 days by how many distinct days they were
+# active, and put the threshold in the clear air between the regulars and the
+# once-a-fortnight texters. The case this must never get wrong is the
+# occasional texter, because an unprompted pitch to someone who barely texts
+# reads as spam and cannot be taken back.
+#
+# Two separate limits, deliberately not one: cooldown_days is how often a
+# person hears about a NEW thing; reoffer_cooldown_days + max_offers are how
+# many chances the model gets at the SAME thing before it is dropped
+# unmentioned.
+#
+# Write one with `edmund announce add`; see the audience first with
+# `edmund announce who`.
+[announcements]
+enabled = true
+window_days = 30
+min_active_days = 12
+min_tenure_days = 21
+cooldown_days = 14
+reoffer_cooldown_days = 2
+max_offers = 3
+
+# Published skills — one person offering a skill THEY authored to everyone
+# else who talks to Edmund.
+#
+# The first time a published skill comes up in a conversation, Edmund has to
+# ask ("there's a skill for this from <name> — want me to use it?") and the
+# instructions are withheld until the person answers. The exception is when
+# the author is present: their own DM, or a group they are in. Decisions are
+# per conversation and permanent; `edmund skills consent` shows them.
+[public_skills]
+enabled = true
+consent_db = "skill-consent.json"
+
+# Claude-only auto-compaction. Codex owns its thread compaction internally.
+# Claude Code session JSONL grows without bound; this trims it in place.
+# Codex-only overrides, used when `model` is a gpt/o-series/codex name.
+# Each falls back to the matching [claude] value when unset, so this block is
+# inert on a Claude model.
+#
+# Both CLIs used to read [claude], and those numbers are only right for Claude:
+# `effort` tuned for Opus ran a reasoning model at "medium", and
+# context_window_tokens reached Codex as model_context_window, overstating the
+# window (gpt-5.6-sol is 272k, not 400k — see `codex debug models`).
+[codex]
+# Reasoning effort. The single biggest quality lever on a reasoning model.
+effort = "xhigh"
+# context_window_tokens: leave UNSET. Nothing is passed and Codex uses its own
+# per-model metadata, which is correct for every model it knows and stays
+# correct as they change. Set it only to override a model deliberately.
+#
+# Re-anchor threshold. Codex `exec` cannot reach the interactive /compact, so
+# at this point the thread id is dropped and the next turn cold-starts from
+# recent history. Keep it comfortably under the model's real window.
+threshold_tokens = 200000
+
+[claude.auto_compact]
+enabled = true
+
+# ─── Integration sections ────────────────────────────────────────────────────
+# These belong to packages under integrations/. Core keeps them opaque — the
+# schema lives in integrations/<name>/config.ts. Delete the package directory
+# and you can delete its section too.
+
+# Autonomous Robinhood trading sub-persona. REAL MONEY. Reachable only from
+# handles listed here, and only inside its own `trading:` session namespace.
+# Limits below are enforced in code (integrations/trading/src/risk.ts), not
+# merely suggested to the model. See integrations/trading/README.md.
+# [trading]
+# enabled = false
+# handles = []                  # ONLY these handles may reach it. Empty = nobody.
+# trigger_names = ["trader", "quant"]
+# account_number = ""           # must be an agentic_allowed Robinhood account
+# cash_floor = 5                # never let settled cash drop below this
+# max_position_pct = 25         # max % of portfolio in any one name
+# max_order_usd = 12            # hard $ ceiling per order
+# max_orders_per_run = 3        # runaway-loop guard
+# kill_nav = 0                  # below this portfolio value: report only, no trades
+# prefer_limit = true           # marketable limit orders, not plain market
+# dashboard_port = 4848
+# mcp_url = ""                  # hosted Robinhood MCP endpoint
+
+# The smart mirror channel is documented above under [mirror].
+
+# ── SMS (Twilio) ─────────────────────────────────────────────────────────
+# Edmund's second identity: a real phone number for people without iMessage,
+# including green-bubble group texts. Routing is decided by the room —
+# all-iMessage rooms keep using the email identity through Messages.app and
+# never touch this channel; anything with an SMS member arrives here.
+#
+# Credentials live in .env, never here:
+#   TWILIO_ACCOUNT_SID    AC…   the account
+#   TWILIO_API_KEY_SID    SK…   REST auth
+#   TWILIO_API_KEY_SECRET       REST auth
+#   TWILIO_AUTH_TOKEN           webhook signature validation (REQUIRED for
+#                               inbound — an API key cannot validate a webhook)
+#
+# Enabling is a deliberate act: with enabled=false nothing starts, no port
+# binds, and no money can be spent.
+# # Let execute_trade run the risk check on numbers the MODEL supplies when no
+# # code-level broker is configured. Off: the model controls every input to a
+# # check meant to constrain it, so the tool refuses until you say otherwise.
+# allow_model_supplied_risk_inputs = false
+[sms]
+enabled = false
+# Our number, E.164. Used to author group replies and recognize our own echoes.
+from = "+15550100000"
+# Messaging Service that owns the A2P campaign + sender pool. Preferred over
+# bare-number sends, which bypass the campaign association.
+messaging_service_sid = "MG..."
+# Public origin Twilio dials — must byte-match the webhook URL configured in
+# Twilio or every signature validation fails. With a stable named tunnel set
+# this; left unset, the daemon falls back to the quick-tunnel URL file
+# (data/sms-tunnel-url) and re-points Twilio automatically on rotation.
+public_base_url = "https://sms.example.com"
+# Loopback port for the daemon's webhook listener (tunnel target).
+webhook_port = 4790
+# Cost + tone control: max billed segments per message part, max parts per
+# reply. Beyond max_parts the reply is truncated rather than sent.
+max_segments_per_message = 3
+max_parts = 3
+# Rewrite smart punctuation to GSM-7 (one curly quote otherwise ~triples cost).
+normalize_to_gsm7 = true
+# Twilio Advanced Opt-Out answers STOP/HELP/START at the service level; leave
+# true so we don't double-reply to keywords. Local consent is enforced anyway.
+carrier_handles_keywords = true
+# Who may start an SMS conversation. Empty allowlist = contacts the operator
+# can name (config contacts + macOS address book). Strangers require
+# allow_unknown_senders = true — SMS sessions live outside the guest-tier
+# machinery, so this is the door, closed by default.
+allowlist = []
+allow_unknown_senders = false
+# Lines of SMS transcript shown on a cold start (chat.db knows nothing here).
+history_messages = 20

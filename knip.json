@@ -1,0 +1,28 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/main.ts!",
+    "src/mcp/server.ts!",
+    "cli/main.ts!",
+    "scripts/*.ts!",
+    "dashboard/server/main.ts!",
+    "dashboard/server/scripts/*.ts!",
+    "integrations/*/index.ts!",
+    "integrations/*/tools.ts!",
+    "integrations/*/config.ts!",
+    "integrations/*/scripts/*.ts!",
+    "integrations/*/dashboard/main.ts!",
+    "tests/**/*.test.ts",
+
+    "src/ghost/mcp-server.ts!"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "cli/**/*.ts",
+    "scripts/**/*.ts",
+    "integrations/**/*.ts",
+    "dashboard/server/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "ignoreBinaries": ["tail", "vite"]
+}

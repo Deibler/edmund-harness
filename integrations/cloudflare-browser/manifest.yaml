@@ -1,0 +1,40 @@
+name: cloudflare-browser
+display_name: Cloudflare Browser Rendering
+version: 1.0.0
+description: >-
+  Headless-browser tools backed by Cloudflare Browser Rendering: screenshot,
+  PDF, markdown extraction, page content, accessibility snapshot, link
+  harvesting, scraping, and structured JSON extraction.
+
+enabled: true
+config_key: cloudflare
+
+external_deps:
+  - "Cloudflare account with Browser Rendering enabled ([cloudflare] account_id + api_token)"
+
+access:
+  # General-purpose fetch/render capability — useful to every persona.
+  sessions: ["*"]
+
+tools:
+  - export_name: cloudflareBrowserTools
+    description: >-
+      Eight rendering tools. All are async-dispatchable: they route through the
+      background-job runner so a slow render never blocks the reply turn.
+    provides:
+      - cf_screenshot
+      - cf_pdf
+      - cf_markdown
+      - cf_content
+      - cf_snapshot
+      - cf_links
+      - cf_scrape
+      - cf_json
+
+instructions:
+  skills:
+    - cloudflare
+
+runtime:
+  # Tool-only: rendering happens in Cloudflare's edge, not in this daemon.
+  lazy: false

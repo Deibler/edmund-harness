@@ -1,0 +1,5 @@
+[{"id":"dinner","intent":"focus","component":"recipe",
+  "props":{"title":"Cacio e Pepe","subtitle":"20 minutes",
+   "ingredients":["200g tonnarelli","100g pecorino romano","2 tsp black pepper, cracked"],
+   "steps":["Toast the pepper in a dry pan until it smells like pepper.","Boil the pasta two minutes short; keep a mug of the water.","Off the heat, whisk pecorino with a splash of pasta water into a paste.","Fold the pasta through, loosening with more water until it coats."],
+   "currentStep":2}}]

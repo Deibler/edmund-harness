@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-size: 17px;
+      line-height: 1.65;
+      color: #111111;
+      background: #ffffff;
+    }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+    .breaking {
+      display: inline-block;
+      background: #dc2626;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 4px 10px;
+      border-radius: 2px;
+      margin-bottom: 16px;
+    }
+    .section-label {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #2563eb;
+      margin-bottom: 12px;
+    }
+    header {
+      margin-bottom: 32px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 600px) {
+      h1 { font-size: 26px; }
+    }
+    .headline-deck {
+      font-size: 20px;
+      color: #666666;
+      line-height: 1.4;
+      margin-bottom: 20px;
+    }
+    .byline {
+      font-size: 14px;
+      color: #666666;
+      padding-top: 16px;
+      border-top: 1px solid #eeeeee;
+    }
+    .byline strong {
+      color: #111111;
+    }
+    .timestamp {
+      color: #999999;
+    }
+    .location {
+      font-weight: 500;
+    }
+    .hero-image {
+      margin: 28px 0;
+    }
+    .hero-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .hero-image figcaption {
+      font-size: 13px;
+      color: #666666;
+      margin-top: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid #eeeeee;
+    }
+    .hero-image .credit {
+      color: #999999;
+    }
+    .lead {
+      font-size: 19px;
+      font-weight: 500;
+      margin-bottom: 24px;
+    }
+    article p {
+      margin-bottom: 20px;
+    }
+    article h2 {
+      font-size: 22px;
+      font-weight: 600;
+      margin: 36px 0 16px 0;
+    }
+    article h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 28px 0 12px 0;
+    }
+    article ul, article ol {
+      margin-bottom: 20px;
+      padding-left: 24px;
+    }
+    article li {
+      margin-bottom: 8px;
+    }
+    article blockquote {
+      border-left: 3px solid #111111;
+      padding: 12px 0 12px 20px;
+      margin: 28px 0;
+      background: #fafafa;
+    }
+    article blockquote p {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+    article blockquote cite {
+      font-size: 14px;
+      color: #666666;
+      font-style: normal;
+    }
+    article a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+    article a:hover {
+      text-decoration: underline;
+    }
+    .pullquote {
+      font-size: 24px;
+      font-weight: 500;
+      line-height: 1.4;
+      color: #111111;
+      border-top: 2px solid #111111;
+      border-bottom: 2px solid #111111;
+      padding: 24px 0;
+      margin: 32px 0;
+      text-align: center;
+    }
+    .related {
+      margin-top: 40px;
+      padding: 24px;
+      background: #fafafa;
+      border-radius: 4px;
+    }
+    .related h3 {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 0 0 16px 0;
+      color: #666666;
+    }
+    .related ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .related li {
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .related li:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+    .related a {
+      color: #111111;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .related a:hover {
+      color: #2563eb;
+    }
+    .tags {
+      margin-top: 32px;
+      padding-top: 20px;
+      border-top: 1px solid #eeeeee;
+    }
+    .tag {
+      display: inline-block;
+      background: #f5f5f5;
+      color: #666666;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+    footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #eeeeee;
+      font-size: 13px;
+      color: #999999;
+    }
+    .corrections {
+      background: #fafafa;
+      padding: 16px;
+      border-radius: 4px;
+      margin-top: 24px;
+      font-size: 14px;
+    }
+    .corrections strong {
+      color: #111111;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      {{#BREAKING}}
+      <span class="breaking">Breaking</span>
+      {{/BREAKING}}
+      {{#SECTION}}
+      <div class="section-label">{{SECTION}}</div>
+      {{/SECTION}}
+      <h1>{{TITLE}}</h1>
+      {{#DECK}}
+      <p class="headline-deck">{{DECK}}</p>
+      {{/DECK}}
+      <div class="byline">
+        <strong>{{AUTHOR}}</strong>{{#LOCATION}}, <span class="location">{{LOCATION}}</span>{{/LOCATION}}<br>
+        <span class="timestamp">{{DATE}} {{TIME}}</span>{{#UPDATED}} | Updated {{UPDATED}}{{/UPDATED}}
+      </div>
+    </header>
+
+    {{#HERO_IMAGE}}
+    <figure class="hero-image">
+      <img src="{{HERO_IMAGE}}" alt="{{HERO_IMAGE_ALT}}">
+      <figcaption>{{HERO_IMAGE_CAPTION}} {{#HERO_IMAGE_CREDIT}}<span class="credit">{{HERO_IMAGE_CREDIT}}</span>{{/HERO_IMAGE_CREDIT}}</figcaption>
+    </figure>
+    {{/HERO_IMAGE}}
+
+    <article>
+      <p class="lead">{{LEAD}}</p>
+      
+      {{CONTENT}}
+    </article>
+
+    {{#RELATED}}
+    <div class="related">
+      <h3>Related Coverage</h3>
+      <ul>
+        {{RELATED}}
+      </ul>
+    </div>
+    {{/RELATED}}
+
+    {{#TAGS}}
+    <div class="tags">
+      {{TAGS}}
+    </div>
+    {{/TAGS}}
+
+    <footer>
+      {{FOOTER}}
+      {{#CORRECTIONS}}
+      <div class="corrections">
+        <strong>Correction:</strong> {{CORRECTIONS}}
+      </div>
+      {{/CORRECTIONS}}
+      {{#ADMIN_URL}}<div style="margin-top: 12px;"><a href="{{ADMIN_URL}}" style="color: #999; font-size: 12px;">Admin</a></div>{{/ADMIN_URL}}
+    </footer>
+  </div>
+</body>
+</html>

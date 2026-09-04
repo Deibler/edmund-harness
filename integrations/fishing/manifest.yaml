@@ -1,0 +1,36 @@
+name: fishing
+display_name: Mid-Atlantic fishing data
+version: 1.0.0
+description: >-
+  Queries a local fishing-data platform (FastAPI) for mid-Atlantic conditions,
+  catch records, regulations, access, and charts. Every eligible model session
+  gets the query and visualization tools directly.
+
+enabled: true
+config_key: fishing
+
+external_deps:
+  - "fishing-data-platform serving at [fishing].api_url (cd ~/fishing-data-platform && uv run fishctl serve)"
+
+access:
+  # Any persona may ask about fishing. Guest sessions still lose all integration
+  # tools at the host boundary, alongside every other private integration.
+  sessions: ["*"]
+
+tools:
+  - export_name: fishingTools
+    description: >-
+      Direct REST queries and PNG chart/map rendering. Endpoint detail lives in
+      the fishing skill so the always-visible tool schema stays compact.
+    provides:
+      - fishing_query
+      - fishing_viz
+
+instructions:
+  skills:
+    - fishing
+
+runtime:
+  # Tool-only integration: no daemon-side work. The platform is an external
+  # service the tools call; nothing to start or stop here.
+  lazy: false

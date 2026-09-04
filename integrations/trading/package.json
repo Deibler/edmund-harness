@@ -1,0 +1,16 @@
+{
+  "name": "@edmund-harness/integration-trading",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous Robinhood trading sub-persona for edmund-harness",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./tools": "./tools.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "zod": "^3.23.8"
+  }
+}

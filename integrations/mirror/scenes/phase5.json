@@ -1,0 +1,85 @@
+[
+ {
+  "id": "pasta",
+  "intent": "ambient",
+  "component": "timer",
+  "props": {
+   "label": "Pasta",
+   "endsAtMs": 1786129781407,
+   "detail": "then rest 10 minutes"
+  }
+ },
+ {
+  "id": "lights",
+  "intent": "ambient",
+  "component": "home_control",
+  "props": {
+   "room": "Downstairs",
+   "devices": [
+    {
+     "name": "Kitchen",
+     "on": true,
+     "detail": "60%"
+    },
+    {
+     "name": "Living room",
+     "on": true
+    },
+    {
+     "name": "Porch",
+     "on": false
+    },
+    {
+     "name": "Dining",
+     "on": false
+    }
+   ]
+  }
+ },
+ {
+  "id": "music",
+  "intent": "ambient",
+  "component": "now_playing",
+  "props": {
+   "track": "Harvest Moon",
+   "artist": "Neil Young",
+   "room": "Kitchen",
+   "progress": 38
+  }
+ },
+ {
+  "id": "dinner",
+  "intent": "answer",
+  "component": "place_list",
+  "props": {
+   "title": "Open now, near you",
+   "places": [
+    {
+     "name": "Luca",
+     "kind": "Italian",
+     "distance": "0.4 mi",
+     "detail": "$$ \u00b7 closes 10",
+     "highlight": true
+    },
+    {
+     "name": "Himalayan Curry",
+     "kind": "Nepalese",
+     "distance": "1.1 mi",
+     "detail": "$$ \u00b7 closes 9:30"
+    },
+    {
+     "name": "Callaloo",
+     "kind": "Trinidadian",
+     "distance": "1.8 mi",
+     "detail": "$ \u00b7 closes 9"
+    },
+    {
+     "name": "The Fridge",
+     "kind": "Pizza",
+     "distance": "2.3 mi",
+     "detail": "$$ \u00b7 closes 11"
+    }
+   ]
+  }
+ }
+]

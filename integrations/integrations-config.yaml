@@ -1,0 +1,77 @@
+# edmund-harness — integrations store
+#
+# This file is the OPERATOR's view of the plugin set: which of the installed
+# integrations this machine runs, and any per-deployment tightening. Each
+# package's own `manifest.yaml` is the author's declaration (what it is, what
+# tools it provides, what access its author considers correct); this file is
+# what YOU say about this box.
+#
+# The split matters: a manifest ships with the package and changes when its
+# capabilities change. This file changes when you turn something on or off —
+# no code edit, no touching a tracked package file.
+#
+# Everything here is optional. Delete this file and every manifest is used as
+# written. Delete an integration's DIRECTORY and it stops existing entirely:
+# no import, no tools, no runtime, no config keys. That is the intended way to
+# ship a slimmer harness.
+#
+# Pointed at by config.toml → [integrations].config_file.
+
+defaults: {}
+  # Set `enabled: false` here for an opt-in posture: nothing runs unless it is
+  # explicitly turned on in the map below. Left unset, each manifest's own
+  # `enabled` value decides.
+
+integrations:
+  # ─────────────────────────────────────────────────────────────────────────
+  # trading — Quant, the autonomous Robinhood sub-persona.
+  # Real money. Reachable ONLY from the `trading:` session namespace, and the
+  # eligible handles come from [trading].handles in config.toml (kept there
+  # because that file is gitignored and those are live phone numbers).
+  # Code-enforced risk limits live in integrations/trading/src/risk.ts.
+  # ─────────────────────────────────────────────────────────────────────────
+  trading:
+    enabled: false
+    note: >-
+      Disabled until the Robinhood agentic account number and the one-time MCP
+      OAuth are in place. See integrations/trading/README.md go-live checklist.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # mirror — the smart mirror channel (voice in, speech + glass out).
+  # A conversational medium, not a tool surface: it receives the host's
+  # channel capabilities (pipeline, interrupt, lifecycle, deliverer).
+  # ─────────────────────────────────────────────────────────────────────────
+  mirror:
+    enabled: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # radaromega — live weather radar via the RadarOmega desktop app over CDP.
+  # Tools come from the vendored stdio MCP server; this package owns the
+  # freshness watchdog that keeps the app's model engine from wedging.
+  # ─────────────────────────────────────────────────────────────────────────
+  radaromega:
+    enabled: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # fishing — mid-Atlantic fishing data via a local FastAPI platform.
+  # Eligible sessions get `fishing_query` and `fishing_viz` directly; detailed
+  # endpoint guidance is progressively loaded from skills/fishing.
+  # ─────────────────────────────────────────────────────────────────────────
+  fishing:
+    enabled: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # cloudflare-browser — headless rendering (screenshot, PDF, markdown,
+  # scrape) executed at Cloudflare's edge rather than on this Mac.
+  # ─────────────────────────────────────────────────────────────────────────
+  cloudflare-browser:
+    enabled: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # kitchen — per-household food ledgers with typed tools. Available in every
+  # session because food questions arrive everywhere; the isolation that
+  # matters is which ACCOUNT a call resolves to, enforced per call from the
+  # calling session's membership.
+  # ─────────────────────────────────────────────────────────────────────────
+  kitchen:
+    enabled: true

@@ -1,0 +1,4 @@
+[{"id":"stats","zone":"bottom_right","lifespan":"session","component":"stats",
+  "props":{"title":"Portfolio","items":[
+    {"label":"Today","value":"+1.8%"},{"label":"Week","value":"-0.4%"},
+    {"label":"Cash","value":"$12,480"},{"label":"Positions","value":"7"}]}}]

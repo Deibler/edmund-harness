@@ -1,0 +1,1377 @@
+{
+  "_doc": "Meal catalog for the kitchen hub. Each recipe's needs use canonical ledger item ids (store.py slugs). qty null means 'some'. hub.py checks these against live stock to compute what's cookable today. Add meals here whenever a new dinner gets built; history_seed covers meals cooked before the ledger existed (2026-08-09).",
+  "recipes": [
+    {
+      "id": "pork-chop-tortellini",
+      "name": "Seared pork chops, tomato-cream tortellini, green beans",
+      "desc": "Chops seared in Kinder's, sauce built on their drippings, tortellini folded in, buttered green beans.",
+      "minutes": 50,
+      "needs": [
+        [
+          "thin-cut-boneless-pork-chops",
+          1
+        ],
+        [
+          "cheese-tortellini-2-pack",
+          1
+        ],
+        [
+          "diced-tomatoes",
+          1
+        ],
+        [
+          "cream-cheese",
+          null
+        ],
+        [
+          "grated-parmesan",
+          0.05
+        ],
+        [
+          "yellow-onions",
+          0.5
+        ],
+        [
+          "garlic-powder",
+          0.2
+        ],
+        [
+          "butter",
+          0.06
+        ],
+        [
+          "frozen-green-beans",
+          0.5
+        ],
+        [
+          "avocado-oil",
+          null
+        ]
+      ],
+      "cat": "dinner",
+      "health": 3,
+      "effort": "weeknight",
+      "method": "stovetop",
+      "serves": 4,
+      "feeds_days": 2,
+      "season": [],
+      "occasions": [],
+      "spend": 2,
+      "cuisine": "american"
+    },
+    {
+      "id": "cedar-plank-salmon",
+      "name": "Cedar plank salmon, rice, roasted broccoli",
+      "desc": "The freezer salmon on its plank, boil-in-bag rice, broccoli finished with lemon and butter.",
+      "minutes": 35,
+      "needs": [
+        [
+          "cedar-plank-atlantic-salmon",
+          0.678
+        ],
+        [
+          "boil-in-bag-white-rice",
+          2
+        ],
+        [
+          "frozen-broccoli-florets",
+          0.5
+        ],
+        [
+          "butter",
+          0.04
+        ],
+        [
+          "lemons",
+          null
+        ],
+        [
+          "old-bay",
+          null
+        ]
+      ],
+      "cat": "dinner",
+      "health": 5,
+      "effort": "weeknight",
+      "method": "oven",
+      "serves": 4,
+      "feeds_days": 2,
+      "season": [],
+      "occasions": [],
+      "spend": 3,
+      "cuisine": "american"
+    },
+    {
+      "id": "teriyaki-chicken-noodles",
+      "name": "Teriyaki chicken and noodles",
+      "desc": "Knorr teriyaki noodles bulked into a real dinner with seared chicken, peas and corn.",
+      "minutes": 30,
+      "needs": [
+        [
+          "knorr-teriyaki-noodles",
+          1
+        ],
+        [
+          "chicken-breasts",
+          0.5
+        ],
+        [
+          "frozen-peas",
+          0.3
+        ],
+        [
+          "frozen-corn",
+          0.3
+        ],
+        [
+          "avocado-oil",
+          null
+        ],
+        [
+          "garlic-powder",
+          0.1
+        ]
+      ],
+      "cat": "dinner",
+      "health": 3,
+      "yields": [
+        [
+          "leftover-chicken",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 3,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "asian"
+    },
+    {
+      "id": "old-bay-shrimp-bowls",
+      "name": "Old Bay shrimp rice bowls",
+      "desc": "The cooked shrimp warmed and crusted 40 seconds a side, over rice with corn, butter, lemon and scallions.",
+      "minutes": 25,
+      "needs": [
+        [
+          "cooked-shrimp-peeled-tail-on",
+          20
+        ],
+        [
+          "instant-rice",
+          null
+        ],
+        [
+          "frozen-corn",
+          0.5
+        ],
+        [
+          "butter",
+          0.04
+        ],
+        [
+          "old-bay",
+          null
+        ],
+        [
+          "lemons",
+          null
+        ],
+        [
+          "scallions",
+          0.25
+        ]
+      ],
+      "cat": "dinner",
+      "health": 4,
+      "yields": [
+        [
+          "leftover-rice",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 3,
+      "feeds_days": 1,
+      "season": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "occasions": [],
+      "spend": 2,
+      "cuisine": "american"
+    },
+    {
+      "id": "crab-salad-sandwiches",
+      "name": "Crab salad sandwiches",
+      "desc": "Imitation crab folded with mayo, Old Bay, scallions and lemon on toasted wheat.",
+      "minutes": 15,
+      "needs": [
+        [
+          "imitation-crab-legs",
+          1
+        ],
+        [
+          "mayo",
+          null
+        ],
+        [
+          "old-bay",
+          null
+        ],
+        [
+          "wheat-bread",
+          0.3
+        ],
+        [
+          "scallions",
+          0.25
+        ],
+        [
+          "lemons",
+          null
+        ]
+      ],
+      "cat": "lunch",
+      "health": 3,
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 2,
+      "feeds_days": 1,
+      "season": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "occasions": [
+        "hotday"
+      ],
+      "spend": 2,
+      "cuisine": "american"
+    },
+    {
+      "id": "ham-provolone-melts",
+      "name": "Ham and provolone melts with soup",
+      "desc": "Buttered griddled melts with the deli ham and provolone, Campbell's Chunky on the side.",
+      "minutes": 20,
+      "needs": [
+        [
+          "wheat-bread",
+          0.3
+        ],
+        [
+          "deli-honey-ham",
+          1
+        ],
+        [
+          "deli-provolone",
+          1
+        ],
+        [
+          "butter",
+          0.04
+        ],
+        [
+          "campbell-s-chunky-soup",
+          1
+        ]
+      ],
+      "cat": "lunch",
+      "health": 2,
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 2,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "black-bean-rice-skillet",
+      "name": "Cheesy black bean and salsa rice skillet",
+      "desc": "One skillet: onion, black beans, salsa and rice under a melted Mexican-blend lid.",
+      "minutes": 30,
+      "needs": [
+        [
+          "black-beans",
+          1
+        ],
+        [
+          "mild-salsa",
+          0.5
+        ],
+        [
+          "boil-in-bag-white-rice",
+          2
+        ],
+        [
+          "shredded-mexican-4-cheese-blend",
+          0.5
+        ],
+        [
+          "yellow-onions",
+          0.5
+        ],
+        [
+          "cumin",
+          null
+        ],
+        [
+          "chili-powder",
+          null
+        ]
+      ],
+      "cat": "dinner",
+      "health": 5,
+      "yields": [
+        [
+          "leftover-rice",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 4,
+      "feeds_days": 2,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "tex-mex"
+    },
+    {
+      "id": "egg-fried-rice",
+      "name": "Egg fried rice",
+      "desc": "Day-of fried rice: eggs, peas, scallions and garlic in a hot skillet, rice vinegar finish.",
+      "minutes": 25,
+      "needs": [
+        [
+          "eggs",
+          3
+        ],
+        [
+          "boil-in-bag-white-rice",
+          2
+        ],
+        [
+          "frozen-peas",
+          0.3
+        ],
+        [
+          "scallions",
+          0.25
+        ],
+        [
+          "garlic-powder",
+          0.2
+        ],
+        [
+          "avocado-oil",
+          null
+        ],
+        [
+          "seasoned-rice-vinegar",
+          null
+        ]
+      ],
+      "cat": "lunch",
+      "health": 3,
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 3,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "asian"
+    },
+    {
+      "id": "spaghetti-marinara",
+      "name": "Spaghetti with tomato-paste marinara",
+      "desc": "Pantry marinara built from tomato paste, onion, garlic and Italian seasoning, parm over top.",
+      "minutes": 30,
+      "needs": [
+        [
+          "spaghetti",
+          1
+        ],
+        [
+          "tomato-paste",
+          1
+        ],
+        [
+          "yellow-onions",
+          0.5
+        ],
+        [
+          "garlic-powder",
+          0.2
+        ],
+        [
+          "italian-seasoning",
+          null
+        ],
+        [
+          "extra-virgin-olive-oil",
+          null
+        ],
+        [
+          "grated-parmesan",
+          0.05
+        ]
+      ],
+      "cat": "dinner",
+      "health": 4,
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 4,
+      "feeds_days": 2,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "italian"
+    },
+    {
+      "id": "creamy-mushroom-chicken",
+      "name": "Creamy mushroom chicken over egg noodles",
+      "desc": "The 8/10 dinner: chicken and mushrooms in a cream-cheese pan sauce over buttered noodles.",
+      "minutes": 45,
+      "needs": [
+        [
+          "chicken-breasts",
+          0.5
+        ],
+        [
+          "wide-egg-noodles",
+          0.5
+        ],
+        [
+          "cream-cheese",
+          null
+        ],
+        [
+          "grated-parmesan",
+          0.05
+        ],
+        [
+          "butter",
+          0.06
+        ],
+        [
+          "yellow-onions",
+          0.5
+        ],
+        [
+          "sliced-mushrooms",
+          null
+        ],
+        [
+          "thyme",
+          null
+        ]
+      ],
+      "cat": "dinner",
+      "health": 3,
+      "yields": [
+        [
+          "leftover-chicken",
+          null
+        ]
+      ],
+      "effort": "weeknight",
+      "method": "stovetop",
+      "serves": 4,
+      "feeds_days": 2,
+      "season": [],
+      "occasions": [],
+      "spend": 2,
+      "cuisine": "american"
+    },
+    {
+      "id": "beef-onion-gravy-noodles",
+      "name": "Beef and onion gravy over buttered egg noodles",
+      "desc": "The 8/8 dinner: browned beef and onions in a flour-and-bouillon gravy over egg noodles.",
+      "minutes": 40,
+      "needs": [
+        [
+          "ground-beef-80-20",
+          1
+        ],
+        [
+          "wide-egg-noodles",
+          0.5
+        ],
+        [
+          "yellow-onions",
+          1
+        ],
+        [
+          "butter",
+          0.06
+        ],
+        [
+          "all-purpose-flour",
+          null
+        ],
+        [
+          "knorr-chicken-bouillon",
+          null
+        ]
+      ],
+      "cat": "dinner",
+      "health": 2,
+      "yields": [
+        [
+          "leftover-beef",
+          null
+        ]
+      ],
+      "effort": "weeknight",
+      "method": "stovetop",
+      "serves": 4,
+      "feeds_days": 2,
+      "season": [
+        10,
+        11,
+        12,
+        1,
+        2,
+        3
+      ],
+      "occasions": [
+        "cozy"
+      ],
+      "spend": 2,
+      "cuisine": "american"
+    },
+    {
+      "id": "dirty-rice-shrimp",
+      "name": "Dirty rice with blackened shrimp",
+      "desc": "The 8/9 dinner: Cajun-rubbed shrimp over salsa-based dirty rice with a pickle remoulade.",
+      "minutes": 40,
+      "needs": [
+        [
+          "cooked-shrimp-peeled-tail-on",
+          20
+        ],
+        [
+          "instant-rice",
+          null
+        ],
+        [
+          "mild-salsa",
+          0.5
+        ],
+        [
+          "rib-rack-cajun-rub",
+          null
+        ],
+        [
+          "yellow-onions",
+          0.5
+        ],
+        [
+          "mayo",
+          null
+        ],
+        [
+          "pickles",
+          0.2
+        ]
+      ],
+      "cat": "dinner",
+      "health": 3,
+      "yields": [
+        [
+          "leftover-rice",
+          null
+        ],
+        [
+          "leftover-beef",
+          null
+        ]
+      ],
+      "effort": "weeknight",
+      "method": "stovetop",
+      "serves": 3,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 2,
+      "cuisine": "cajun"
+    },
+    {
+      "id": "mrs-fields-cookies",
+      "name": "Mrs. Fields cookies (dessert)",
+      "desc": "The dough in the fridge, baked off. 12 minutes at 350.",
+      "minutes": 15,
+      "needs": [
+        [
+          "mrs-fields-cookie-dough",
+          1
+        ]
+      ],
+      "cat": "dessert",
+      "health": 1,
+      "effort": "quick",
+      "method": "oven",
+      "serves": 8,
+      "feeds_days": 3,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "sushi-bake-hand-rolls",
+      "cat": "compound",
+      "minutes": 10,
+      "health": 4,
+      "name": "Sushi bake hand rolls",
+      "desc": "Last night's sushi bake, warmed and rolled into seaweed with cucumber.",
+      "from": [
+        "salmon-crab-sushi-bake"
+      ],
+      "needs": [
+        [
+          "leftover-sushi-bake",
+          null
+        ],
+        [
+          "roasted-seaweed-squares",
+          null
+        ],
+        [
+          "cucumbers",
+          null
+        ],
+        [
+          "sriracha",
+          null
+        ],
+        [
+          "mayo",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 2,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "japanese"
+    },
+    {
+      "id": "smashed-cucumber-side",
+      "cat": "side",
+      "minutes": 8,
+      "health": 5,
+      "name": "Smashed cucumber side",
+      "desc": "The cut cucumber salted, pressed and dressed sharp. Ten minutes, no cooking.",
+      "needs": [
+        [
+          "cucumbers",
+          1
+        ],
+        [
+          "seasoned-rice-vinegar",
+          null
+        ],
+        [
+          "soy-sauce",
+          null
+        ],
+        [
+          "sesame-seeds",
+          null
+        ],
+        [
+          "crushed-red-pepper",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 3,
+      "feeds_days": 1,
+      "season": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "asian"
+    },
+    {
+      "id": "leftover-rice-fried-rice",
+      "cat": "compound",
+      "minutes": 20,
+      "health": 3,
+      "name": "Fried rice from last night",
+      "desc": "Cold rice is better rice. Eggs, frozen peas and corn, soy and scallion.",
+      "from": [
+        "old-bay-shrimp-bowls",
+        "dirty-rice-shrimp",
+        "black-bean-rice-skillet"
+      ],
+      "needs": [
+        [
+          "leftover-rice",
+          null
+        ],
+        [
+          "eggs",
+          2
+        ],
+        [
+          "frozen-peas",
+          null
+        ],
+        [
+          "frozen-corn",
+          null
+        ],
+        [
+          "soy-sauce",
+          null
+        ],
+        [
+          "scallions",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 3,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "asian"
+    },
+    {
+      "id": "chicken-melt-from-leftovers",
+      "cat": "compound",
+      "minutes": 15,
+      "health": 3,
+      "name": "Chicken melt from leftovers",
+      "desc": "Yesterday's chicken chopped into a griddled provolone melt.",
+      "from": [
+        "creamy-mushroom-chicken",
+        "teriyaki-chicken-noodles"
+      ],
+      "needs": [
+        [
+          "leftover-chicken",
+          null
+        ],
+        [
+          "wheat-bread",
+          null
+        ],
+        [
+          "deli-provolone",
+          null
+        ],
+        [
+          "butter",
+          null
+        ],
+        [
+          "mayo",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 2,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "beef-quesadillas",
+      "cat": "compound",
+      "minutes": 15,
+      "health": 2,
+      "name": "Beef quesadillas",
+      "desc": "Leftover seasoned beef into tortillas with the Mexican blend, crisped dry.",
+      "from": [
+        "beef-onion-gravy-noodles",
+        "dirty-rice-shrimp"
+      ],
+      "needs": [
+        [
+          "leftover-beef",
+          null
+        ],
+        [
+          "soft-whole-wheat-taco-tortillas",
+          null
+        ],
+        [
+          "shredded-mexican-4-cheese-blend",
+          null
+        ],
+        [
+          "mild-salsa",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 2,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "tex-mex"
+    },
+    {
+      "id": "yogurt-granola-parfait",
+      "cat": "snack",
+      "minutes": 5,
+      "health": 5,
+      "name": "Yogurt and granola parfait",
+      "desc": "Vanilla yogurt, a crumbled granola bar, grapes. Five minutes standing up.",
+      "needs": [
+        [
+          "yoplait-light-vanilla-yogurt",
+          1
+        ],
+        [
+          "sunbelt-oats-honey-granola-bars",
+          1
+        ],
+        [
+          "green-grapes",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 1,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "cucumber-pepper-crunch",
+      "cat": "snack",
+      "minutes": 5,
+      "health": 5,
+      "name": "Cucumber and sweet pepper crunch",
+      "desc": "Cut cold, dressed light. The one that actually gets eaten.",
+      "needs": [
+        [
+          "cucumbers",
+          null
+        ],
+        [
+          "mini-sweet-peppers",
+          null
+        ],
+        [
+          "italian-dressing",
+          null
+        ],
+        [
+          "black-pepper",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 3,
+      "feeds_days": 1,
+      "season": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "watermelon-lime-chill",
+      "cat": "snack",
+      "minutes": 5,
+      "health": 5,
+      "name": "Watermelon with lime and salt",
+      "desc": "Cubed cold watermelon, lime squeezed over, a pinch of the good salt.",
+      "needs": [
+        [
+          "seedless-watermelon",
+          null
+        ],
+        [
+          "limes",
+          null
+        ],
+        [
+          "mediterranean-salt-grinder",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 4,
+      "feeds_days": 1,
+      "season": [
+        6,
+        7,
+        8
+      ],
+      "occasions": [
+        "hotday"
+      ],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "fruit-smoothie",
+      "cat": "snack",
+      "minutes": 5,
+      "health": 5,
+      "name": "Strawberry banana smoothie",
+      "desc": "Frozen fruit, milk, a spoon of yogurt for body.",
+      "needs": [
+        [
+          "strawberry-banana-smoothie-fruit",
+          null
+        ],
+        [
+          "milk",
+          null
+        ],
+        [
+          "yoplait-light-vanilla-yogurt",
+          1
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 2,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "meat-stick-provolone-plate",
+      "cat": "snack",
+      "minutes": 5,
+      "health": 3,
+      "name": "Meat stick and provolone plate",
+      "desc": "Sticks, cheese, pickles. Assembly, not cooking.",
+      "needs": [
+        [
+          "schmidt-s-meat-sticks",
+          null
+        ],
+        [
+          "deli-provolone",
+          null
+        ],
+        [
+          "pickles",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 2,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "hot-honey-pretzels",
+      "cat": "snack",
+      "minutes": 5,
+      "health": 2,
+      "name": "Hot honey pretzels",
+      "desc": "Braided pretzels warmed through, hot honey BBQ to dunk.",
+      "needs": [
+        [
+          "butter-braided-pretzels",
+          null
+        ],
+        [
+          "hot-honey-bbq-sauce",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "oven",
+      "serves": 4,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [
+        "gameday"
+      ],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "chips-and-chipotle-ranch",
+      "cat": "snack",
+      "minutes": 2,
+      "health": 1,
+      "name": "Chips and chipotle ranch",
+      "desc": "Exactly what it says. Two minutes, zero defence.",
+      "needs": [
+        [
+          "herr-s-sour-cream-onion-baked-chips",
+          null
+        ],
+        [
+          "chipotle-ranch",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 4,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [
+        "gameday"
+      ],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "chocolate-chip-walnut-cookies",
+      "cat": "dessert",
+      "minutes": 35,
+      "health": 1,
+      "name": "Chocolate chip walnut cookies",
+      "desc": "From scratch, browned butter, walnuts through the dough.",
+      "needs": [
+        [
+          "all-purpose-flour",
+          null
+        ],
+        [
+          "granulated-sugar",
+          null
+        ],
+        [
+          "dark-brown-sugar",
+          null
+        ],
+        [
+          "butter",
+          null
+        ],
+        [
+          "eggs",
+          2
+        ],
+        [
+          "chocolate-chips",
+          null
+        ],
+        [
+          "walnut-halves-pieces",
+          null
+        ],
+        [
+          "baking-soda",
+          null
+        ],
+        [
+          "vanilla-extract",
+          null
+        ]
+      ],
+      "effort": "weeknight",
+      "method": "oven",
+      "serves": 12,
+      "feeds_days": 4,
+      "season": [],
+      "occasions": [
+        "weekend"
+      ],
+      "spend": 2,
+      "cuisine": "american"
+    },
+    {
+      "id": "affogato",
+      "cat": "dessert",
+      "minutes": 5,
+      "health": 2,
+      "name": "Affogato",
+      "desc": "Ice cream drowned in hot espresso. The whole recipe is the pour.",
+      "needs": [
+        [
+          "low-fat-ice-cream",
+          null
+        ],
+        [
+          "espresso-drinks-4-pack",
+          1
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 2,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 2,
+      "cuisine": "italian"
+    },
+    {
+      "id": "cinnamon-tortilla-crisps",
+      "cat": "dessert",
+      "minutes": 12,
+      "health": 2,
+      "name": "Cinnamon sugar tortilla crisps",
+      "desc": "Tortillas buttered, cinnamon-sugared, baked to a snap.",
+      "needs": [
+        [
+          "soft-whole-wheat-taco-tortillas",
+          null
+        ],
+        [
+          "butter",
+          null
+        ],
+        [
+          "cinnamon",
+          null
+        ],
+        [
+          "granulated-sugar",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "oven",
+      "serves": 4,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "american"
+    },
+    {
+      "id": "whipped-berry-cup",
+      "cat": "dessert",
+      "minutes": 5,
+      "health": 3,
+      "name": "Whipped berry cup",
+      "desc": "Thawed berries, whipped topping, toasted walnuts on top.",
+      "needs": [
+        [
+          "strawberry-banana-smoothie-fruit",
+          null
+        ],
+        [
+          "light-whipped-topping",
+          null
+        ],
+        [
+          "walnut-halves-pieces",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "nocook",
+      "serves": 4,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 2,
+      "cuisine": "american"
+    },
+    {
+      "id": "roast-pork-loin",
+      "name": "Roast pork loin with onions",
+      "desc": "The whole filet roasted over onions so tomorrow has something to work with.",
+      "minutes": 55,
+      "cat": "dinner",
+      "health": 4,
+      "needs": [
+        [
+          "pork-loin-filet",
+          1
+        ],
+        [
+          "yellow-onions",
+          2
+        ],
+        [
+          "extra-virgin-olive-oil",
+          null
+        ],
+        [
+          "kinder-s-steak-blend",
+          null
+        ],
+        [
+          "black-pepper",
+          null
+        ],
+        [
+          "salt",
+          null
+        ]
+      ],
+      "yields": [
+        [
+          "leftover-pork",
+          null
+        ]
+      ],
+      "effort": "project",
+      "method": "oven",
+      "serves": 6,
+      "feeds_days": 3,
+      "season": [],
+      "occasions": [
+        "sunday"
+      ],
+      "spend": 2,
+      "cuisine": "american"
+    },
+    {
+      "id": "pork-banh-mi-bowls",
+      "name": "Pork banh mi bowls",
+      "desc": "Yesterday's pork over rice with quick-pickled cucumber and sriracha mayo.",
+      "minutes": 20,
+      "cat": "dinner",
+      "health": 4,
+      "from": [
+        "roast-pork-loin"
+      ],
+      "needs": [
+        [
+          "leftover-pork",
+          null
+        ],
+        [
+          "instant-rice",
+          null
+        ],
+        [
+          "cucumbers",
+          1
+        ],
+        [
+          "seasoned-rice-vinegar",
+          null
+        ],
+        [
+          "sriracha",
+          null
+        ],
+        [
+          "mayo",
+          null
+        ],
+        [
+          "scallions",
+          null
+        ]
+      ],
+      "effort": "quick",
+      "method": "stovetop",
+      "serves": 3,
+      "feeds_days": 1,
+      "season": [],
+      "occasions": [],
+      "spend": 1,
+      "cuisine": "vietnamese"
+    },
+    {
+      "id": "salmon-crab-sushi-bake",
+      "name": "Salmon and crab sushi bake",
+      "desc": "Baked in one dish over seasoned rice, scooped onto seaweed at the table.",
+      "minutes": 45,
+      "cat": "dinner",
+      "health": 3,
+      "needs": [
+        [
+          "cedar-plank-atlantic-salmon",
+          1
+        ],
+        [
+          "imitation-crab-legs",
+          1
+        ],
+        [
+          "instant-rice",
+          null
+        ],
+        [
+          "seasoned-rice-vinegar",
+          null
+        ],
+        [
+          "mayo",
+          null
+        ],
+        [
+          "sriracha",
+          null
+        ],
+        [
+          "roasted-seaweed-squares",
+          null
+        ]
+      ],
+      "yields": [
+        [
+          "leftover-sushi-bake",
+          null
+        ]
+      ],
+      "effort": "weeknight",
+      "method": "oven",
+      "serves": 4,
+      "feeds_days": 2,
+      "season": [],
+      "occasions": [
+        "weekend"
+      ],
+      "spend": 3,
+      "cuisine": "japanese"
+    }
+  ],
+  "history_seed": [
+    {
+      "date": "2026-08-06",
+      "meal": "Lemon pepper chicken and garlic butter orzo"
+    },
+    {
+      "date": "2026-08-07",
+      "meal": "Old Bay stuffed salmon, roasted yellow squash, rice"
+    },
+    {
+      "date": "2026-08-08",
+      "meal": "Beef and onion gravy over buttered egg noodles"
+    }
+  ]
+}

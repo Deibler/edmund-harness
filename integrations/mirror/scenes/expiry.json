@@ -1,0 +1,6 @@
+[{"id":"fresh","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":600},"component":"text_block",
+  "props":{"eyebrow":"Fresh","title":"Ten minutes left","text":"This one was just asked for. Its meter should be nearly full."}},
+ {"id":"dying","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":30},"component":"text_block",
+  "props":{"eyebrow":"Expiring","title":"Half a minute left","text":"This one is nearly gone. Its meter should be short and ember."}},
+ {"id":"kept","intent":"ambient","component":"status",
+  "props":{"label":"Persistent","detail":"No clock at all — nothing to count down.","state":"success"}}]

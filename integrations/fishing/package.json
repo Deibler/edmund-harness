@@ -1,0 +1,9 @@
+{
+  "name": "@edmund-harness/integration-fishing",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mid-Atlantic fishing data integration for edmund-harness",
+  "main": "./tools.ts",
+  "exports": { ".": "./tools.ts" }
+}

@@ -1,0 +1,2 @@
+[{"id":"trip","intent":"ambient","component":"tracker",
+  "props":{"title":"Boston","label":"Flight 14 Aug","status":"7 days","detail":"BOS 6:40pm"}}]

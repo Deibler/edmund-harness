@@ -1,0 +1,93 @@
+<!-- Made-it button. Paste at the bottom of a recipe page, just before </body>.
+     Replace PLAN_ID and MEAL_NAME. Nothing else needs changing: the access key is
+     read out of the URL, and the POST goes to the same server that served the page.
+     Styles assume the recipe palette (paper #fbf7f0, ink #221c17, rule #ded5c6). -->
+<style>
+  .made{margin:44px 0 0;border-top:1px solid #221c17;padding-top:20px}
+  .made h3{font-family:'Instrument Serif',Georgia,serif;font-weight:400;
+   font-size:24px;margin:0 0 4px}
+  .made p.k{color:#6a6259;font-size:14px;margin:0 0 15px;line-height:1.5}
+  .made textarea{width:100%;min-height:74px;padding:11px 12px;font:15px/1.5 inherit;
+   color:#221c17;background:#fff;border:1px solid #ded5c6;border-radius:0;resize:vertical}
+  .made textarea:focus{outline:none;border-color:#221c17}
+  .made button{margin-top:11px;padding:13px 22px;font:600 15px/1 inherit;
+   letter-spacing:.02em;color:#fbf7f0;background:#221c17;border:0;border-radius:0;
+   cursor:pointer;-webkit-appearance:none}
+  .made button:disabled{opacity:.45;cursor:default}
+  .made .undo{background:none;color:#6a6259;text-decoration:underline;padding:13px 0 13px 16px}
+  .made .done{background:#f0ece1;border-left:0;padding:15px 16px;font-size:15px;
+   line-height:1.5;color:#221c17}
+  .made .done b{display:block;font-family:'Instrument Serif',Georgia,serif;
+   font-weight:400;font-size:20px;margin-bottom:3px}
+  .made .err{color:#b03a1c;font-size:14px;margin-top:9px}
+  .made [hidden]{display:none}
+</style>
+
+<section class="made" id="made">
+  <div id="madeAsk">
+    <h3>Did you make it?</h3>
+    <p class="k">Tap this once you've actually cooked it and I'll take the
+      ingredients off the kitchen list. Nothing comes off until you do.</p>
+    <textarea id="madeNotes" placeholder="Anything worth remembering? Changes you made, what you'd do differently, whether it was any good."></textarea>
+    <div><button id="madeYes" type="button">I made this</button></div>
+    <p class="err" id="madeErr" hidden></p>
+  </div>
+
+  <div class="done" id="madeDone" hidden>
+    <b>Logged.</b>
+    <span id="madeWhen"></span> The ingredients are coming off the kitchen list.
+    <button class="undo" id="madeUndo" type="button">Undo</button>
+  </div>
+</section>
+
+<script>
+(function(){
+  var PLAN = 'PLAN_ID', MEAL = 'MEAL_NAME';
+  var key = new URLSearchParams(location.search).get('key') || '';
+  var slot = 'made:' + PLAN;
+  var ask = document.getElementById('madeAsk'),
+      done = document.getElementById('madeDone'),
+      when = document.getElementById('madeWhen'),
+      err  = document.getElementById('madeErr'),
+      yes  = document.getElementById('madeYes'),
+      undo = document.getElementById('madeUndo'),
+      notes= document.getElementById('madeNotes');
+
+  function paint(stamp){
+    var on = !!stamp;
+    ask.hidden = on; done.hidden = !on;
+    when.textContent = on ? 'Marked ' + stamp + '.' : '';
+  }
+  paint(localStorage.getItem(slot));
+
+  function post(payload, btn, after){
+    btn.disabled = true; err.hidden = true;
+    payload.plan = PLAN; payload.meal = MEAL;
+    fetch('/callback?key=' + encodeURIComponent(key), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    }).then(function(r){
+      if(!r.ok) throw new Error(r.status);
+      after();
+    }).catch(function(){
+      err.hidden = false;
+      err.textContent = "Couldn't reach me just now. Try again, or just text me.";
+    }).then(function(){ btn.disabled = false; });
+  }
+
+  yes.addEventListener('click', function(){
+    post({event:'made', notes: notes.value.trim()}, yes, function(){
+      var stamp = new Date().toLocaleString([], {weekday:'short', hour:'numeric', minute:'2-digit'});
+      localStorage.setItem(slot, stamp);
+      paint(stamp);
+    });
+  });
+
+  undo.addEventListener('click', function(){
+    post({event:'undo', notes: notes.value.trim()}, undo, function(){
+      localStorage.removeItem(slot);
+      paint(null);
+    });
+  });
+})();
+</script>

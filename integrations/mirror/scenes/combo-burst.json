@@ -1,0 +1,37 @@
+[
+ {"id":"cal","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"calendar",
+  "props":{"month":"2026-08","marks":[
+   {"day":7,"label":"Sam's dinner, 7:30"},{"day":12},{"day":14,"label":"Flight to Boston"},
+   {"day":22,"label":"Pat — eligibility review"},{"day":29}]}},
+ {"id":"news","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"story_list",
+  "props":{"title":"This morning","stories":[
+   {"headline":"Federal Reserve holds rates steady as inflation cools to 2.4 percent","source":"Reuters","age":"2h"},
+   {"headline":"Lancaster County approves $18M for the Route 30 interchange rebuild","source":"LNP","age":"4h"},
+   {"headline":"Flyers trade for a second-round pick ahead of Friday's deadline","source":"The Athletic","age":"6h"}]}},
+ {"id":"dinner","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"place_list",
+  "props":{"title":"Open now, near you","places":[
+   {"name":"Luca","kind":"Italian","distance":"0.4 mi","detail":"$$ · closes 10","highlight":true},
+   {"name":"Himalayan Curry","kind":"Nepalese","distance":"1.1 mi","detail":"$$ · closes 9:30"},
+   {"name":"Callaloo","kind":"Trinidadian","distance":"1.8 mi","detail":"$ · closes 9"},
+   {"name":"The Fridge","kind":"Pizza","distance":"2.3 mi","detail":"$$ · closes 11"}]}},
+ {"id":"errands","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"list_card",
+  "props":{"title":"Before Friday","items":[
+   {"text":"Send Pat the eligibility numbers","meta":"2 days"},
+   {"text":"Night guard to the dentist","meta":"9:40 Fri"},
+   {"text":"Book the Boston hotel","meta":"7 days"},
+   {"text":"Replace the porch bulb"},
+   {"text":"Cancel the Sunday tee time","meta":"today"}]}},
+ {"id":"portfolio","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"stats",
+  "props":{"title":"Portfolio","items":[
+   {"label":"Today","value":"+1.8%"},{"label":"Week","value":"-0.4%"},
+   {"label":"Cash","value":"$12,480"},{"label":"Positions","value":"7"}]}},
+ {"id":"drive","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"route_map",
+  "props":{"origin":"Home","destination":"Philadelphia","distance":"63 mi","duration":"1 hr 12 min",
+   "detail":"via US-30 and I-76, light traffic",
+   "points":[{"lat":40.038,"lng":-76.306},{"lat":40.07,"lng":-76.16},{"lat":40.062,"lng":-75.99},
+    {"lat":40.028,"lng":-75.735},{"lat":39.995,"lng":-75.565},{"lat":39.952,"lng":-75.395},
+    {"lat":39.953,"lng":-75.24},{"lat":39.952,"lng":-75.163}]}},
+ {"id":"lead","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"text_block",
+  "props":{"eyebrow":"Tonight","title":"Sam's dinner is at 7:30",
+  "text":"Leave by 7:10 — the reservation is under your name."}}
+]

@@ -1,0 +1,101 @@
+# ─── Dependencies / build artifacts ───
+node_modules
+dist/
+**/__pycache__/
+*.pyc
+
+# ─── OS / editor junk ───
+.DS_Store
+.trash/
+
+# ─── Logs (may contain message content) ───
+*.log
+
+# ─── Secrets & live config (real API keys / tokens / PINs / phone numbers) ───
+# Live config holds keys; config.example.toml (committed) is the template.
+.env*
+*.env
+!.env.example
+config.toml
+config.toml.bak*
+.claude/settings.local.json
+# Working notes from planning sessions — scratch, and they name LAN hosts.
+.claude/plans/
+
+# ─── Backups (timestamped auto-backups; several contain API keys) ───
+*.bak
+*.bak-*
+*.bak*
+
+# ─── Runtime state & databases ───
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ─── Per-conversation sandboxes (generated media, received images, transcripts) ───
+sandbox/
+
+# ─── Persona runtime data ───
+# Real-contact PII (people/, groups/), full chat-session transcripts
+# (sessions/*.jsonl), backups, and persona definitions. Excluded from the
+# baseline as a precaution. To track a specific non-sensitive file:
+#   git add -f persona/<file>
+/persona/
+
+# ─── Vendored third-party MCP ───
+# Reconstruct from radaromega-mcp.zip per config.example.toml; not our source.
+vendor/
+
+# ─── Stray screenshots / scratch ───
+Screenshot*.png
+
+# ─── Instant-share runtime state (live tunnel tokens, auth, PIDs, local paths) ───
+# The skill's .config/ holds ACTIVE Cloudflare tunnel URLs with embedded auth
+# tokens, artifact auth tokens, and admin state. Runtime data, not source.
+skills/instant-share/.config/
+
+# Attachments that land in the working tree from iMessage and mirror handling.
+# Personal files rather than source — and some carry GPS EXIF — so they must
+# never reach history, where removing them means rewriting it. Root-anchored:
+# nothing legitimate lives at the top level except config and docs.
+/*.pdf
+/*.jpeg
+/*.jpg
+/*.heic
+/*.HEIC
+
+# Photos and scratch pulled off the mirror while iterating on the UI.
+# Evidence, not source: a 3 MB phone snap per defect adds up fast.
+integrations/mirror/tmp/
+
+# ─── Root-level artifacts ───
+# glass.sh drops a mirror screenshot here; regenerate it, never commit it.
+/*.png
+
+# ─── Private overlays ───
+# Guest campaign briefs describe a real audience and are written for a real
+# person's situation. Only the template is tracked.
+campaigns/*.md
+!campaigns/example.md
+# Operator notes with spend figures and named people, read by Claude Code
+# alongside CLAUDE.md but never published.
+CLAUDE.local.md
+# Docs that belong to this deployment rather than the project: carrier
+# filings, roadmaps with real usage numbers, product planning drafts.
+docs/private/
+
+# ─── Personal skills and caches ───
+# A playbook written for one real person's newsletter, and a scraped 511PA
+# camera dump carrying agency staff emails. Both stay on disk for this
+# deployment and out of the tree.
+skills/lancaster-loop/
+skills/radaromega/scripts/.cams511.json
+skills/radaromega/scripts/.stations.json
+
+# ─── Private skill overlays ───
+# A SKILL.local.md beside a SKILL.md is what the model reads on this machine.
+# It holds the deployment's real names and details; the tracked SKILL.md is
+# the version anyone can publish.
+skills/*/SKILL.local.md

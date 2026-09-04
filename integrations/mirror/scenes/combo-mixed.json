@@ -1,0 +1,27 @@
+[
+ {"id":"lights","intent":"ambient","component":"home_control",
+  "props":{"room":"Downstairs","devices":[
+   {"name":"Kitchen","on":true,"detail":"60%"},
+   {"name":"Living room","on":true},
+   {"name":"Porch","on":false}]}},
+ {"id":"music","intent":"ambient","component":"now_playing",
+  "props":{"track":"Harvest Moon","artist":"Neil Young","room":"Kitchen","progress":38}},
+ {"id":"trip","intent":"ambient","component":"tracker",
+  "props":{"title":"Boston","label":"Flight 14 Aug","status":"7 days","detail":"BOS 6:40pm"}},
+ {"id":"dinner","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"place_list",
+  "props":{"title":"Open now, near you","places":[
+   {"name":"Luca","kind":"Italian","distance":"0.4 mi","detail":"$$ · closes 10","highlight":true},
+   {"name":"Himalayan Curry","kind":"Nepalese","distance":"1.1 mi","detail":"$$ · closes 9:30"},
+   {"name":"Callaloo","kind":"Trinidadian","distance":"1.8 mi","detail":"$ · closes 9"}]}},
+ {"id":"errands","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"list_card",
+  "props":{"title":"Before Friday","items":[
+   {"text":"Send Pat the eligibility numbers","meta":"2 days"},
+   {"text":"Night guard to the dentist","meta":"9:40 Fri"},
+   {"text":"Book the Boston hotel","meta":"7 days"}]}},
+ {"id":"portfolio","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"stats",
+  "props":{"title":"Portfolio","items":[
+   {"label":"Today","value":"+1.8%"},{"label":"Cash","value":"$12,480"}]}},
+ {"id":"lead","intent":"answer","lifespan":{"mode":"ephemeral","ttl_seconds":900},"component":"text_block",
+  "props":{"eyebrow":"Sourdough","title":"About four and a half hours",
+  "text":"Bulk ferment runs 4-5 hours at 78°F, then shape and proof cold overnight."}}
+]

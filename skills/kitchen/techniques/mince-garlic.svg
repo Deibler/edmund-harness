@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 340" font-family="Georgia, 'Times New Roman', serif">
+  <rect width="1100" height="340" fill="#faf7f0"/>
+  <g stroke="#d8d2c4" fill="none">
+    <rect x="20" y="20" width="340" height="300"/>
+    <rect x="380" y="20" width="340" height="300"/>
+    <rect x="740" y="20" width="340" height="300"/>
+  </g>
+
+  <!-- P1: smash under flat of knife -->
+  <g>
+    <text x="40" y="56" font-size="24" fill="#2b2a26" font-weight="bold">1. Smash to peel</text>
+    <!-- knife blade lying flat over clove -->
+    <path d="M70 190 L300 190 L310 205 L70 205 Z" fill="#dcdcd6" stroke="#2b2a26" stroke-width="2.5"/>
+    <rect x="300" y="188" width="50" height="20" rx="6" fill="#7a5a3a" stroke="#2b2a26" stroke-width="2"/>
+    <!-- clove under blade -->
+    <path d="M150 232 q20 -26 44 0 q-10 20 -44 0 Z" fill="#efe6cf" stroke="#2b2a26" stroke-width="2.5"/>
+    <!-- press arrow -->
+    <path d="M185 120 L185 172" stroke="#b5563a" stroke-width="5"/>
+    <path d="M175 162 L185 180 L195 162" fill="#b5563a"/>
+    <text x="215 " y="140" font-size="19" fill="#b5563a">press with your palm</text>
+    <text x="40" y="300" font-size="18" fill="#55524a">Knife flat, one firm press. The clove</text>
+    <text x="40" y="322" font-size="18" fill="#55524a">cracks and the skin slips right off.</text>
+  </g>
+
+  <!-- P2: slice thin -->
+  <g>
+    <text x="400" y="56" font-size="24" fill="#2b2a26" font-weight="bold">2. Slice it thin</text>
+    <!-- peeled clove with slice lines -->
+    <path d="M470 220 q35 -75 120 -20 q-15 55 -120 20 Z" fill="#efe6cf" stroke="#2b2a26" stroke-width="3"/>
+    <g stroke="#b5563a" stroke-width="3" stroke-dasharray="8 6">
+      <path d="M500 150 L492 226"/>
+      <path d="M525 148 L519 232"/>
+      <path d="M550 152 L546 236"/>
+      <path d="M575 162 L573 234"/>
+    </g>
+    <text x="400" y="300" font-size="18" fill="#55524a">Slices as thin as you can manage,</text>
+    <text x="400" y="322" font-size="18" fill="#55524a">the exact thickness doesn't matter yet.</text>
+  </g>
+
+  <!-- P3: rock chop to mince -->
+  <g>
+    <text x="760" y="56" font-size="24" fill="#2b2a26" font-weight="bold">3. Rock-chop to a mince</text>
+    <!-- knife rocking: blade with curved arrow -->
+    <path d="M800 200 L1010 175 L1015 190 L805 215 Z" fill="#dcdcd6" stroke="#2b2a26" stroke-width="2.5"/>
+    <path d="M980 130 q40 25 25 60" fill="none" stroke="#b5563a" stroke-width="4"/>
+    <path d="M1013 180 l-4 18 -12 -14" fill="#b5563a"/>
+    <!-- mince pile -->
+    <g fill="#efe6cf" stroke="#2b2a26" stroke-width="1.5">
+      <rect x="840" y="240" width="9" height="9" transform="rotate(10 844 244)"/>
+      <rect x="856" y="248" width="9" height="9" transform="rotate(-14 860 252)"/>
+      <rect x="872" y="238" width="9" height="9" transform="rotate(22 876 242)"/>
+      <rect x="888" y="250" width="9" height="9" transform="rotate(-6 892 254)"/>
+      <rect x="904" y="240" width="9" height="9" transform="rotate(15 908 244)"/>
+      <rect x="866" y="260" width="9" height="9" transform="rotate(3 870 264)"/>
+      <rect x="884" y="262" width="9" height="9" transform="rotate(-18 888 266)"/>
+    </g>
+    <text x="935" y="262" font-size="18" fill="#2b2a26">tiny bits,</text>
+    <text x="935" y="283" font-size="18" fill="#2b2a26">~1/16 inch</text>
+    <text x="760" y="300" font-size="18" fill="#55524a">Tip of the knife stays down, rock the handle</text>
+    <text x="760" y="322" font-size="18" fill="#55524a">up and down across the pile until it's tiny.</text>
+  </g>
+</svg>

@@ -1,0 +1,74 @@
+name: kitchen
+display_name: Kitchen — per-household inventory, meals and deals
+version: 1.0.0
+description: >-
+  Per-household kitchen ledgers with typed tools: inventory, meal planning that
+  refuses ingredients the house does not have, calorie and spend tracking
+  derived from logged history, grocery deals across Aldi/Giant/Walmart/Target,
+  and a website per account. Replaces shelling out to the Python CLI in
+  skills/kitchen, which stays as a readable admin surface over the same files.
+
+enabled: true
+config_key: kitchen
+
+external_deps:
+  - "Ledger files under [kitchen].dir (default data/kitchen/) — created on demand"
+
+access:
+  # Food questions arrive in every thread — Alex's DM, Sam's DM, Jordan's,
+  # the house group, the mirror — so the tools must exist everywhere. The
+  # isolation that matters is NOT which session may call them, it is which
+  # household each call resolves to: every tool binds to exactly one account
+  # from the calling session's membership, and a session that belongs to none
+  # gets a hard error rather than somebody else's fridge.
+  sessions: ["*"]
+
+tools:
+  - export_name: kitchenTools
+    description: >-
+      Read (status, list, cookbook, recipe_get, requests), write (record, undo,
+      mark, recipe_save), plan (plan, plan_resolve), reconcile against the real
+      shelves (check), stand up recurring texts (schedule), derive (insights,
+      deals, prices_import) and publish (accounts, site, chat).
+    provides:
+      - kitchen_status
+      - kitchen_list
+      - kitchen_record
+      - kitchen_undo
+      - kitchen_plan
+      - kitchen_plan_resolve
+      - kitchen_insights
+      - kitchen_deals
+      - kitchen_prices_import
+      - kitchen_accounts
+      - kitchen_site
+      - kitchen_recipe_get
+      - kitchen_recipe_save
+      - kitchen_cookbook
+      - kitchen_schedule
+      - kitchen_requests
+      - kitchen_chat
+      - kitchen_mark
+      - kitchen_check
+      - kitchen_onboard
+      - kitchen_shopping
+
+runtime:
+  # Tool-only: no daemon-side loop. Price freshness is handled by the model on
+  # a schedule rather than a background scraper, because acquisition needs a
+  # browser and the judgment to tell a loaded page from an empty one.
+  lazy: false
+
+instructions:
+  envelope_note: >-
+    Any food, cooking, recipe, grocery, meal-planning or "what do we have"
+    question starts with kitchen_status — in every chat, not just Alex's.
+    Never answer from memory or from a photo: a photo is a sample, not an
+    audit, and "not tracked" is never the same claim as "you do not have it".
+    Write back in the same turn anything you watched change. Before sending a
+    recipe, run kitchen_plan so ingredients are checked against real stock, and
+    leave the plan open until a human confirms the meal actually got cooked.
+    For what to BUY use kitchen_shopping, not the out-or-low line in status:
+    those are different questions, and answering the second as if it were the
+    first is what turns a shopping list into noise. Anything in its suggestion
+    tray is a question for a human, never a line to add on their behalf.

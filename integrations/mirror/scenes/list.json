@@ -1,0 +1,9 @@
+[{"id":"errands","intent":"answer","component":"list_card",
+  "props":{"title":"Before Friday","items":[
+    {"text":"Send Pat the eligibility numbers","meta":"2 days"},
+    {"text":"Night guard to the dentist","meta":"9:40 Fri"},
+    {"text":"Book the Boston hotel","meta":"7 days"},
+    {"text":"Replace the porch bulb"},
+    {"text":"Cancel the Sunday tee time","meta":"today"}]}},
+ {"id":"old","intent":"answer","zone":"lower_third","component":"list_card",
+  "props":{"title":"The old shape, unchanged","items":["Milk","Bread","Coffee"]}}]

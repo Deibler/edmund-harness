@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Live tail of the edmund-harness daemon log. Ctrl-C to exit.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+mkdir -p data
+touch data/daemon.log
+exec tail -F data/daemon.log

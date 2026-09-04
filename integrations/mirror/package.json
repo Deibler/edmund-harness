@@ -1,0 +1,9 @@
+{
+  "name": "@edmund-harness/integration-mirror",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Smart mirror voice + glass channel for edmund-harness",
+  "main": "./index.ts",
+  "exports": { ".": "./index.ts", "./tools": "./tools.ts" }
+}

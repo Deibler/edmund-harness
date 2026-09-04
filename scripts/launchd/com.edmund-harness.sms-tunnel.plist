@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.edmund-harness.sms-tunnel</string>
+    <key>ProgramArguments</key>
+    <array><string>__HARNESS_ROOT__/scripts/launchd/run-sms-tunnel.sh</string></array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>__HARNESS_ROOT__/data/sms-tunnel.launchd.log</string>
+    <key>StandardErrorPath</key><string>__HARNESS_ROOT__/data/sms-tunnel.launchd.log</string>
+</dict>
+</plist>

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-size: 18px;
+      line-height: 1.7;
+      color: #111111;
+      background: #ffffff;
+    }
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 48px 24px;
+    }
+    header {
+      margin-bottom: 40px;
+    }
+    .category {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #2563eb;
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 600px) {
+      h1 { font-size: 28px; }
+    }
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 14px;
+      color: #666666;
+    }
+    .author {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .author-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #f5f5f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 14px;
+      color: #666666;
+    }
+    .author-info {
+      display: flex;
+      flex-direction: column;
+    }
+    .author-name {
+      font-weight: 500;
+      color: #111111;
+    }
+    .publish-date {
+      font-size: 13px;
+    }
+    .read-time {
+      color: #999999;
+    }
+    .featured-image {
+      width: 100%;
+      margin: 32px 0;
+      border-radius: 4px;
+    }
+    .featured-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 4px;
+    }
+    .featured-image figcaption {
+      font-size: 13px;
+      color: #999999;
+      margin-top: 8px;
+      text-align: center;
+    }
+    article h2 {
+      font-size: 24px;
+      font-weight: 600;
+      margin: 40px 0 16px 0;
+    }
+    article h3 {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 32px 0 12px 0;
+    }
+    article p {
+      margin-bottom: 20px;
+    }
+    article ul, article ol {
+      margin-bottom: 20px;
+      padding-left: 28px;
+    }
+    article li {
+      margin-bottom: 8px;
+    }
+    article blockquote {
+      border-left: 3px solid #e0e0e0;
+      padding-left: 20px;
+      margin: 28px 0;
+      font-style: italic;
+      color: #666666;
+    }
+    article a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+    article a:hover {
+      text-decoration: underline;
+    }
+    article code {
+      background: #f5f5f5;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.9em;
+    }
+    article pre {
+      background: #1a1a1a;
+      color: #eeeeee;
+      padding: 20px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 24px 0;
+    }
+    article pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .divider {
+      text-align: center;
+      margin: 40px 0;
+      color: #e0e0e0;
+    }
+    .tags {
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 1px solid #eeeeee;
+    }
+    .tag {
+      display: inline-block;
+      background: #f5f5f5;
+      color: #666666;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+    footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid #eeeeee;
+      font-size: 14px;
+      color: #999999;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      {{#CATEGORY}}
+      <div class="category">{{CATEGORY}}</div>
+      {{/CATEGORY}}
+      <h1>{{TITLE}}</h1>
+      <div class="meta">
+        <div class="author">
+          <div class="author-avatar">{{AUTHOR_INITIAL}}</div>
+          <div class="author-info">
+            <span class="author-name">{{AUTHOR}}</span>
+            <span class="publish-date">{{DATE}}</span>
+          </div>
+        </div>
+        <span class="read-time">{{READ_TIME}} min read</span>
+      </div>
+    </header>
+
+    {{#FEATURED_IMAGE}}
+    <figure class="featured-image">
+      <img src="{{FEATURED_IMAGE}}" alt="{{FEATURED_IMAGE_ALT}}">
+      {{#FEATURED_IMAGE_CAPTION}}
+      <figcaption>{{FEATURED_IMAGE_CAPTION}}</figcaption>
+      {{/FEATURED_IMAGE_CAPTION}}
+    </figure>
+    {{/FEATURED_IMAGE}}
+
+    <article>
+      {{CONTENT}}
+    </article>
+
+    {{#TAGS}}
+    <div class="tags">
+      {{TAGS}}
+    </div>
+    {{/TAGS}}
+
+    <footer>
+      {{FOOTER}}
+      {{#ADMIN_URL}}<div style="margin-top: 12px;"><a href="{{ADMIN_URL}}" style="color: #999; font-size: 12px;">Admin</a></div>{{/ADMIN_URL}}
+    </footer>
+  </div>
+</body>
+</html>

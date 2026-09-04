@@ -1,0 +1,483 @@
+{
+  "model": "edmund",
+  "target_phrases": [
+    "hey edmund"
+  ],
+  "validation_hours": 10.696222222222223,
+  "recommended": {
+    "threshold": 0.8500000000000001,
+    "recall": 0.7778095238095238,
+    "adversarial_fp": 9.523809523809524e-05,
+    "wakes_per_hour": 0.4674547607670413
+  },
+  "curve": [
+    {
+      "threshold": 0.05,
+      "recall": 0.9574285714285714,
+      "adversarial_fp": 0.0057619047619047615,
+      "wakes_per_hour": 48.89576797623252
+    },
+    {
+      "threshold": 0.1,
+      "recall": 0.943,
+      "adversarial_fp": 0.0035714285714285713,
+      "wakes_per_hour": 20.84848233021004
+    },
+    {
+      "threshold": 0.15000000000000002,
+      "recall": 0.9327142857142857,
+      "adversarial_fp": 0.002857142857142857,
+      "wakes_per_hour": 14.117133775164646
+    },
+    {
+      "threshold": 0.2,
+      "recall": 0.9237619047619048,
+      "adversarial_fp": 0.0023333333333333335,
+      "wakes_per_hour": 9.816549976107867
+    },
+    {
+      "threshold": 0.25,
+      "recall": 0.9164761904761904,
+      "adversarial_fp": 0.0019047619047619048,
+      "wakes_per_hour": 7.198803315812436
+    },
+    {
+      "threshold": 0.3,
+      "recall": 0.9092857142857143,
+      "adversarial_fp": 0.0014285714285714286,
+      "wakes_per_hour": 6.450875698585169
+    },
+    {
+      "threshold": 0.35000000000000003,
+      "recall": 0.903,
+      "adversarial_fp": 0.0011904761904761906,
+      "wakes_per_hour": 5.422475224897679
+    },
+    {
+      "threshold": 0.4,
+      "recall": 0.895952380952381,
+      "adversarial_fp": 0.0009523809523809524,
+      "wakes_per_hour": 4.394074751210188
+    },
+    {
+      "threshold": 0.45,
+      "recall": 0.890095238095238,
+      "adversarial_fp": 0.0008571428571428571,
+      "wakes_per_hour": 4.020110942596555
+    },
+    {
+      "threshold": 0.5,
+      "recall": 0.8816666666666667,
+      "adversarial_fp": 0.0007142857142857143,
+      "wakes_per_hour": 3.1786923732158807
+    },
+    {
+      "threshold": 0.55,
+      "recall": 0.8732857142857143,
+      "adversarial_fp": 0.0005238095238095238,
+      "wakes_per_hour": 2.3372738038352066
+    },
+    {
+      "threshold": 0.6000000000000001,
+      "recall": 0.8644761904761905,
+      "adversarial_fp": 0.00038095238095238096,
+      "wakes_per_hour": 1.8698190430681652
+    },
+    {
+      "threshold": 0.6500000000000001,
+      "recall": 0.8541904761904762,
+      "adversarial_fp": 0.00028571428571428574,
+      "wakes_per_hour": 1.4958552344545322
+    },
+    {
+      "threshold": 0.7000000000000001,
+      "recall": 0.8429523809523809,
+      "adversarial_fp": 0.0002380952380952381,
+      "wakes_per_hour": 1.0284004736874908
+    },
+    {
+      "threshold": 0.7500000000000001,
+      "recall": 0.8283809523809523,
+      "adversarial_fp": 9.523809523809524e-05,
+      "wakes_per_hour": 0.8414185693806743
+    },
+    {
+      "threshold": 0.8,
+      "recall": 0.8078571428571428,
+      "adversarial_fp": 9.523809523809524e-05,
+      "wakes_per_hour": 0.6544366650738578
+    },
+    {
+      "threshold": 0.8500000000000001,
+      "recall": 0.7778095238095238,
+      "adversarial_fp": 9.523809523809524e-05,
+      "wakes_per_hour": 0.4674547607670413
+    },
+    {
+      "threshold": 0.9000000000000001,
+      "recall": 0.7240952380952381,
+      "adversarial_fp": 4.761904761904762e-05,
+      "wakes_per_hour": 0.18698190430681652
+    },
+    {
+      "threshold": 0.9498812766372727,
+      "recall": 0.5933809523809523,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9582805107398956,
+      "recall": 0.5431428571428571,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9652721444732895,
+      "recall": 0.4856666666666667,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9710920730125673,
+      "recall": 0.4210952380952381,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9759366586264449,
+      "recall": 0.3428095238095238,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9799693558686522,
+      "recall": 0.26042857142857145,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.98332622647503,
+      "recall": 0.17461904761904762,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9861205300369298,
+      "recall": 0.09419047619047619,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9884465453385655,
+      "recall": 0.03471428571428571,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.990382751288847,
+      "recall": 0.006238095238095238,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9919944747711773,
+      "recall": 0.0004761904761904762,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9933360947486993,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9944528769907027,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9953825013231888,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9961563329324739,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9968004806151481,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9973366776793622,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.997783015218726,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9981545524992171,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9984638250533282,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.998721267624367,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.998935566230894,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9991139512298245,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9992624412660368,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9993860463392578,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9994889368396285,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9995745842551487,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9996458782984164,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9997052244044793,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.999754624889336,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.999795746507349,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9998299766869296,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9998584703418666,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9998821888376975,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999019324278309,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999183672538052,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999320478206618,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999434357057425,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999529151321412,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999608059322516,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999673743387943,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999728419674137,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999773932939071,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999811818783726,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999843355462699,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999869607012049,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999891459149486,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.999990964915817,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999924790762365,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.999993739483428,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999947886630711,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999956620141047,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999963890030746,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999969941583237,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999974978975696,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999979172167911,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999982662636658,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999985568149083,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.9999987986736115,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    },
+    {
+      "threshold": 0.999999,
+      "recall": 0.0,
+      "adversarial_fp": 0.0,
+      "wakes_per_hour": 0.0
+    }
+  ]
+}
