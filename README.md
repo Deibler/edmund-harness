@@ -84,16 +84,17 @@ learned the expensive way, most of which is not about messaging at all.
 ## Install
 
 ```bash
-git clone https://github.com/Deibler/imcore-bridge.git
 git clone https://github.com/Deibler/edmund-harness.git
-cd imcore-bridge && npm ci && npm run build && cd ..
-cd edmund-harness && bun install
+cd edmund-harness
+bun install
 cp config.example.toml config.toml
 cp -r persona.example persona
 ```
 
-The two repositories sit side by side; the harness depends on the bridge by
-relative path for now. Then edit `config.toml`:
+`bun install` pulls [imcore-bridge](https://github.com/Deibler/imcore-bridge)
+from its release tarball and compiles the injected dylib. If you see
+`Blocked 1 postinstall`, the dylib was not built; `bunx imcore-bridge
+build-native` builds it. Then edit `config.toml`:
 
 ```toml
 [self]

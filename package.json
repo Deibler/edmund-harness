@@ -62,7 +62,7 @@
     "ajv": "^8.20.0",
     "cloudflare": "^7.1.0",
     "hono": "^4.13.5",
-    "imcore-bridge": "file:../imcore-bridge",
+    "imcore-bridge": "https://github.com/Deibler/imcore-bridge/releases/download/v0.2.0/imcore-bridge-0.2.0.tgz",
     "smol-toml": "^1.8.0",
     "yaml": "^2.9.0",
     "zod": "^3.25.76"
@@ -83,5 +83,8 @@
     "concurrently": "^10.0.5",
     "knip": "^6.34.0",
     "typescript": "^7.0.2"
-  }
+  },
+  "trustedDependencies": [
+    "imcore-bridge"
+  ]
 }
