@@ -1,14 +1,14 @@
 # edmund-harness
 
-A personal assistant that lives in iMessage on your Mac.
+An assistant that learns how each person it talks to actually works, and is
+built around what that costs.
 
 edmund-harness is a macOS daemon that turns Claude Code or Codex CLI into
-someone you can text. Every conversation gets its own model thread, its own
-memory, and its own working directory. It replies to DMs and group chats,
-learns about the people it talks to, recovers from its own failures, and can
-reach out first when you allow it. The chat brain runs on your existing
-Claude Code or Codex subscription, so there is no API key for the
-conversation itself.
+someone your family and friends can text. Every conversation gets its own model
+thread, its own memory, and its own working directory. It replies to DMs and
+group chats, recovers from its own failures, and can reach out first when you
+allow it. The chat brain runs on your existing Claude Code or Codex
+subscription, so there is no API key for the conversation itself.
 
 ```
 you      what did we land on for the fence
@@ -19,12 +19,52 @@ you      yeah
 edmund   Sent. He reacted with a thumbs up.
 ```
 
-That is the whole pitch: it reads Messages directly, keeps a memory per
-person, and asks Messages.app to send.
+It reaches people through iMessage because that is what everyone in the house
+already had. That part is roughly an eighth of the code. The rest is the part
+worth reading.
 
 **It requires a Mac signed into Messages, and sending requires System
 Integrity Protection to be disabled.** Read [Private Apple
 frameworks](#private-apple-frameworks) before you install anything.
+
+## What is different about this
+
+Three claims. Each one is measurable, each one was wrong the first time, and
+each one changed the code.
+
+**Memory that only accumulates never becomes judgment.** One person's file
+reached 105 dated observations and had concluded nothing: three separate
+entries circled the same rule without ever stating it. Worse, observations
+only reach a reply through search, and about two thirds of turns are short
+reactions that trigger no search, so most replies were written by a model that
+could not see any of it. A second pass now asks a different question, "what
+are the rules for working with this person," and is allowed to rewrite, merge
+and retire. It is capped at ten rules with the dates that support them, which
+is short enough to sit in the prompt on every turn.
+[docs/memory-architecture.md](docs/memory-architecture.md)
+
+**Context cost decides the architecture, and the intuitive lever is
+backwards.** Cost per turn climbs steeply with context, and a compaction makes
+the next turn markedly more expensive because it rewrites the cached prefix.
+So raising the compaction threshold to hold more context is the wrong move: it
+relocates every later turn into a more expensive bracket and keeps it there.
+A token in the global identity file costs on the order of fifty times a token
+in one person's file, which is why every memory decision here is really a
+question about which layer something belongs in.
+[docs/context-economics.md](docs/context-economics.md)
+
+**An assistant that speaks first needs an economy, not a cron job.** Six
+deterministic gates run before any model is invoked, so a tick that will
+produce nothing costs nothing to evaluate, and each refusal writes its reason
+to a log you can read. Cooldowns stretch automatically when someone stops
+engaging, which only works because outcomes are backfilled from observable
+behaviour: for a month they were not, every attempt sat unresolved, and the
+governor read an empty column and returned "no change" forever.
+[docs/proactive-economics.md](docs/proactive-economics.md)
+
+[docs/thesis.md](docs/thesis.md) is the short version of all three.
+[docs/engineering-notes.md](docs/engineering-notes.md) is what the project
+learned the expensive way, most of which is not about messaging at all.
 
 ## Requirements
 
@@ -271,6 +311,13 @@ ReasoningBank, the core versus archival split from MemGPT.
 
 | Goal | Start here |
 |---|---|
+| What this project argues, in one page | [docs/thesis.md](docs/thesis.md) |
+| The memory design and the failure that produced it | [docs/memory-architecture.md](docs/memory-architecture.md) |
+| Why cost decides the architecture | [docs/context-economics.md](docs/context-economics.md) |
+| How it decides whether to speak first | [docs/proactive-economics.md](docs/proactive-economics.md) |
+| The stance behind recovery, guards and tests | [docs/failure-model.md](docs/failure-model.md) |
+| Publishing a skill to someone else, and consent | [docs/skill-exchange.md](docs/skill-exchange.md) |
+| Things learned the expensive way | [docs/engineering-notes.md](docs/engineering-notes.md) |
 | Install and send the first message | [docs/getting-started.md](docs/getting-started.md) |
 | Understand what runs and how a message becomes a reply | [docs/architecture.md](docs/architecture.md) |
 | Every config key | [docs/configuration.md](docs/configuration.md) |

@@ -6,7 +6,7 @@ import { atomicWriteFileSync } from "../util/atomic-write.ts";
  * Operating principles: the rules for working with one person.
  *
  * A person file is an append-only log of observations, and it is good at
- * that — Chris's had 105 dated entries, specific and well-grounded. But
+ * that — one person's had 105 dated entries, specific and well-grounded. But
  * nothing ever turned them into judgment. Three separate entries circled
  * "his own cut always ships" without becoming it; two noted he trains
  * through restrictions without becoming "stop prescribing prohibitions".
