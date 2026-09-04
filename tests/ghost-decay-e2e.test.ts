@@ -27,6 +27,7 @@ import { ChatDb } from "../src/imessage/db.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import type { SessionKey } from "../src/sessions/key.ts";
+import { emptyChatDb } from "./helpers/chat-db.ts";
 
 const JORDAN: SessionKey = "imessage:dm:+19995550999" as SessionKey;
 
@@ -65,7 +66,7 @@ describe("engagement decay E2E", () => {
       //    moment (Monday 14:00 ET). think.ts is supposed to persist
       //    the new multiplier even when bailing on the cooldown gate.
       const config = loadConfig();
-      const chatDb = new ChatDb(config.paths.chat_db);
+      const chatDb = new ChatDb(emptyChatDb().path);
       const contacts = new ContactBook([], new AddressBook());
       const monday14 = Date.parse("2026-05-11T18:00:00Z"); // M-F 9-19 ET
       await runGhostTick(
@@ -133,7 +134,7 @@ describe("engagement decay E2E", () => {
         prefs.recordOutcome(id, "ignored");
       }
       const config = loadConfig();
-      const chatDb = new ChatDb(config.paths.chat_db);
+      const chatDb = new ChatDb(emptyChatDb().path);
       const contacts = new ContactBook([], new AddressBook());
       await runGhostTick(
         {

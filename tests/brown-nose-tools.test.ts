@@ -21,6 +21,7 @@ import { brownNoseTools } from "../src/mcp/tools/brown-nose.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import type { SessionKey } from "../src/sessions/key.ts";
+import { emptyChatDb } from "./helpers/chat-db.ts";
 
 const JORDAN: SessionKey = "imessage:dm:+19995550042" as SessionKey;
 
@@ -32,7 +33,7 @@ function setup(): {
   const dataDir = mkdtempSync(join(tmpdir(), "edmund-bn-tools-"));
   const sandboxPath = join(dataDir, "sandbox");
   const config = loadConfig();
-  const chatDb = new ChatDb(config.paths.chat_db);
+  const chatDb = new ChatDb(emptyChatDb().path);
   const contacts = new ContactBook([], new AddressBook());
   const cron = new CronStore(dataDir);
   const bgJobs = new BgJobStore(dataDir);

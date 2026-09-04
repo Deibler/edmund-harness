@@ -82,8 +82,15 @@ export class AddressBook {
 
 function findAddressBookPath(): string | null {
   const pattern = `${homedir()}/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`;
-  const glob = new Glob(pattern);
-  for (const p of glob.scanSync({ absolute: true })) return p;
+  try {
+    const glob = new Glob(pattern);
+    for (const p of glob.scanSync({ absolute: true })) return p;
+  } catch {
+    // No Contacts at all: a fresh account, a machine that never opened the
+    // app, a CI runner. The class above promises a graceful no-op when the
+    // database is not accessible, and that promise has to cover finding it
+    // as well as reading it.
+  }
   return null;
 }
 
