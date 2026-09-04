@@ -22,11 +22,11 @@ jobs:
       run:
         working-directory: edmund-harness
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: edmund-harness
           fetch-depth: 0
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Deibler/imcore-bridge
           path: imcore-bridge

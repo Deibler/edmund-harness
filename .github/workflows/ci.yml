@@ -21,11 +21,11 @@ jobs:
       run:
         working-directory: edmund-harness
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: edmund-harness
       - name: Check out imcore-bridge beside it
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Deibler/imcore-bridge
           path: imcore-bridge
@@ -58,10 +58,10 @@ jobs:
       run:
         working-directory: edmund-harness
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: edmund-harness
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Deibler/imcore-bridge
           path: imcore-bridge
