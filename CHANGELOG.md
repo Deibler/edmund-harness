@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0
+
+### Minor Changes
+
+- c8007e1: Install from one checkout. `imcore-bridge` now comes from its GitHub release
+  tarball rather than a sibling directory, so `git clone && bun install` is the
+  whole setup and the dylib is compiled during install.
+- 5bad254: Add design documentation covering what is novel in the project, and lead the
+  README with it rather than with the messaging transport. New pages: thesis,
+  memory architecture, context economics, proactive economics, failure model,
+  skill exchange, engineering notes.
+
+### Patch Changes
+
+- b1ae4c4: Pin imcore-bridge v0.2.3, which is the first release published by the bridge's
+  own automated pipeline.
+
 ## 0.1.0
 
 ### Minor Changes
