@@ -57,8 +57,12 @@ cp config.example.toml config.toml
 cp -r persona.example persona
 ```
 
-`package.json` points at `../imcore-bridge` by relative path, so the two
-checkouts must be siblings until the bridge is published as a package.
+`imcore-bridge` comes from its GitHub release tarball, pinned in
+`package.json`. Its `postinstall` compiles the dylib during `bun install`,
+which works because the harness lists it in `trustedDependencies`; bun blocks
+install scripts otherwise. If the dylib is missing, `bunx imcore-bridge
+build-native` builds it, and sending fails with that command in the message
+until it exists.
 
 Do not skip the persona copy. `persona/` is gitignored because a real one
 fills up with details about real people, and without it the daemon boots and

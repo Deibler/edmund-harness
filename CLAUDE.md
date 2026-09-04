@@ -84,9 +84,24 @@ model then guesses the call shape.
 # PART 2 — Architecture worth knowing
 
 **Two repos.** This one (TypeScript/bun) and `imcore-bridge` (an Objective-C
-dylib injected into Messages.app plus a TypeScript client). During development
-`node_modules/imcore-bridge` is a link to a sibling checkout, so a native
-rebuild takes effect on the next Messages launch with no install step.
+dylib injected into Messages.app plus a TypeScript client). The harness pins
+the bridge's GitHub release tarball, so an ordinary `bun install` needs only
+this checkout.
+
+**Working on the bridge itself** needs the sibling checkout back in the loop,
+because the pinned tarball is a fixed version. Point the two files that matter
+at it and a native rebuild again takes effect on the next Messages launch with
+no install step:
+
+```bash
+ln -sfn ~/imcore-bridge/native/build/imcore-bridge.dylib \
+        node_modules/imcore-bridge/native/build/imcore-bridge.dylib
+ln -sfn ~/imcore-bridge/dist node_modules/imcore-bridge/dist   # only for client changes
+```
+
+`bun install` overwrites both, so redo them after one. Ship bridge changes by
+cutting a bridge release and bumping the URL here; a local symlink is not a
+state anything else can see.
 
 **Prompt composition, roughly per turn:**
 - system prompt in the low tens of thousands of tokens (it was almost double
