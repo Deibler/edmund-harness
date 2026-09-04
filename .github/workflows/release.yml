@@ -39,9 +39,9 @@ jobs:
         uses: changesets/action@v2
         with:
           cwd: edmund-harness
-          version: bun run version
-          publish: bun run release
-          commit: "Version packages"
-          title: "Version packages"
+          version-script: bun run version
+          publish-script: bun run release
+          commit-message: "Version packages"
+          pr-title: "Version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
