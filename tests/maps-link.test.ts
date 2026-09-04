@@ -11,7 +11,10 @@ import {
 
 describe("apple maps links", () => {
   test("a name plus an address labels the card with the place", () => {
-    const url = appleMapsLink({ name: "Sabrina's Cafe", address: "910 N 27th St, Philadelphia, PA" });
+    const url = appleMapsLink({
+      name: "Sabrina's Cafe",
+      address: "910 N 27th St, Philadelphia, PA",
+    });
     // `address` shows the location without searching; `q` becomes the label.
     expect(url).toContain("address=910%20N%2027th%20St%2C%20Philadelphia%2C%20PA");
     expect(url).toContain("q=Sabrina%27s%20Cafe");

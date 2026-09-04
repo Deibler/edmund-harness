@@ -27,7 +27,6 @@ const REFUSAL_LABEL: Record<CreditEventDto["kind"], string> = {
   "refused-unavailable": "credits system unreachable",
   "refused-disabled": "paused by operator",
   "refused-account": "OpenRouter account out of funds",
-  charged: "charged",
 };
 
 function PaysWith({ w }: { w: WalletDto }) {

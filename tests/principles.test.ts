@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
-  MAX_PRINCIPLES,
-  principlesDerivedAt,
-  readPrinciples,
-  renderPrinciples,
-} from "../src/persona/principles.ts";
-import {
   CONSOLIDATE_AFTER_NEW_BULLETS,
   CONSOLIDATION_PROMPT,
   countObservations,
   parseConsolidation,
   shouldConsolidate,
 } from "../src/persona/consolidate.ts";
+import {
+  MAX_PRINCIPLES,
+  principlesDerivedAt,
+  readPrinciples,
+  renderPrinciples,
+} from "../src/persona/principles.ts";
 
 /**
  * A person file is an append-only log and is good at that. What it cannot do
@@ -36,7 +36,12 @@ const file = [
 describe("principles section", () => {
   test("round-trips rules and their evidence", () => {
     const rendered = renderPrinciples(
-      [{ rule: "His cut ships — give the note, skip the recut.", evidence: ["2026-08-18", "2026-08-25"] }],
+      [
+        {
+          rule: "His cut ships — give the note, skip the recut.",
+          evidence: ["2026-08-18", "2026-08-25"],
+        },
+      ],
       42,
     );
     const back = readPrinciples(rendered);
@@ -46,7 +51,9 @@ describe("principles section", () => {
   });
 
   test("the derivation point is stamped so the trigger cannot drift from the file", () => {
-    expect(principlesDerivedAt(renderPrinciples([{ rule: "a rule here", evidence: [] }], 105))).toBe(105);
+    expect(
+      principlesDerivedAt(renderPrinciples([{ rule: "a rule here", evidence: [] }], 105)),
+    ).toBe(105);
     expect(principlesDerivedAt("no section at all")).toBe(0);
   });
 

@@ -38,8 +38,8 @@ function walk(dir: string): string[] {
 function deliverCallArgs(source: string): string[] {
   const calls: string[] = [];
   const re = /deliverReply\(/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(source))) {
+  let m: RegExpExecArray | null = re.exec(source);
+  for (; m !== null; m = re.exec(source)) {
     const open = source.indexOf("{", m.index);
     if (open < 0) continue;
     let depth = 0;

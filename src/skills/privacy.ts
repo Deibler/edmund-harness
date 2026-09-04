@@ -141,7 +141,10 @@ const AMBIGUOUS_NAME_WORDS = new Set([
 
 /** Strip diacritics so "José" and "Jose" are the same token. */
 function fold(s: string): string {
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  // \p{Mn} is every nonspacing combining mark, which is exactly what NFD
+  // decomposition leaves behind. A literal range of those marks is the same
+  // thing written unclearly, and lints as such.
+  return s.normalize("NFD").replace(/\p{Mn}/gu, "");
 }
 
 function escapeRe(s: string): string {

@@ -142,10 +142,7 @@ export type DrainResult = { attempted: number; sent: number; dropped: number };
  *
  * chat.db still holds the right answer the whole time; nobody was asking it.
  */
-function pinChatGuid(
-  entry: { sessionKey: SessionKey; chatGuid: string },
-  deps: DrainDeps,
-): string {
+function pinChatGuid(entry: { sessionKey: SessionKey; chatGuid: string }, deps: DrainDeps): string {
   if (entry.chatGuid) return entry.chatGuid;
   if (!deps.chatDb || !deps.contacts) return "";
   try {

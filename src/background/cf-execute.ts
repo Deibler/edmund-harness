@@ -214,6 +214,18 @@ export async function execCfSnapshot(
   const screenshotPath = outPath(sandboxPath, "screenshot", `${prefix}.png`);
   const htmlPath = outPath(sandboxPath, "html", `${prefix}.html`);
   const snap = await client.browserRendering.snapshot.create(params);
+  // Both fields are optional in the API: a render that fails part way returns
+  // the half it managed. Writing an empty file would hand the model a
+  // screenshot path that opens to nothing, so say what is missing instead.
+  if (snap.screenshot === undefined || snap.content === undefined) {
+    const missing = [
+      snap.screenshot === undefined ? "screenshot" : null,
+      snap.content === undefined ? "html content" : null,
+    ]
+      .filter(Boolean)
+      .join(" and ");
+    throw new Error(`Cloudflare returned a snapshot with no ${missing}`);
+  }
   writeFileSync(screenshotPath, Buffer.from(snap.screenshot, "base64"));
   writeFileSync(htmlPath, snap.content);
   return {

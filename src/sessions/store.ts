@@ -674,9 +674,9 @@ export class StateStore {
    * registry entry that unpinned sends corrupt.
    */
   bumpOutboxAttempt(sessionKey: SessionKey): void {
-    this.q(
-      `UPDATE pending_outbox SET attempt_count = attempt_count + 1 WHERE session_key = ?`,
-    ).run(sessionKey);
+    this.q(`UPDATE pending_outbox SET attempt_count = attempt_count + 1 WHERE session_key = ?`).run(
+      sessionKey,
+    );
   }
 
   /** Repoints a queued reply at a chat row, once one has been resolved for it. */

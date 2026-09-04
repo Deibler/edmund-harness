@@ -4,7 +4,7 @@
  * in, so a blocked prompt produced a 0-byte mp3 and a cheerful "Audio
  * generated" summary. These lock the two ways that can happen.
  */
-import { describe, expect, it, afterEach } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { generateAudio } from "../src/tools/openrouter-http";
 
 const realFetch = globalThis.fetch;

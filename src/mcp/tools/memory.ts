@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { PEOPLE_DIR, PERSONA_DIR } from "../../claude/persona.ts";
+import { appendDomainNote } from "../../persona/domains.ts";
 import {
   type SelfFile,
   type SelfSection,
@@ -9,7 +10,6 @@ import {
   readSelfFile,
   writeSelfFile,
 } from "../../persona/self-memory.ts";
-import { appendDomainNote } from "../../persona/domains.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
 
@@ -195,8 +195,13 @@ const RememberSubjectInput = z.object({
   learned: z.string().min(12).describe("What was tried and what actually happened."),
   outcome: z
     .enum(["worked", "rejected", "mixed", "untested"])
-    .describe("What happened when this met reality. Record rejections, they are the valuable ones."),
-  source: z.string().optional().describe("Who/when it came from, so one-person claims stay visible."),
+    .describe(
+      "What happened when this met reality. Record rejections, they are the valuable ones.",
+    ),
+  source: z
+    .string()
+    .optional()
+    .describe("Who/when it came from, so one-person claims stay visible."),
 });
 
 export function memoryTools(_ctx: ToolContext): ToolDef[] {
