@@ -206,10 +206,13 @@ describe("walletActivity", () => {
       if (String(url).endsWith("/analytics/query")) return new Response("boom", { status: 500 });
       throw new Error(`unexpected ${String(url)}`);
     }) as typeof fetch;
+    // The store stamps the key with the real clock; pin it before NOW so there
+    // is a window to read at all, or the test only passes on the day it was written.
+    const wallet = { ...store.get(DM)!, createdAtMs: NOW - DAY };
     const a = await walletActivity({
       managementKey: "k",
       store,
-      wallet: store.get(DM)!,
+      wallet,
       payments: [payment()],
       remainingNowUsd: 4.5,
       operatorAdjustUsd: 0,

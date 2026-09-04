@@ -19,6 +19,21 @@ are the convention here), control characters in regexes (ANSI and `chat.db`
 decoding need them), and non null assertions. `noExplicitAny` is a warning;
 the remaining ones are real.
 
+## Continuous integration
+
+Every push to `main` and every pull request runs `.github/workflows/ci.yml`
+on a macOS runner: the imcore-bridge client is checked out beside the
+harness and built, then typecheck, lint, the test suite and a dependency
+audit at high severity run. Knip runs as advisory until the unused-export
+backlog in the kitchen integration is cleared. `main` only accepts pull
+requests whose checks passed. Dependabot opens weekly update pull requests
+for the three package roots and the workflow actions.
+
+Versions come from changesets. `bun run changeset` records a change;
+`.github/workflows/release.yml` keeps a "Version packages" pull request open
+and tags the release when it merges. The package is versioned and tagged,
+not published to npm.
+
 ## Tests
 
 `bun test tests/`, not bare `bun test`. The root sweep also picks up a

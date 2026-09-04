@@ -16,6 +16,15 @@ hard way.
   Messages.app or the bridge, but anything that touches delivery needs
   `chat.db` fixtures.
 
+## How changes land
+
+`main` is protected. Nothing is pushed to it directly, not even by the
+maintainer: every change is a pull request, and a pull request merges only
+when the CI checks pass (typecheck, lint, the test suite, and a dependency
+audit at high severity). Releases use changesets: a change that people
+would notice carries a `.changeset` entry, and a "Version packages" pull
+request accumulates them into the next version and the changelog.
+
 ## Making a change
 
 1. Fork and branch.
@@ -26,9 +35,12 @@ hard way.
    `bun run knip`.
 4. If the change touches config, update `config.example.toml` and
    `docs/configuration.md`. If it touches a command, update `docs/cli.md`.
-5. Write a commit message that says why, not just what. The log is read.
-6. Open a pull request. Describe what you verified and how, including anything
-   you could not verify.
+5. If a person running the harness would notice the change, add a changeset:
+   `bun run changeset`, pick patch or minor, write one sentence.
+6. Write a commit message that says why, not just what. The log is read.
+7. Open a pull request. Describe what you verified and how, including anything
+   you could not verify. CI runs on the pull request; the merge button waits
+   for it.
 
 ## What gets merged
 

@@ -41,6 +41,10 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "knip": "knip",
+    "audit": "bun audit --audit-level=high",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset tag",
     "dashboard:dev": "concurrently -n srv,web -c blue,magenta \"bun run dashboard:server\" \"cd dashboard/web && vite\"",
     "dashboard:server": "bun --watch run dashboard/server/main.ts",
     "dashboard:build": "cd dashboard/web && vite build",
@@ -65,6 +69,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@changesets/cli": "^2.27.9",
     "@types/bun": "latest",
     "concurrently": "^9.2.1",
     "knip": "^6.13.1",
