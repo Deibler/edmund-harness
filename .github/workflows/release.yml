@@ -36,7 +36,7 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
       - name: Version pull request, or tag the release
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           cwd: edmund-harness
           version: bun run version
