@@ -3,6 +3,23 @@
 Start with the [root README](../README.md). This directory holds everything
 longer than a README paragraph.
 
+## Start here if you want to know what is novel
+
+These are the design pages. They explain what this project argues and why the
+code looks the way it does, rather than how to operate it.
+
+| Page | What it covers |
+|---|---|
+| [thesis.md](thesis.md) | The three claims the project is built on |
+| [memory-architecture.md](memory-architecture.md) | Five layers, consolidation, archiving, and the bug shape behind them |
+| [context-economics.md](context-economics.md) | Why prompt composition is a pricing decision, and four wrong levers |
+| [proactive-economics.md](proactive-economics.md) | Gates, intensity, engagement decay, outcome backfill |
+| [failure-model.md](failure-model.md) | Sent is a claim; classified failures, guards, barge-in |
+| [skill-exchange.md](skill-exchange.md) | One person's playbook offered to another, and the consent gate |
+| [engineering-notes.md](engineering-notes.md) | Rules that cost days to learn, most of them not about messaging |
+
+## Reference
+
 | Goal | Start here |
 |---|---|
 | Install and send the first message | [getting-started.md](getting-started.md) |
