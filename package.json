@@ -65,7 +65,7 @@
     "imcore-bridge": "file:../imcore-bridge",
     "smol-toml": "^1.3.1",
     "yaml": "^2.9.0",
-    "zod": "^3.23.8"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
