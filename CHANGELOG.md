@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.0
+
+### Minor Changes
+
+- 8f941cd: First public release: the documentation set, the `[security]` trust policy
+  with safe defaults, dashboard and daemon hardening, revocable portal links,
+  and a tree scrubbed of real identifiers.
+
+### Patch Changes
+
+- cc54099: Take the dependency updates that pass the gates: TypeScript 7, cloudflare 7
+  (its snapshot response fields are optional now, so a partial render is
+  reported rather than written out as an empty file), concurrently 10,
+  changesets 3, hookform resolvers 5, and the GitHub Actions majors. Clear
+  every high-severity advisory by pinning patched versions of six transitive
+  packages. CI now typechecks and builds both front ends, which is where three
+  type errors had been hiding, and the audit gate retries instead of failing
+  the build when the advisory registry does not answer.
+- 9cdf62c: Move the user portal to Vite 8 with the matching React plugin major. The
+  plugin was declined last time because it would not build against Vite 6; it
+  builds against Vite 8, so the two move together.
+- 28adac8: Move the operator dashboard to Vite 8 with the matching React plugin, and
+  take zod 4 there (it is a dependency the app's own source never imports).
+
 Notable changes, newest first. Dates are absolute.
 
 ## Unreleased
