@@ -10,7 +10,7 @@
         "ajv": "^8.20.0",
         "cloudflare": "^7.1.0",
         "hono": "^4.13.5",
-        "imcore-bridge": "https://github.com/Deibler/imcore-bridge/releases/download/v0.2.0/imcore-bridge-0.2.0.tgz",
+        "imcore-bridge": "https://github.com/Deibler/imcore-bridge/releases/download/v0.2.3/imcore-bridge-0.2.3.tgz",
         "smol-toml": "^1.8.0",
         "yaml": "^2.9.0",
         "zod": "^3.25.76",
@@ -460,7 +460,7 @@
 
     "iconv-lite": ["iconv-lite@0.7.2", "", { "dependencies": { "safer-buffer": ">= 2.1.2 < 3.0.0" } }, "sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw=="],
 
-    "imcore-bridge": ["imcore-bridge@https://github.com/Deibler/imcore-bridge/releases/download/v0.2.0/imcore-bridge-0.2.0.tgz", { "bin": { "imcore-bridge": "./dist/bin/imcore-bridge.js" } }],
+    "imcore-bridge": ["imcore-bridge@https://github.com/Deibler/imcore-bridge/releases/download/v0.2.3/imcore-bridge-0.2.3.tgz", { "bin": { "imcore-bridge": "./dist/bin/imcore-bridge.js" } }],
 
     "import-meta-resolve": ["import-meta-resolve@4.2.0", "", {}, "sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg=="],
 
