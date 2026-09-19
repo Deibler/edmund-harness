@@ -609,6 +609,16 @@ export class VectorStore {
       .run(key, value, Date.now());
   }
 
+  /** String-valued watermark, for sweeps keyed on content rather than a
+   *  version number (see purgeDependencyArtifacts). */
+  getWatermarkString(key: string): string | null {
+    return this.getString(key);
+  }
+
+  setWatermarkString(key: string, value: string): void {
+    this.setString(key, value);
+  }
+
   /** Row count (for diagnostics + the dashboard). */
   count(): number {
     const row = this.db.prepare<{ n: number }, []>(`SELECT COUNT(*) AS n FROM rows`).get();

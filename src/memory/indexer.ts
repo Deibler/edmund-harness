@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { extractAppleTranscript } from "../imessage/apple-transcript.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { decodeMessageText } from "../imessage/decode.ts";
+import { DEPENDENCY_DIRS, underDependencyDir } from "../persona/sandbox.ts";
 import { log } from "../util/log.ts";
 import { chunkMarkdownDoc, chunkPlainText } from "./chunker.ts";
 import type { EmbedProvider } from "./embed-provider.ts";
@@ -818,6 +819,8 @@ export class Indexer {
       log.info("recall", "artifact watermark reset (walk v2) — recovering capped-out files");
     }
 
+    purgeDependencyArtifacts(this.store);
+
     const watermark = this.store.getWatermark("artifact.mtime");
     let candidates: Array<{
       path: string;
@@ -933,6 +936,38 @@ export class Indexer {
   }
 }
 
+/** Per-call cap on purged rows. deleteRefs is synchronous on the daemon's
+ *  event loop, and the first sweep of a long-lived index found ~105k rows;
+ *  paying that across ticks beats one multi-minute stall. */
+export const DEPENDENCY_PURGE_BATCH = 2000;
+
+/**
+ * Drop artifact chunks indexed under a dependency tree before the walk
+ * learned to skip it. Keyed on the skip list itself, so extending
+ * DEPENDENCY_DIRS re-runs the sweep with no version constant to bump.
+ * Returns rows deleted this call; the key is only recorded once nothing
+ * is left, so a partial sweep resumes on the next tick.
+ */
+export function purgeDependencyArtifacts(
+  store: VectorStore,
+  limit = DEPENDENCY_PURGE_BATCH,
+): number {
+  const key = [...DEPENDENCY_DIRS].sort().join(",");
+  if (store.getWatermarkString("artifact.dependency_purge") === key) return 0;
+  const stale = store.refsWithPrefix("artifact:").filter(underDependencyDir);
+  const batch = stale.slice(0, limit);
+  store.deleteRefs(batch);
+  if (batch.length > 0) {
+    log.info("recall", "purged artifact chunks under dependency trees", {
+      deleted: batch.length,
+      remaining: stale.length - batch.length,
+    });
+  }
+  if (batch.length < stale.length) return batch.length;
+  store.setWatermarkString("artifact.dependency_purge", key);
+  return batch.length;
+}
+
 function walkArtifacts(
   root: string,
   exts: Set<string>,
@@ -951,8 +986,7 @@ function walkArtifacts(
     "received-files",
     "agents",
     "teams",
-    "node_modules",
-    ".git",
+    ...DEPENDENCY_DIRS,
   ]);
   const stack = [root];
   while (stack.length > 0) {

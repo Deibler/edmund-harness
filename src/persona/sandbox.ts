@@ -53,6 +53,35 @@ export function sandboxDir(sessionKey: SessionKey): string {
   return `${sandboxRoot()}/${ns}${prefix}_${slug(id)}`;
 }
 
+/**
+ * Directory names that hold dependency or build trees rather than anything
+ * a person or the model authored. Every walker over the sandbox (the recall
+ * indexer, the portal file list) skips these at any depth. One list on
+ * purpose: the portal skipped them and the indexer did not, and by
+ * 2026-09-04 vendored Python was 60% of the recall index (105k of 174k rows).
+ */
+export const DEPENDENCY_DIRS: ReadonlySet<string> = new Set([
+  "node_modules",
+  ".git",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".tox",
+  ".nox",
+  "site-packages",
+  "cadlib",
+  "pylib",
+]);
+
+/** True when any path segment is a dependency tree. Accepts an index ref
+ *  (`artifact:/abs/path#seq`) as well as a plain path. */
+export function underDependencyDir(path: string): boolean {
+  return path.split("/").some((seg) => DEPENDENCY_DIRS.has(seg));
+}
+
 function slug(s: string): string {
   return s
     .toLowerCase()

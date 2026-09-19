@@ -14,7 +14,7 @@ import type { Config } from "../../../src/config/config.ts";
 import type { CronStore } from "../../../src/cron/store.ts";
 import type { GhostPrefsStore } from "../../../src/ghost/prefs.ts";
 import { ChatDb } from "../../../src/imessage/db.ts";
-import { sandboxDir } from "../../../src/persona/sandbox.ts";
+import { DEPENDENCY_DIRS, sandboxDir } from "../../../src/persona/sandbox.ts";
 import type { ContactBook } from "../../../src/sessions/contacts.ts";
 import type { SessionKey } from "../../../src/sessions/key.ts";
 import { chatIdFromKey, isGroupSession } from "../../../src/sessions/key.ts";
@@ -36,22 +36,7 @@ const MEDIA_DIRS = new Set([
 // them made large long-running chats generate multi-megabyte portal pages
 // with hundreds of thousands of hidden DOM rows (and a black screen on
 // mobile Safari while it tried to parse them).
-const SKIP_DIRS = new Set([
-  ".resized",
-  ".inline-images",
-  "node_modules",
-  ".git",
-  ".venv",
-  "venv",
-  "__pycache__",
-  ".pytest_cache",
-  ".mypy_cache",
-  ".ruff_cache",
-  ".tox",
-  ".nox",
-  "site-packages",
-  "cadlib",
-]);
+const SKIP_DIRS = new Set([".resized", ".inline-images", ...DEPENDENCY_DIRS]);
 const SKIP_FILES = new Set(["decisions.jsonl"]); // ghost telemetry — internal
 
 /** Document-ish extensions shown on the Artifacts tab ("things Edmund made"). */
