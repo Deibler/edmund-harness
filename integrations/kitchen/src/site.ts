@@ -310,7 +310,7 @@ export function renderSite(account: string, acct: Account, assets: Assets = noAs
 <title>${escapeHtml(title)}</title>
 ${FONTS}
 <style>${CSS}</style>
-</head><body>
+</head><body class="nojs">
 <!-- Claiming this id opts the page out of instant-share's injected overlay bar,
      which is fixed to the bottom at z-99999 and covered the navigation. -->
 <div id="instant-share-admin" hidden></div>

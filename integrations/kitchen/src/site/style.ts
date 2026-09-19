@@ -54,6 +54,16 @@ input,textarea{font:inherit;color:inherit}
 .wrap{max-width:1180px;margin:0 auto;padding:0 18px}
 [data-panel]{display:none}
 [data-panel].on{display:block;animation:in .26s cubic-bezier(.2,.7,.3,1)}
+body.nojs [data-panel="kitchen"]{display:block}
+body.nojs header .iconbtn,body.nojs .dnav,body.nojs #chatbtn,
+body.nojs .checkcard,body.nojs #q,body.nojs .active-filters,body.nojs footer,
+body.nojs .prod .shot{display:none}
+body.nojs{overflow-x:hidden}
+body.nojs main.wrap{width:100vw;max-width:100vw;overflow:hidden}
+body.nojs .prods{grid-template-columns:repeat(2,minmax(0,1fr))}
+body.nojs .prod{min-width:0}
+body.nojs .prod .nm{overflow-wrap:anywhere}
+body.nojs .head h2{max-width:100%;font-size:30px;overflow-wrap:anywhere}
 @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 svg{display:block}
 
