@@ -8,9 +8,9 @@
  * this does not work. So the properties asserted here are about refusing to
  * start rather than about finishing.
  *
- * The photo reading itself is a model call and is not tested here; what IS
- * tested is everything around it, because that is where a bad reading turns
- * into a bad ledger.
+ * The photo reading itself happens in the household's main session. What is
+ * tested here is everything around it, because that is where a bad reading
+ * turns into a bad ledger.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";

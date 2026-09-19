@@ -437,20 +437,29 @@ judgement. The launchd pass runs it every minute.
 
 **Settled without anybody** — confirming or calling off a meal, "we made it" from
 a recipe page, starring, notes, ticking the shopping list, undoing an automatic
-cleanup, every swipe of a shelf check, correcting the ledger from a card, saving
-preferences and the vibe, generating a set of explore ideas, putting a dish's
-shopping on the list, answering a question asked out loud mid-recipe, filing an
-uploaded photo, and creating or pausing a standing text.
+cleanup, every confirmed swipe of a shelf check, correcting the ledger from a
+card, saving preferences and the vibe, filing an uploaded photo, and creating or
+pausing a standing text.
 
-**Left for you** — writing a recipe (`make`), building a variant around what the
-house has (`variant`), writing an explore idea out properly (`idearecipe`), and
-questions asked in the page's chat (`chat`).
+**Left for you, in the household's main chat session** — writing a recipe
+(`make`), building a variant around what the house has (`variant`), writing the
+household's current meal ideas (`kitchen_ideas`), generating the explore shelf
+(`kitchen_explore`), deciding what a dish really needs from the store
+(`kitchen_shopping add`), answering a question asked aloud mid-recipe
+(`kitchen_voice`), writing an explore idea out properly (`idearecipe`), and
+questions asked in the page's chat (`chat`). The watch and daily passes queue a
+one-shot event in your existing session. They never spawn a kitchen sub-agent or
+call a second text model directly.
 
 Two consequences worth stating plainly:
 
 - **Never hand-apply something in the first list.** It has already been done or
   is about to be, within the minute. Re-applying a `plan` confirmation consumes
   a dinner's ingredients twice.
+- **Never delegate anything in the second list.** The point of waking your main
+  session is that it carries the household's taste, history and current context.
+  Answer through the named kitchen tool, then end the scheduled turn with
+  `KEEP_QUIET` so working notes do not become a chat message.
 - **Every button that spends a model call says so on screen** and tells the
   person where the answer will appear: "I will text you when it is ready" for
   anything you write, "this lands on the page itself" for anything the site

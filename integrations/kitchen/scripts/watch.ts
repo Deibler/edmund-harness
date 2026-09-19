@@ -9,9 +9,11 @@
  * Why a poller rather than a trigger that wakes a session: the deterministic
  * answers here — a meal confirmed, a cleanup undone, a line ticked off — do not
  * improve for having a model think about them, and routing them through one
- * makes the cheapest interaction on the site the slowest. A model still gets
- * woken for the things that need writing; those are deliberately left in the
- * queue by `drain`.
+ * makes the cheapest interaction on the site the slowest. What needs writing
+ * or judgement is deliberately left in the queue by `drain`, and this loop
+ * then wakes ME for it, in the chat of whoever tapped, with the tool that
+ * writes the answer back. Not a sub-agent: the wake is a scheduled event in
+ * my own session, so the answer comes from somebody who knows the household.
  *
  * Re-rendering only on change matters: the render is a few hundred kilobytes,
  * this runs 8,640 times a day, and a page that rewrites itself every pass
@@ -20,11 +22,12 @@
 
 import { existsSync } from "node:fs";
 import { getAccount, listAccounts } from "../src/accounts.ts";
-import { drain, publishQueue } from "../src/drain.ts";
+import { drain, needsPerson, publishQueue } from "../src/drain.ts";
 import { syncDueNotes } from "../src/notesync.ts";
 import { describe, due, fire } from "../src/schedules.ts";
 import { loadKitchenSettings } from "../src/settings.ts";
 import { writeSite } from "../src/site.ts";
+import { wakeForRequests } from "../src/wake.ts";
 
 const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 
@@ -86,6 +89,33 @@ for (const { id } of listAccounts()) {
           trouble = [trouble, `render: ${(e as Error).message}`].filter(Boolean).join("; ");
           console.error(`${stamp()} ${id}: FAILED render ${(e as Error).message}`);
         }
+      }
+    }
+
+    // Anything left that a person has to answer wakes me. Filtered through the
+    // same predicate `stillWaiting` uses, so a malformed tap the drain declined
+    // does not wake anybody, and rate-limited inside `wake` so an unanswered
+    // one costs the household three turns at most. A wake that cannot be
+    // queued is trouble worth publishing, not a reason to skip the stamp.
+    const acct = getAccount(id);
+    if (acct) {
+      try {
+        const dir = acct.site?.artifact ?? "";
+        const w = wakeForRequests(
+          id,
+          acct,
+          res.left.filter((r) => needsPerson(id, dir, r)),
+        );
+        for (const x of w.woke)
+          console.log(
+            `${stamp()} ${id}: woke ${x.session} for ${x.keys.length} request(s), job ${x.job}`,
+          );
+        for (const h of w.held)
+          if (h.why !== "recent")
+            console.log(`${stamp()} ${id}: not waking for ${h.key} (${h.why})`);
+      } catch (e) {
+        trouble = [trouble, `wake: ${(e as Error).message}`].filter(Boolean).join("; ");
+        console.error(`${stamp()} ${id}: FAILED wake ${(e as Error).message}`);
       }
     }
 

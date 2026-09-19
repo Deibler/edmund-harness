@@ -11,7 +11,8 @@
  * tool takes a household argument in normal use and no tool can span two.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { ToolContext } from "../../src/mcp/context.ts";
@@ -19,6 +20,7 @@ import type { ToolDef } from "../../src/mcp/tools/types.ts";
 import { kitchenConfig } from "./config.ts";
 import {
   NoAccountError,
+  accountDir,
   createAccount,
   eaterCount,
   getAccount,
@@ -41,6 +43,8 @@ import {
 } from "./src/cookbook.ts";
 import { STORES, bestBasket, bestDeals, importPrices, loadPrices } from "./src/deals.ts";
 import { checkAccount, checkAll, format, summarise } from "./src/doctor.ts";
+import { exploreBrief, saveExplore } from "./src/explore.ts";
+import { IDEAS_TARGET, ideasBrief, readOverlay, saveIdeas } from "./src/ideas.ts";
 import {
   expiring,
   intake,
@@ -51,9 +55,10 @@ import {
   shoppingList,
   spend,
 } from "./src/insights.ts";
+import { addToList } from "./src/list.ts";
 import { WAIT_MS, syncNote } from "./src/notesync.ts";
 import { addTo, emptyTotal } from "./src/nutrition.ts";
-import { acceptStock, accountOf, firstStock, provision, state } from "./src/onboard.ts";
+import { acceptStock, accountOf, provision, state, stockBrief } from "./src/onboard.ts";
 import { confirmPlan } from "./src/plans.ts";
 import { addNote, loadProfiles, toggleFavorite } from "./src/profile.ts";
 import {
@@ -80,7 +85,7 @@ import {
   saveDinners,
 } from "./src/schedules.ts";
 import { applyKitchenConfig, priceMaxAgeDays } from "./src/settings.ts";
-import { readShelves } from "./src/shelfread.ts";
+import { proposeShelves, shelfBrief } from "./src/shelfread.ts";
 import { settleAfterPurchase, shopping, tripCount } from "./src/shopping.ts";
 import { writeSite } from "./src/site.ts";
 import {
@@ -103,6 +108,7 @@ import {
 } from "./src/store.ts";
 import { CATEGORIES, LEVELS, LOCATIONS, type Plan, type PlanLine } from "./src/types.ts";
 import { table } from "./src/util.ts";
+import { MAX_WORDS, sayVoice } from "./src/voice.ts";
 
 function text(body: string, isError = false) {
   return { content: [{ type: "text" as const, text: body }], isError };
@@ -126,6 +132,84 @@ const Acct = z
   .string()
   .optional()
   .describe("Household id. Omit in normal use — it resolves from the chat session.");
+
+/**
+ * Re-render the household's site after a write the page shows.
+ *
+ * The minute pass re-renders after the taps it settled itself; a write that
+ * came through a tool would otherwise sit invisible until the next one. Best
+ * effort: a render that fails is reported in the tool result, never thrown
+ * over a write that has already happened.
+ */
+function rerender(id: string): string | null {
+  const acct = getAccount(id);
+  const dir = acct?.site?.artifact;
+  if (!acct || !dir || !existsSync(dir)) return null;
+  try {
+    writeSite(id, acct, dir);
+    return null;
+  } catch (e) {
+    return `Render failed: ${(e as Error).message}`;
+  }
+}
+
+/**
+ * Pictures for new cards, without the tool call waiting on image generation.
+ *
+ * Detached on purpose: the cards are on the page the moment they are saved and
+ * a portrait a minute later is fine, whereas a tool call that sits on twelve
+ * image renders holds the chat lock for the whole time.
+ */
+function photographInBackground(id: string): void {
+  const script = join(import.meta.dir, "scripts", "photos.ts");
+  const log = openSync(join(accountDir(), "..", "photos.log"), "a");
+  spawn(process.execPath, [script, id], {
+    detached: true,
+    stdio: ["ignore", log, log],
+    env: process.env,
+  }).unref();
+  closeSync(log);
+}
+
+const EffortS = z.enum(["quick", "weeknight", "project", "allday"]);
+const MethodS = z.enum([
+  "stovetop",
+  "oven",
+  "sheetpan",
+  "crockpot",
+  "instantpot",
+  "grill",
+  "airfryer",
+  "nocook",
+]);
+
+const IdeaS = z.object({
+  id: z.string().describe("kebab-case, unique on the site."),
+  name: z.string(),
+  desc: z.string().describe("One plain sentence, no marketing."),
+  minutes: z.number().int().positive(),
+  cat: z.string().default("dinner").describe("dinner|lunch|side|dessert|snack"),
+  health: z.number().int().min(1).max(5).nullish(),
+  needs: z
+    .array(z.tuple([z.string(), z.number().nullable()]))
+    .describe("[ledger slug, qty|null] from the brief, exactly. null means some."),
+  effort: EffortS.nullish(),
+  method: MethodS.nullish(),
+});
+
+const ExploreDishS = z.object({
+  name: z.string(),
+  desc: z.string().describe("One sentence: what it is and why it is good."),
+  cuisine: z.string(),
+  why: z.string().describe("One sentence on how it differs from what they cook."),
+  buy: z.array(z.string()).describe("What they must go and get, in plain shopping words."),
+  have: z.array(z.string()).describe("What it uses that they already own."),
+  minutes: z.number().int().positive(),
+  effort: EffortS,
+  method: MethodS,
+  spend: z.number().int().min(1).max(3),
+  health: z.number().int().min(1).max(5),
+});
 
 export function kitchenTools(ctx: ToolContext): ToolDef[] {
   if (!kitchenConfig(ctx.config)?.enabled) return [];
@@ -687,9 +771,39 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
       "rebuying, which are deliberately NOT on the list. Use this rather than reading " +
       "stock yourself: 'what do we need' and 'what is out' are different questions and " +
       "answering the second one as if it were the first is what fills a list with noise. " +
-      "Set `answer` to record a decision, or `notes` to push the list into Apple Notes.",
+      "Set `answer` to record a decision, `add` to put lines on the list yourself " +
+      "(what a dish needs from a supermarket is your call, after kitchen_status: real " +
+      "products, nothing the house already owns, staples assumed), or `notes` to push " +
+      "the list into Apple Notes.",
     inputSchema: z.object({
       account: Acct,
+      add: z
+        .array(
+          z.object({
+            name: z.string().describe("What to look for on the shelf: 'panko breadcrumbs'."),
+            amount: z.string().nullish().describe("As a shopper says it: '8 oz', 'one jar'."),
+            cat: z
+              .string()
+              .nullish()
+              .describe(
+                "produce|meat|seafood|dairy|frozen|bakery|pantry|condiment|spice|drink|snack|other",
+              ),
+            item: z
+              .string()
+              .nullish()
+              .describe("Ledger slug when this restocks something the house has owned."),
+            why: z.string().nullish().describe("Shown on the line: 'for chicken parm'."),
+            by: z.string().nullish().describe("Principal who asked, when it was a site tap."),
+          }),
+        )
+        .optional(),
+      key: z
+        .string()
+        .nullish()
+        .describe(
+          "The site tap this answers (its key from the wake-up or kitchen_requests), " +
+            "so it is marked served.",
+        ),
       answer: z
         .object({
           item: z.string().describe("Ledger slug the decision is about."),
@@ -725,9 +839,51 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
             "title. Saved on the household; pass once.",
         ),
     }),
-    handler: async ({ account, answer, notes, share, shareWith, noteTitle: wanted }) =>
+    handler: async ({ account, add, key, answer, notes, share, shareWith, noteTitle: wanted }) =>
       withAccount(ctx, account, async (id) => {
         const said: string[] = [];
+        if (key) {
+          const dir = getAccount(id)?.site?.artifact;
+          const request = dir
+            ? pending(id, dir).find(
+                (candidate) => candidate.kind === "addlist" && requestKey(candidate) === key,
+              )
+            : null;
+          if (!request) return text(`No shopping request is waiting with key ${key}.`, true);
+        }
+        if (add?.length) {
+          const { added, merged } = addToList(
+            id,
+            add.map(
+              (b: {
+                name: string;
+                amount?: string | null;
+                cat?: string | null;
+                item?: string | null;
+                why?: string | null;
+                by?: string | null;
+              }) => ({
+                name: b.name,
+                amount: b.amount ?? null,
+                cat: b.cat ?? null,
+                item: b.item ?? null,
+                why: b.why ?? null,
+                by: b.by ?? null,
+              }),
+            ),
+          );
+          said.push(
+            `On the list: ${added.map((a) => a.name).join(", ") || "nothing new"}${
+              merged.length ? ` (${merged.length} already there)` : ""
+            }.`,
+          );
+          const render = rerender(id);
+          if (render) said.push(render);
+        }
+        if (key) {
+          markHandled(id, [key]);
+          said.push("Marked that site tap served.");
+        }
         if (wanted?.trim()) {
           updateAccount(id, { note_list: wanted.trim() });
           said.push(
@@ -1501,9 +1657,12 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
   tools.push({
     name: "kitchen_requests",
     description:
-      "Taps on the website waiting for an answer — someone pressed Make, Make a " +
-      "variant, or Write one for the clock. Returns them oldest first. Pass `handled` " +
-      "with the timestamps you have actually served to clear them; a request served " +
+      "Taps on the website waiting for an answer from you: Make on a dish never written " +
+      "out, Make a variant, Write one for the clock, a question typed on the page or " +
+      "asked out loud, a shopping pick, an explore theme, an explore idea to write up. " +
+      "Returns them oldest first, each with the tool that answers it. kitchen_voice, " +
+      "kitchen_explore save and kitchen_shopping key mark their own tap served; for the " +
+      "rest pass `handled` with the keys AFTER the answer has landed. A request served " +
       "twice means a person gets the same recipe texted to them twice.\n" +
       "A `compose` request has NO recipe id and is not a lookup: nothing in the " +
       "catalog was the right dinner. Read kitchen_status for what is on a clock, " +
@@ -1544,6 +1703,14 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
                   return `${head}\n  picked up: ${(r.items ?? []).join(", ") || "(nothing ticked)"}`;
                 case "plan":
                   return `${head}\n  plan ${r.plan} "${r.name ?? ""}" -> ${r.note}`;
+                case "voice":
+                  return `${head}\n  asked out loud${r.recipe ? ` on ${r.recipe}${r.step ? ` step ${r.step}` : ""}` : ""}: ${r.text ?? ""}\n  answer: kitchen_voice profile:"${r.profile ?? ""}" rid:"${r.rid ?? ""}" say:"..."`;
+                case "addlist":
+                  return `${head}\n  wants ${r.name ?? r.recipe} shopped for; picked: ${[...(r.items ?? []), ...(r.missing ?? [])].join(", ") || "(nothing)"}\n  answer: kitchen_status, then kitchen_shopping add:[...] key:"${requestKey(r)}"`;
+                case "explore":
+                  return `${head}\n  wants dishes unlike anything this house cooks${r.text?.trim() ? `, theme: ${r.text.trim()}` : ""}\n  answer: kitchen_explore action:"brief", then action:"save"`;
+                case "idearecipe":
+                  return `${head}\n  write the explore idea ${r.recipe} "${r.name ?? ""}" out as a recipe page\n  answer: kitchen_recipe_save (its buy list is on the explore page), text them the page, then handled`;
                 default:
                   return `${head}  ${r.recipe} "${r.name ?? ""}"${
                     r.users?.length
@@ -1660,23 +1827,40 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
     name: "kitchen_check",
     description:
       "Reconcile the ledger against the actual shelves. Three ways in, one pass: " +
-      "`photos` reads pictures of a fridge or cabinet and PROPOSES a diff; `start` " +
+      "`photos` hands you the ledger as a checklist to read pictures of a fridge or " +
+      "cabinet against, and `propose` turns what YOU saw into a PROPOSED diff; `start` " +
       "opens a text-driven pass over the items worth asking about; `answer` records " +
       "verdicts as they come. Nothing reaches the ledger until `apply`. Every verdict " +
       "is stamped with who looked, so a pass Jordan did reads as his. Use this whenever " +
       "somebody sends a kitchen photo or says the counts are off.",
     inputSchema: z.object({
       account: Acct,
-      action: z.enum(["photos", "start", "answer", "apply", "status"]),
+      action: z.enum(["photos", "propose", "start", "answer", "apply", "status"]),
       by: z
         .string()
         .nullish()
         .describe(
-          "Principal of whoever actually looked. Required for photos/start; " +
+          "Principal of whoever actually looked. Required for propose/start; " +
             "a pass with no name attached is worth much less than one with.",
         ),
       files: z.array(z.string()).optional().describe("photos: absolute paths to the images."),
-      where: z.string().nullish().describe("photos: 'fridge', 'the spice drawer', etc."),
+      where: z.string().nullish().describe("photos/propose: 'fridge', 'the spice drawer'."),
+      seen: z
+        .array(
+          z.object({
+            item: z.string().describe("A ledger slug from the checklist."),
+            verdict: z.enum(["have", "gone", "amount"]),
+            qty: z.number().nullish(),
+            because: z.string().nullish().describe("What in the photo says so."),
+          }),
+        )
+        .optional()
+        .describe("propose: only what the photos actually show. Not visible is not gone."),
+      unknown: z
+        .array(z.string())
+        .optional()
+        .describe("propose: visible but untracked, in plain words. Suggestions, never added."),
+      note: z.string().nullish().describe("propose: what the photos could not show."),
       session: z.string().nullish().describe("answer/apply: which pass. Defaults to the open one."),
       answers: z
         .array(
@@ -1707,7 +1891,15 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
           if (!a.files?.length) return text("Give me the image paths.", true);
           const missing = a.files.filter((f: string) => !existsSync(f));
           if (missing.length) return text(`Cannot read: ${missing.join(", ")}`, true);
-          const read = await readShelves(id, a.files, a.where);
+          return text(
+            `${shelfBrief(id, a.files, a.where)}\n\nPass by:${JSON.stringify(a.by ?? "")} through to propose so the pass is stamped with who looked.`,
+          );
+        }
+
+        if (a.action === "propose") {
+          if (!a.seen?.length && !a.unknown?.length)
+            return text('Nothing seen. Look at the photos first (action:"photos").', true);
+          const read = proposeShelves(id, a.seen ?? [], a.unknown ?? [], a.note ?? "");
           const ids = Object.keys(read.proposed);
           if (!ids.length) {
             return text(
@@ -1732,9 +1924,9 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
             return `  ${x}: ${said}${read.because[x] ? ` — ${read.because[x]}` : ""}`;
           };
           return text(
-            `Read ${a.files.length} photo(s)${a.where ? ` of the ${a.where}` : ""}. Session ${s.id}, PROPOSED ONLY, nothing written.\n\n${ids.map(line).join("\n")}${
+            `Proposed from the photos${a.where ? ` of the ${a.where}` : ""}. Session ${s.id}, PROPOSED ONLY, nothing written.\n\n${ids.map(line).join("\n")}${
               read.unknown.length ? `\n\nVisible but not tracked: ${read.unknown.join(", ")}` : ""
-            }${read.note ? `\n\nWhat it could not see: ${read.note}` : ""}\n\nConfirm with the human before applying. Correct anything wrong with action:"answer", then action:"apply".`,
+            }${read.note ? `\n\nWhat the photos could not show: ${read.note}` : ""}\n\nConfirm with the human before applying. Correct anything wrong with action:"answer", then action:"apply".`,
           );
         }
 
@@ -1803,8 +1995,9 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
       "Call `check` the moment a food question comes from a chat with no household — " +
       "it says whether to offer and what is missing, and never throws for a stranger. " +
       "Then, only after they have said yes: `start` provisions the whole thing at once, " +
-      "`stock` reads photos of their fridge and cupboards into proposed items, and " +
-      "`accept` puts the confirmed ones on the shelves as one undoable batch.\n\n" +
+      "`stock` hands you the brief for reading photos of their fridge and cupboards " +
+      "into a list of what is visible (you look, they confirm), and `accept` puts the " +
+      "confirmed ones on the shelves as one undoable batch.\n\n" +
       "ASK FOR TWO THINGS AND NO MORE: who eats there, and photographs. Everything " +
       "else — when they eat, what they spend, how often they cook, what they like — " +
       "is derived from the log and asking for it up front makes the answer worse, not " +
@@ -1909,24 +2102,7 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
           if (!a.files?.length) return text("Give me the image paths.", true);
           const missing = a.files.filter((f: string) => !existsSync(f));
           if (missing.length) return text(`Cannot read: ${missing.join(", ")}`, true);
-          const read = await firstStock(a.files, a.where);
-          if (!read.proposals.length) {
-            return text(`Nothing readable as food in those. ${read.note}`);
-          }
-          return text(
-            `${read.proposals.length} things visible. NOT on the shelves yet — show this to them, drop what is wrong, then action:"accept" with what survives.\n\n${table(
-              read.proposals.map((p) => [
-                p.name,
-                p.qty === null
-                  ? "some"
-                  : `${p.qty}${p.unit && p.unit !== "ct" ? ` ${p.unit}` : ""}`,
-                p.cat,
-                p.loc,
-                p.because.slice(0, 60),
-              ]),
-              ["item", "how much", "kind", "where", "why"],
-            )}\n\n${read.note}`,
-          );
+          return text(stockBrief(a.files, a.where));
         }
 
         if (!a.items?.length) return text("Nothing to accept.", true);
@@ -1965,6 +2141,158 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
         );
       });
     },
+  });
+
+  // ─── the answers that used to come from a sub-model ──────────────────────
+  //
+  // Ideas, the explore shelf, spoken answers and what a dish needs from a
+  // supermarket all went to a narrow model on OpenRouter until 2026-09-19.
+  // They are judgement about food and about these people, so they are mine:
+  // the passes wake me (wake.ts) and these are the tools the answers go
+  // through. Each `brief` is the material the old prompt carried; each `save`
+  // is the validation the old parser did, applied to me instead.
+
+  tools.push({
+    name: "kitchen_ideas",
+    description:
+      "This household's own dinner and lunch ideas: the cards built strictly from what " +
+      "is on the shelves, refreshed by the morning pass. `brief` hands you the exact " +
+      "ingredient slugs, what expires soonest, the names already taken and how this " +
+      "house eats; write the ideas yourself, for these people, then `save`. Saving " +
+      "validates every dish against the ledger and rejects any that names an ingredient " +
+      "the house does not hold, so use the slugs exactly. The cards are on the page at " +
+      "once; their pictures are generated afterwards in the background.",
+    inputSchema: z.object({
+      account: Acct,
+      action: z.enum(["brief", "save"]),
+      want: z
+        .number()
+        .int()
+        .positive()
+        .nullish()
+        .describe("brief: how many to write. Defaults to what the page is short."),
+      recipes: z.array(IdeaS).optional().describe("save: the dishes, shaped as the brief says."),
+    }),
+    handler: (a) =>
+      withAccount(ctx, a.account, (id) => {
+        const acct = getAccount(id)!;
+        if (a.action === "brief") {
+          const want = a.want ?? Math.max(0, IDEAS_TARGET - readOverlay(id).recipes.length);
+          if (!want) return text("The page already has its full set of ideas; nothing to write.");
+          return text(ideasBrief(id, acct, want));
+        }
+        if (!a.recipes?.length) return text("Nothing to save.", true);
+        const res = saveIdeas(id, a.recipes);
+        const said = [
+          res.saved.length
+            ? `Saved ${res.saved.length}: ${res.saved.map((r) => r.name).join(", ")}. On the page now, pictures on the way.`
+            : "Nothing saved.",
+          ...res.rejected.map((r) => `Rejected ${r.id}: ${r.why}.`),
+        ];
+        if (res.saved.length) {
+          const render = rerender(id);
+          if (render) said.push(render);
+          photographInBackground(id);
+        }
+        return text(said.join("\n"), !res.saved.length);
+      }),
+  });
+
+  tools.push({
+    name: "kitchen_explore",
+    description:
+      "The explore shelf: dishes deliberately unlike anything this house cooks, written " +
+      "by you. `brief` returns everything they already cook (the list to get away from), " +
+      "everything they own (so the shopping line is honest) and any theme they typed; " +
+      "write eight and `save`. Saving drops repeats of known dishes, moves owned " +
+      "ingredients from buy to have, publishes the set, re-renders the page and marks " +
+      "the explore taps that asked for it served.",
+    inputSchema: z.object({
+      account: Acct,
+      action: z.enum(["brief", "save"]),
+      theme: z
+        .string()
+        .nullish()
+        .describe("What they asked for, if anything: 'something Korean', 'cheap and slow'."),
+      key: z
+        .string()
+        .nullish()
+        .describe("save: the exact explore tap key from the wake-up, so only that tap is served."),
+      dishes: z.array(ExploreDishS).optional().describe("save: the set."),
+    }),
+    handler: (a) =>
+      withAccount(ctx, a.account, (id) => {
+        if (a.action === "brief") return text(exploreBrief(id, a.theme));
+        if (!a.dishes?.length) return text("Nothing to save.", true);
+        const dir = getAccount(id)?.site?.artifact;
+        if (a.key) {
+          const request = dir
+            ? pending(id, dir).find(
+                (candidate) => candidate.kind === "explore" && requestKey(candidate) === a.key,
+              )
+            : null;
+          if (!request) return text(`No explore request is waiting with key ${a.key}.`, true);
+        }
+        const { set, dropped } = saveExplore(id, a.dishes, a.theme);
+        if (a.key) markHandled(id, [a.key]);
+        const render = rerender(id);
+        return text(
+          [
+            `Published ${set.dishes.length}${set.theme ? ` for "${set.theme}"` : ""}: ${set.dishes.map((d) => d.name).join(", ")}.`,
+            dropped.length
+              ? `Dropped as repeats of what they already cook: ${dropped.join(", ")}.`
+              : "",
+            a.key ? "Marked that explore tap served." : "",
+            render ?? "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        );
+      }),
+  });
+
+  tools.push({
+    name: "kitchen_voice",
+    description:
+      "Answer a question somebody asked OUT LOUD from a recipe page. The page is polling " +
+      "for it: the words land in their browser and are read aloud in my voice, nothing " +
+      "is texted. Under 70 words, spoken English, built on what kitchen_status says is " +
+      "actually in the house and on the step they are looking at (kitchen_recipe_get). " +
+      "Marks the tap served.",
+    inputSchema: z.object({
+      account: Acct,
+      profile: z.string().describe("Whose question: the principal from the wake-up."),
+      rid: z.string().describe("The question id the page is polling for."),
+      say: z.string().describe("The answer, exactly as it will be spoken."),
+    }),
+    handler: (a) =>
+      withAccount(ctx, a.account, async (id) => {
+        const acct = getAccount(id)!;
+        const dir = acct.site?.artifact;
+        if (!dir) return text("No site directory recorded for this household yet.", true);
+        if (!eaters(acct).some((e) => e.principal === a.profile))
+          return text(`"${a.profile}" is not a member of this household.`, true);
+        const say = a.say.trim();
+        const words = say.split(/\s+/).filter(Boolean).length;
+        if (!words) return text("Nothing to say.", true);
+        if (words > MAX_WORDS)
+          return text(
+            `${words} words is too long to be read aloud at a stove. Keep it under ${MAX_WORDS}.`,
+            true,
+          );
+        const req = pending(id, dir).find((r) => r.kind === "voice" && r.rid === a.rid);
+        if (req?.profile && req.profile !== a.profile)
+          return text(`That question was asked by ${req.profile}, not ${a.profile}.`, true);
+        const turn = await sayVoice(dir, a.profile, { rid: a.rid, ask: req?.text ?? "", say });
+        if (req) markHandled(id, [requestKey(req)]);
+        return text(
+          `${
+            turn.audio
+              ? "Spoken and on the page."
+              : "On the page as text; speech synthesis failed, so the browser reads it in its own voice."
+          }${req ? " Tap marked served." : " No question with that id was waiting, so nothing was marked."}`,
+        );
+      }),
   });
 
   return tools;

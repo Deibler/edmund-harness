@@ -224,6 +224,16 @@ export type Account = {
     url?: string | null;
   };
   /**
+   * Which member's chat I think out loud in when nobody in particular asked.
+   *
+   * A tap on the site that needs real writing wakes me in the chat of whoever
+   * tapped it, because it is their question. The morning pass has no such
+   * person, so it wakes me here; absent, the first member listed. A member
+   * principal, never a group: a group turn would put my working notes on
+   * everybody's phone.
+   */
+  wake?: string | null;
+  /**
    * Title of the Apple Note this household's list is written into.
    *
    * Also settable so a note somebody already made and shared can be adopted

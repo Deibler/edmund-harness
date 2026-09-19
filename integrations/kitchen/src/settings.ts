@@ -13,13 +13,37 @@
  * somebody to set it and then debug why it had no effect.
  */
 
+import { join, resolve } from "node:path";
 import { loadConfig } from "../../../src/config/config.ts";
 import type { Config } from "../../../src/config/config.ts";
 import { kitchenConfig } from "../config.ts";
 import { useKitchenDir } from "./accounts.ts";
 
+/** integrations/kitchen/src -> the harness root, wherever the checkout lives. */
+const ROOT = join(import.meta.dir, "..", "..", "..");
+
 /** How old an imported grocery price may be before it stops being quotable. */
 let maxPriceAge = 21;
+
+/**
+ * The harness data dir, where `cron.db` lives.
+ *
+ * The kitchen wakes a session by inserting a one-shot cron row, which is the
+ * one place it has to agree with the daemon about a path. Resolved against the
+ * checkout rather than the working directory, because the launchd jobs and a
+ * test runner do not share one, and `./data` from the wrong directory would
+ * quietly create a second, empty cron store that nothing ever polls.
+ */
+let dataRoot = process.env.EDMUND_DATA_DIR ?? join(ROOT, "data");
+
+export function dataDir(): string {
+  return dataRoot;
+}
+
+/** Point the wake path at another data dir. Tests use a throwaway one. */
+export function useDataDir(dir: string): void {
+  dataRoot = dir;
+}
 
 export function priceMaxAgeDays(): number {
   return maxPriceAge;
@@ -27,6 +51,7 @@ export function priceMaxAgeDays(): number {
 
 /** Apply an already-loaded config. Used by the MCP tools, which are given one. */
 export function applyKitchenConfig(config: Config): void {
+  if (!process.env.EDMUND_DATA_DIR) dataRoot = resolve(ROOT, config.paths.data_dir);
   const cfg = kitchenConfig(config);
   if (!cfg) return;
   useKitchenDir(cfg.dir);

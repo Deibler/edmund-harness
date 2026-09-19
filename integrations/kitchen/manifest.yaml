@@ -29,7 +29,8 @@ tools:
       Read (status, list, cookbook, recipe_get, requests), write (record, undo,
       mark, recipe_save), plan (plan, plan_resolve), reconcile against the real
       shelves (check), stand up recurring texts (schedule), derive (insights,
-      deals, prices_import) and publish (accounts, site, chat).
+      deals, prices_import), publish (accounts, site, chat) and answer what the
+      site's passes wake the model for (ideas, explore, voice, shopping add).
     provides:
       - kitchen_status
       - kitchen_list
@@ -52,11 +53,17 @@ tools:
       - kitchen_check
       - kitchen_onboard
       - kitchen_shopping
+      - kitchen_ideas
+      - kitchen_explore
+      - kitchen_voice
 
 runtime:
   # Tool-only: no daemon-side loop. Price freshness is handled by the model on
   # a schedule rather than a background scraper, because acquisition needs a
-  # browser and the judgment to tell a loaded page from an empty one.
+  # browser and the judgment to tell a loaded page from an empty one. The two
+  # launchd passes (kitchen-watch, kitchen-daily) settle arithmetic themselves
+  # and queue a one-shot scheduled event in a member's session for anything
+  # that needs judgement; no model runs outside a session.
   lazy: false
 
 instructions:
