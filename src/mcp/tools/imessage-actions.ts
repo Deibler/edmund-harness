@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { confirmEdited, confirmUnsent, messageState } from "../../imessage/edit-confirm.ts";
 import {
   type ResolvedMessage,
   findRecentMessageByText,
@@ -43,11 +44,25 @@ function err(text: string) {
   return { content: [{ type: "text" as const, text }], isError: true };
 }
 
-async function finish(res: Promise<SendResult> | SendResult, okMsg: string, what: string) {
+async function finish(
+  res: Promise<SendResult> | SendResult,
+  okMsg: string,
+  what: string,
+  confirm?: () => Promise<string | null>,
+) {
   const r = await res;
   if (!r.ok) {
     console.error(`[imessage-action] ${what} FAILED: ${r.error}`);
     return err(`${what} error: ${r.error}`);
+  }
+  // The bridge reports that Messages accepted the request. For an edit or an
+  // unsend that is not the outcome: the request crosses to imagent one way,
+  // and one dropped there still returns cleanly. `confirm` reads chat.db and
+  // turns a silent drop into an error the model can act on.
+  const problem = confirm ? await confirm() : null;
+  if (problem) {
+    console.error(`[imessage-action] ${what} UNCONFIRMED: ${problem}`);
+    return err(`${what} error: ${problem}`);
   }
   return ok(okMsg);
 }
@@ -118,10 +133,12 @@ export function imessageActionTools(ctx: ToolContext): ToolDef[] {
         const t = resolveTarget(ctx, args, true);
         if ("error" in t) return err(t.error);
         console.log(`[edit_message] ${ctx.sessionKey} msg=${t.messageGuid}`);
+        const before = messageState(ctx.chatDb, t.messageGuid);
         return finish(
           editMessage({ chatGuid: t.chatGuid, messageGuid: t.messageGuid, newText: args.new_text }),
           "edited",
           "edit_message",
+          () => confirmEdited(ctx.chatDb, t.messageGuid, args.new_text, before),
         );
       },
     });
@@ -137,10 +154,12 @@ export function imessageActionTools(ctx: ToolContext): ToolDef[] {
         const t = resolveTarget(ctx, args, true);
         if ("error" in t) return err(t.error);
         console.log(`[unsend_message] ${ctx.sessionKey} msg=${t.messageGuid}`);
+        const before = messageState(ctx.chatDb, t.messageGuid);
         return finish(
           unsendMessage({ chatGuid: t.chatGuid, messageGuid: t.messageGuid }),
           "unsent",
           "unsend_message",
+          () => confirmUnsent(ctx.chatDb, t.messageGuid, before),
         );
       },
     });

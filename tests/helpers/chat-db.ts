@@ -25,7 +25,8 @@ export function emptyChatDb(): { path: string; cleanup: () => void } {
   db.exec(`
     CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, handle_id INTEGER,
       is_from_me INTEGER, date INTEGER, attributedBody BLOB, associated_message_guid TEXT,
-      associated_message_type INTEGER, is_delivered INTEGER, service TEXT, date_read INTEGER);
+      associated_message_type INTEGER, is_delivered INTEGER, service TEXT, date_read INTEGER,
+      date_edited INTEGER DEFAULT 0, date_retracted INTEGER DEFAULT 0);
     CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, chat_identifier TEXT,
       display_name TEXT, service_name TEXT);
     CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, service TEXT);
