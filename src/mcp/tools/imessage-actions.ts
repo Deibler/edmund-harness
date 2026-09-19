@@ -19,6 +19,7 @@ import {
 import type { SendResult } from "../../imessage/types.ts";
 import { isMirrorSession } from "../../sessions/key.ts";
 import { isGroupSession } from "../../sessions/key.ts";
+import { isSmsSession } from "../../sms/session.ts";
 import { assertPathSafe } from "../../util/path-safety.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
@@ -112,6 +113,11 @@ function resolveTarget(
 
 export function imessageActionTools(ctx: ToolContext): ToolDef[] {
   if (isMirrorSession(ctx.sessionKey)) return [];
+  // Nothing here has an SMS equivalent: a sent SMS cannot be edited, unsent
+  // or deleted from the far end. Withholding the tools is the honest shape —
+  // a registered tool that can only ever refuse invites the model to promise
+  // the user a retraction that is not coming.
+  if (isSmsSession(ctx.sessionKey)) return [];
   // These used to be withheld when the bridge looked down, which meant a probe
   // that lied — and it did — silently removed the model's ability to edit or
   // react at all. There is one surface now, and an action that cannot be

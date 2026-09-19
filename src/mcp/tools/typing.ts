@@ -8,6 +8,7 @@ import type { MirrorStoreCtor } from "../../integrations/mirror-contracts.ts";
 import { integrationExport } from "../../integrations/optional.ts";
 import { isMirrorSession } from "../../sessions/key.ts";
 import { chatIdFromKey, isGroupSession } from "../../sessions/key.ts";
+import { isSmsSession } from "../../sms/session.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
 
@@ -52,6 +53,16 @@ export function typingTools(ctx: ToolContext): ToolDef[] {
         "Show 'typing…' bubbles in the current iMessage conversation. Two modes: (1) no args — keeps bubbles visible for up to 90s while you do real work; call this FIRST, before list_skills / read_skill / generate_image / long research, whenever the turn will take more than a couple seconds; the bubble clears automatically when your reply lands; safe to re-call to reset the heartbeat. (2) `seconds: N` — a short deliberate beat (≤20s) that stops on its own, for when you want to look like you paused to think before a quick reply. Don't bother for trivial one-liner turns with no real delay.",
       inputSchema: ActivateInput,
       handler: async (args) => {
+        // SMS has no typing indicator. This is a courtesy signal, not a
+        // delivery, so a no-op that says so is right — failing would push the
+        // model to report a problem the user does not have.
+        if (isSmsSession(ctx.sessionKey)) {
+          return {
+            content: [
+              { type: "text", text: "SMS has no typing indicator — nothing shown, carry on" },
+            ],
+          };
+        }
         if (isMirrorSession(ctx.sessionKey)) {
           const mirrorFrameId = await integrationExport<(k: string) => string>(
             "mirror",
