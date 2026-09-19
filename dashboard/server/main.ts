@@ -194,7 +194,14 @@ async function main() {
     const reqPath = c.req.path === "/" ? "/index.html" : c.req.path;
     const filePath = resolve(WEB_DIST, `.${reqPath}`);
     if (existsSync(filePath) && filePath.startsWith(WEB_DIST)) {
-      return new Response(Bun.file(filePath));
+      // Content-Type must be set in the init here. securityHeaders() calls
+      // c.header() after next(), which rebuilds the Response and drops the
+      // type Bun.file() infers on its own; the nosniff header it adds then
+      // stops the browser recovering, so index.html renders as text and the
+      // module script never executes. Derived from the file so new asset
+      // extensions stay correct without a lookup table.
+      const file = Bun.file(filePath);
+      return new Response(file, { headers: { "Content-Type": file.type } });
     }
     return new Response(Bun.file(resolve(WEB_DIST, "index.html")), {
       headers: { "Content-Type": "text/html" },
