@@ -175,7 +175,7 @@ describe("every published tool schema is valid JSON Schema 2020-12", () => {
     const { kitchenTools } = await import("../integrations/kitchen/tools.ts");
     const ctx = {
       sessionKey: "imessage:dm:+15559990000",
-      config: { kitchen: { enabled: true } },
+      config: { kitchen: { enabled: true }, paths: { data_dir: dir } },
     } as never;
     const count = assertAllValid(kitchenTools(ctx));
     expect(count).toBeGreaterThan(10);
