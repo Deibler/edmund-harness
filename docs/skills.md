@@ -20,8 +20,10 @@ about five percent of turns, and eight of them had never been opened.
 
 ## Anatomy
 
-A skill is a directory under `skills/` with a `SKILL.md` in it. The directory
-name is the skill name. The loader reads exactly one field from the
+A skill is a directory under `skills/` with a `SKILL.md` in it. Curator output
+lives one level deeper at `skills/curated/<name>/` so generated playbooks stay
+local to the deployment and out of git. The directory name is the skill name.
+The loader reads exactly one field from the
 frontmatter, a single line `description:`, and ignores everything else. Every
 other field you see in shipped skills is there for humans.
 
@@ -92,8 +94,10 @@ Once a day, if enabled, a background pass reads a sample of recent human
 messages across conversations and may propose at most one new skill, with
 citations to the messages that justify it. A proposal must cite at least three
 messages from at least two different chats and pass the leak scan. Curated
-skills are instructions only, never scripts. There is a hard ceiling on how
-many can exist.
+skills are instructions only, never scripts. They are written under the
+gitignored `skills/curated/` directory because they belong to the local
+conversation corpus, not the public repository. There is a hard ceiling on
+how many can exist.
 
 The same pass retires a curated skill nobody has read in thirty days and
 reviews any that has been read three times, by looking at what people actually

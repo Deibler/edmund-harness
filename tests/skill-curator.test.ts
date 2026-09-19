@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadConfig } from "../src/config/config.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import {
   MIN_CHATS,
@@ -10,6 +11,7 @@ import {
   type Proposal,
   type SampledAsk,
   parseProposals,
+  runCurator,
   sampleRecentAsks,
   vetProposal,
 } from "../src/skills/curator.ts";
@@ -269,5 +271,94 @@ describe("sampling across conversations", () => {
 
   test("the lookback window is honoured", () => {
     expect(sampleRecentAsks(dbPath, { sinceMs: 999_999 })).toEqual([]);
+  });
+});
+
+describe("where curated skills are written", () => {
+  test("a curator pass writes under skills/curated, never beside shipped skills", async () => {
+    const root = mkdtempSync(join(tmpdir(), "curator-storage-"));
+    try {
+      const dataDir = join(root, "data");
+      const skillsRoot = join(root, "skills");
+      mkdirSync(dataDir, { recursive: true });
+      mkdirSync(skillsRoot, { recursive: true });
+
+      const db = new Database(join(dataDir, "recall.sqlite"));
+      db.exec(
+        `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
+                            ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
+      );
+      const insert = db.query(
+        "INSERT INTO rows (ref, kind, chat_guid, sender, ts, text, vec, model, dim) VALUES (?,?,?,?,?,?,x'00','m',1)",
+      );
+      insert.run(
+        "msg:a1",
+        "message",
+        "chatA",
+        "+1555",
+        1000,
+        "please make me a careful race week plan",
+      );
+      insert.run(
+        "msg:b1",
+        "message",
+        "chatB",
+        "+1666",
+        1001,
+        "help me build a complete race week plan",
+      );
+      insert.run(
+        "msg:b2",
+        "message",
+        "chatB",
+        "+1666",
+        1002,
+        "what should my race week schedule include",
+      );
+      db.close();
+
+      const config = loadConfig(join(import.meta.dir, "..", "config.example.toml"));
+      const result = await runCurator({
+        config,
+        dataDir,
+        skillsRoot,
+        dbPath: join(dataDir, "installed-skills.json"),
+        contacts,
+        now: () => 10_000,
+        runModel: async () => ({
+          ok: true,
+          text: JSON.stringify({
+            skills: [
+              {
+                name: "race-week-plan",
+                description: "Build a complete plan for race week.",
+                instructions: "Ask for the race date and distance, then build the schedule.",
+                evidence: [
+                  { ref: "msg:a1", chat: "chatA", reading: "asked for a race week plan" },
+                  { ref: "msg:b1", chat: "chatB", reading: "asked for a race week plan" },
+                  { ref: "msg:b2", chat: "chatB", reading: "asked for a race week schedule" },
+                ],
+                whyNow: "the same planning request appeared in two chats",
+              },
+            ],
+            notes: "",
+          }),
+          error: null,
+          status: 0,
+          stderr: "",
+          costUsd: 0,
+          usage: null,
+          model: "test",
+          numTurns: 1,
+          durationMs: 1,
+        }),
+      });
+
+      expect(result).toMatchObject({ ran: true, created: "race-week-plan" });
+      expect(existsSync(join(skillsRoot, "curated", "race-week-plan", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(skillsRoot, "race-week-plan"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

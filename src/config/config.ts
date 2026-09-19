@@ -1008,8 +1008,10 @@ export const ConfigSchema = z.object({
     .default({}),
   /**
    * Skill marketplace — self-extending skills installed from a curated
-   * registry. Skills live in `./skills/<name>/SKILL.md` and are picked up
-   * by the progressive `list_skills`/`read_skill` loader automatically;
+   * registry. Shipped, marketplace and self-authored skills live in
+   * `./skills/<name>/SKILL.md`; curator output lives in the gitignored
+   * `./skills/curated/<name>/SKILL.md`. Both are picked up by the progressive
+   * `list_skills`/`read_skill` loader automatically;
    * the marketplace adds a search/install path on top of that.
    *
    * Source allowlist is enforced: an install from anything outside

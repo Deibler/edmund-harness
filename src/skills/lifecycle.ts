@@ -36,6 +36,7 @@ import { runModelOneShot } from "../model/one-shot.ts";
 import { log } from "../util/log.ts";
 import { revokeConsentFor } from "./consent.ts";
 import { type InstallRecord, categoryOf, readDb, uninstallSkill, writeDb } from "./installer.ts";
+import { existingSkillRoot, skillDirectoryForRecord } from "./paths.ts";
 import { type UsageSummary, pruneUsage, readUsageEvents, summarizeUsage } from "./usage.ts";
 
 const REVIEW_TIMEOUT_MS = 120_000;
@@ -101,9 +102,9 @@ export function retireUnusedCurated(deps: LifecycleDeps): { name: string; reason
 
     const days = Math.round(age / 86_400_000);
     const reason = `never read in ${days} days`;
-    const description = skillDescription(deps.skillsRoot, name);
+    const description = skillDescription(deps.skillsRoot, name, record);
     const result = uninstallSkill(name, {
-      skillsRoot: deps.skillsRoot,
+      skillsRoot: existingSkillRoot(deps.skillsRoot, name, record),
       dbPath: deps.dbPath,
       requireApprovalForScripts: deps.config.skills_marketplace.require_approval_for_scripts,
     });
@@ -146,8 +147,8 @@ function tombstone(
 }
 
 /** The catalogue line for a skill, read from disk while it is still there. */
-export function skillDescription(skillsRoot: string, name: string): string {
-  const p = resolve(skillsRoot, name, "SKILL.md");
+export function skillDescription(skillsRoot: string, name: string, record?: InstallRecord): string {
+  const p = resolve(skillDirectoryForRecord(skillsRoot, name, record), "SKILL.md");
   if (!existsSync(p)) return "";
   const fm = readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
   const line = fm?.[1]?.split("\n").find((l) => l.trim().toLowerCase().startsWith("description:"));
@@ -238,7 +239,7 @@ async function reviewOne(
   events: ReturnType<typeof readUsageEvents>,
   deps: LifecycleDeps,
 ): Promise<{ verdict: Verdict; reason: string } | null> {
-  const skillPath = resolve(deps.skillsRoot, name, "SKILL.md");
+  const skillPath = resolve(skillDirectoryForRecord(deps.skillsRoot, name, record), "SKILL.md");
   if (!existsSync(skillPath)) return null;
   const body = readFileSync(skillPath, "utf8");
 
@@ -286,9 +287,9 @@ async function reviewOne(
   writeDb(deps.dbPath, db);
 
   if (parsed.verdict === "retire") {
-    const description = skillDescription(deps.skillsRoot, name);
+    const description = skillDescription(deps.skillsRoot, name, record);
     const result = uninstallSkill(name, {
-      skillsRoot: deps.skillsRoot,
+      skillsRoot: existingSkillRoot(deps.skillsRoot, name, record),
       dbPath: deps.dbPath,
       requireApprovalForScripts: deps.config.skills_marketplace.require_approval_for_scripts,
     });
@@ -309,7 +310,7 @@ async function reviewOne(
       // A curated skill has no owning chat, so ownership cannot block this.
       sessionKey: record.origin_scope ?? "",
       opts: {
-        skillsRoot: deps.skillsRoot,
+        skillsRoot: existingSkillRoot(deps.skillsRoot, name, record),
         dbPath: deps.dbPath,
         requireApprovalForScripts: deps.config.skills_marketplace.require_approval_for_scripts,
       },

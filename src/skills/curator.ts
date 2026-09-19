@@ -53,6 +53,7 @@ import { recordSpend } from "../spend/ledger.ts";
 import { log } from "../util/log.ts";
 import { authorSkill } from "./author.ts";
 import { type InstallRecord, categoryOf, isValidSkillName, readDb, writeDb } from "./installer.ts";
+import { curatedSkillsRoot } from "./paths.ts";
 import { describeLeaks, findLeaks } from "./privacy.ts";
 
 const CURATOR_TIMEOUT_MS = 180_000;
@@ -446,7 +447,7 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
       scope: null,
       originScope: null,
       opts: {
-        skillsRoot: deps.skillsRoot,
+        skillsRoot: curatedSkillsRoot(deps.skillsRoot),
         dbPath: deps.dbPath,
         requireApprovalForScripts: deps.config.skills_marketplace.require_approval_for_scripts,
       },

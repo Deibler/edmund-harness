@@ -36,10 +36,11 @@ let skillsRoot: string;
 let dbPath: string;
 let config: Config;
 
-function makeSkill(name: string, description: string): void {
-  mkdirSync(join(skillsRoot, name), { recursive: true });
+function makeSkill(name: string, description: string, curated = true): void {
+  const root = curated ? join(skillsRoot, "curated") : skillsRoot;
+  mkdirSync(join(root, name), { recursive: true });
   writeFileSync(
-    join(skillsRoot, name, "SKILL.md"),
+    join(root, name, "SKILL.md"),
     `---\nname: ${name}\ndescription: ${description}\n---\n\nDo the thing.\n`,
   );
 }
@@ -90,7 +91,7 @@ describe("retiring what nobody reaches for", () => {
 
     const retired = retireUnusedCurated(deps());
     expect(retired.map((r) => r.name)).toEqual(["ghost-skill"]);
-    expect(existsSync(join(skillsRoot, "ghost-skill", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsRoot, "curated", "ghost-skill", "SKILL.md"))).toBe(false);
 
     const db = readDb(dbPath);
     expect(db.skills["ghost-skill"]).toBeUndefined();
@@ -106,7 +107,7 @@ describe("retiring what nobody reaches for", () => {
     recordSkillRead(dir, "useful-skill", "imessage:dm:+15550001111");
 
     expect(retireUnusedCurated(deps())).toEqual([]);
-    expect(existsSync(join(skillsRoot, "useful-skill", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(skillsRoot, "curated", "useful-skill", "SKILL.md"))).toBe(true);
   });
 
   test("a brand-new curated skill is given its grace period", () => {
@@ -121,8 +122,8 @@ describe("retiring what nobody reaches for", () => {
   test("a person's own skill is never retired, however long it sits unread", () => {
     // Unused is not a defect in something someone chose to keep, and this
     // pass has no standing to delete it.
-    makeSkill("kaylas-skill", "Hers.");
-    makeSkill("shop-skill", "From the marketplace.");
+    makeSkill("kaylas-skill", "Hers.", false);
+    makeSkill("shop-skill", "From the marketplace.", false);
     writeDb(dbPath, {
       version: 1,
       skills: {
@@ -143,7 +144,7 @@ describe("retiring what nobody reaches for", () => {
   });
 
   test("a self-authored skill the model wrote for one chat is never retired", () => {
-    makeSkill("chat-skill", "Grown out of one conversation.");
+    makeSkill("chat-skill", "Grown out of one conversation.", false);
     writeDb(dbPath, {
       version: 1,
       skills: {
@@ -231,7 +232,9 @@ describe("reading a review verdict", () => {
 describe("reading a description off disk", () => {
   test("returns the catalogue line, and empty when the skill is gone", () => {
     makeSkill("has-desc", "The line people see.");
-    expect(skillDescription(skillsRoot, "has-desc")).toBe("The line people see.");
+    expect(skillDescription(skillsRoot, "has-desc", record("has-desc"))).toBe(
+      "The line people see.",
+    );
     expect(skillDescription(skillsRoot, "missing")).toBe("");
   });
 });

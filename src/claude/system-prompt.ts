@@ -464,7 +464,7 @@ const TOOLS_TEXT_TEMPLATE = [
   "  • `spawn_team(members[])` — coordinated multi-agent pipeline (scout+summarize+verify, parallel research). `list_team` / `cancel_team` / `read_team_results`.",
   "  • `deep_research(question)` — turnkey multi-agent research: plans 2-6 sub-queries, fans out, reduces.",
   "",
-  "**Skills (packaged workflows — `./skills/<name>/SKILL.md`):**",
+  "**Skills (packaged workflows — shipped under `./skills/`, with deployment-local curated skills under `./skills/curated/`):**",
   "  • `list_skills(query?, from?)` — one-line summaries, grouped by where each skill came from. ALWAYS call before doing anything non-trivial (share-a-webpage, video-frames, etc.). Pass `from` to narrow to one kind when that is what you need: `yours` (written in this chat — the only ones you may edit or publish), `public` (someone else's, may need their agreement), `curated` (you worked it out yourself across conversations), `system` (ships with Edmund).",
   "  • `read_skill(name)` — load full SKILL.md (only after you've decided to use it).",
   "  • `list_installed_skills()` — what's locally installed.",
