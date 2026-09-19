@@ -8,7 +8,7 @@ import type { EchoCache } from "../sessions/echo-cache.ts";
 import { dmKeyFor } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import { log } from "../util/log.ts";
-import { markdownToPlaintext, sanitizeOutbound } from "./sanitize-outbound.ts";
+import { keepQuietVeto, markdownToPlaintext, sanitizeOutbound } from "./sanitize-outbound.ts";
 
 /**
  * Mirror channel deliverer — registered by main.ts when [mirror] is enabled.
@@ -112,7 +112,19 @@ export async function deliverReply(
   echoes: EchoCache,
 ): Promise<{ sent: number; sentChunks: string[]; errors: string[]; silenced: boolean }> {
   const cleaned = markdownToPlaintext(sanitizeOutbound(args.text));
-  if (!cleaned) return { sent: 0, sentChunks: [], errors: [], silenced: true };
+  if (!cleaned) {
+    // A veto with narration beside the sentinel was one exact-match away from
+    // shipping as a bubble. Dropping it is right; dropping it silently would
+    // hide prompt drift worth counting, so the size is logged, never the text.
+    const veto = keepQuietVeto(args.text);
+    if (veto.vetoed && veto.narration.length > 0) {
+      log.warn("deliver", "KEEP_QUIET veto dropped narration beside the sentinel", {
+        to: args.to,
+        chars: veto.narration.length,
+      });
+    }
+    return { sent: 0, sentChunks: [], errors: [], silenced: true };
+  }
 
   // Telemetry only. Addresses are supposed to go out as Maps cards via
   // send_location, and that rule lives in the prompt — which makes it a hope

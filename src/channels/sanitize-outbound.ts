@@ -17,7 +17,8 @@ const INTERNAL_SEP = /^###\+#.*$/gm;
 export function sanitizeOutbound(text: string): string {
   // KEEP_QUIET is the model's explicit veto sentinel. The persona promises
   // it works in EVERY venue (see persona/VENUE_DM.md, VENUE_GROUP.md) — reply
-  // with exactly `KEEP_QUIET` and the harness drops the output silently. It's
+  // with `KEEP_QUIET`, alone or as the first or last line, and the harness
+  // drops the output silently. It's
   // checked here, before any other processing, so the veto is honored on every
   // path that goes through deliverReply (channels turn, recovery, cron fire,
   // the send_message tool) — not just the proactive fire path that had its own
@@ -35,16 +36,41 @@ export function sanitizeOutbound(text: string): string {
   return out;
 }
 
+const KEEP_QUIET_LINE = /^\s*KEEP_QUIET\s*$/i;
+
 /**
- * True when the reply is solely the `KEEP_QUIET` veto sentinel. Matches the
- * exact, anchored shape the persona instructs the model to emit ("exactly
- * `KEEP_QUIET`, no punctuation, no other words"): the whole reply is the
- * token, case-insensitive, ignoring surrounding whitespace. Deliberately
- * strict so a real message that merely mentions KEEP_QUIET is never eaten.
- * Mirrors the regex in proactive/fire.ts.
+ * The `KEEP_QUIET` veto as the model actually emits it.
+ *
+ * The persona asks for exactly the sentinel and nothing else, and for a long
+ * time only that exact shape was honored. In practice the model sometimes puts
+ * a line of narration beside it ("Already answered in the thread, leaving it
+ * there." then the sentinel, or the sentinel first and a note to itself after),
+ * and the exact match let narration and sentinel ship together as one bubble
+ * (2026-09-19). The sentinel states the model's intent for the whole turn, so
+ * it vetoes when it is the whole reply or its first or last non-blank line;
+ * whatever stood beside it is dropped and returned as `narration` so the
+ * delivery path can count the leak it prevented. A sentinel inside a sentence,
+ * or on a line in the middle of a reply, is not a veto: a real message that
+ * explains the mechanism must never be eaten.
  */
+export function keepQuietVeto(text: string): { vetoed: boolean; narration: string } {
+  const lines = text.split("\n").filter((line) => line.trim().length > 0);
+  const first = lines[0];
+  const last = lines[lines.length - 1];
+  if (first === undefined || last === undefined) return { vetoed: false, narration: "" };
+  if (!KEEP_QUIET_LINE.test(first) && !KEEP_QUIET_LINE.test(last)) {
+    return { vetoed: false, narration: "" };
+  }
+  const narration = lines
+    .filter((line) => !KEEP_QUIET_LINE.test(line))
+    .join("\n")
+    .trim();
+  return { vetoed: true, narration };
+}
+
+/** True when the reply carries the `KEEP_QUIET` veto (see `keepQuietVeto`). */
 export function isKeepQuiet(text: string): boolean {
-  return /^\s*KEEP_QUIET\s*$/i.test(text);
+  return keepQuietVeto(text).vetoed;
 }
 
 /**

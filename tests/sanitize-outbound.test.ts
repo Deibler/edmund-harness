@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   isKeepQuiet,
+  keepQuietVeto,
   looksLikeIntentionalSilence,
   markdownToPlaintext,
   sanitizeOutbound,
@@ -96,6 +97,19 @@ describe("sanitizeOutbound", () => {
       "Reply with KEEP_QUIET to veto the message.",
     );
   });
+  // The shape that shipped on 2026-09-19: a status note, then the sentinel on
+  // its own line. The exact-match veto let the whole thing go out as a bubble.
+  test("vetoes when the sentinel is the first or last line and drops the narration", () => {
+    expect(sanitizeOutbound("Already answered in the thread, leaving it there.\nKEEP_QUIET")).toBe(
+      "",
+    );
+    expect(sanitizeOutbound("Posted the frame.\n\nKEEP_QUIET\n")).toBe("");
+    expect(sanitizeOutbound("KEEP_QUIET\n(no message needed)")).toBe("");
+  });
+  test("a sentinel line in the middle of a reply is not a veto", () => {
+    const raw = "Two ways to stay silent:\nKEEP_QUIET\nor an empty reply.";
+    expect(sanitizeOutbound(raw)).toBe(raw);
+  });
 });
 
 describe("isKeepQuiet", () => {
@@ -107,6 +121,22 @@ describe("isKeepQuiet", () => {
   test("rejects anything with extra words", () => {
     expect(isKeepQuiet("KEEP_QUIET for now")).toBe(false);
     expect(isKeepQuiet("ok KEEP_QUIET")).toBe(false);
+    expect(isKeepQuiet("KEEP_QUIET.")).toBe(false);
     expect(isKeepQuiet("")).toBe(false);
+  });
+  test("honors the sentinel on the first or last line", () => {
+    expect(isKeepQuiet("Posted.\nKEEP_QUIET")).toBe(true);
+    expect(isKeepQuiet("keep_quiet\n\nnote to self")).toBe(true);
+  });
+});
+
+describe("keepQuietVeto", () => {
+  test("returns the narration the veto dropped", () => {
+    expect(keepQuietVeto("Posted the frame.\nKEEP_QUIET")).toEqual({
+      vetoed: true,
+      narration: "Posted the frame.",
+    });
+    expect(keepQuietVeto("KEEP_QUIET")).toEqual({ vetoed: true, narration: "" });
+    expect(keepQuietVeto("hello")).toEqual({ vetoed: false, narration: "" });
   });
 });

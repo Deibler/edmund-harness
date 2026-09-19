@@ -31,6 +31,10 @@ There are 91 core tools. This page groups them; the source files under
 `set_group_photo`, `add_group_member`, `remove_group_member`, `leave_group`,
 `create_chat`. Group operations only register inside a group.
 
+`edit_message` and `unsend_message` confirm the outcome against chat.db before
+reporting success. Messages accepts both requests one way, and a request that
+imagent drops still returns cleanly, so "accepted" is not the outcome.
+
 ## Other people and other chats
 
 | Tool | What it does |

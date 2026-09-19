@@ -30,7 +30,7 @@ Terms as the code uses them. One sentence each.
 - **House key**: the operator's global OpenRouter key, used when a session has no wallet of its own.
 - **Intensity**: the 1 to 10 proactive setting mapping to cooldown, weekly cap and sweep cadence.
 - **Integration**: an optional package under `integrations/` that contributes tools, runtimes or a channel through a manifest, never imported directly by core.
-- **KEEP_QUIET**: the sentinel a model reply carries to say nothing should be sent.
+- **KEEP_QUIET**: the sentinel a model reply carries to say nothing should be sent. It counts on its own or as the first or last line of the reply; text beside it is dropped, never sent.
 - **Maintainer**: the small-model pass that appends dated observations to a person or group file after a reply.
 - **Mission**: a recurring job with a brief and a notes file whose routine checks stay silent.
 - **Operator**: the human who runs the daemon, reachable at `alerts.operator_handle`.
