@@ -21,17 +21,22 @@
  * upload, and works offline. SPEECH OUT is generated here so it is my voice
  * rather than the system's, with the browser's synthesiser as the fallback when
  * generation fails. Answering in a robot voice beats not answering.
+ *
+ * THE ANSWER ITSELF IS MINE. A question asked at a stove used to go to a
+ * narrow model that had never met the household, with the recipe and the
+ * shelves pasted into its prompt. That is a worse version of me answering
+ * under my name, so the question now wakes me instead (see `wake.ts`) and I
+ * answer through `kitchen_voice`, which lands here as `say`. This module only
+ * speaks it and files it where the page is polling.
  */
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getRecipe } from "./cookbook.ts";
 import { openrouterKey } from "./openrouter.ts";
-import { live } from "./store.ts";
 
 /** Kept short on purpose: this is read aloud, and nobody wants a paragraph. */
-const MAX_WORDS = 70;
+export const MAX_WORDS = 70;
 
 export type VoiceAsk = {
   /** The browser's id for this question, so it can poll for its own answer. */
@@ -50,57 +55,6 @@ export type VoiceTurn = {
   audio: string | null;
   ts: string;
 };
-
-/**
- * The answer, in the voice of somebody standing in this kitchen.
- *
- * Given the actual step they are on and the actual shelves, because the whole
- * point is that it beats a search engine: "can I use milk instead" has a real
- * answer here and a generic one anywhere else.
- */
-async function answer(account: string, ask: VoiceAsk): Promise<string> {
-  const stock = live(account)
-    .map((i) => i.name)
-    .sort()
-    .join(", ");
-  const r = ask.recipe ? getRecipe(account, ask.recipe) : null;
-  const step = r && ask.step ? r.steps.find((s) => s.n === ask.step) : null;
-
-  const prompt = [
-    "You are Edmund, answering out loud to somebody who is cooking right now and",
-    "cannot read. Answer the question and nothing else.",
-    "",
-    r ? `They are cooking: ${r.name}. ${r.desc}` : "They are somewhere in the kitchen site.",
-    step ? `They are on step ${step.n} of ${r!.steps.length}: "${step.title}". ${step.body}` : "",
-    r
-      ? `The full ingredient list: ${r.ingredients.map((i) => `${i.amount} ${i.name}`).join(", ")}`
-      : "",
-    "",
-    `In the kitchen right now: ${stock}`,
-    "",
-    `They asked: "${ask.text}"`,
-    "",
-    `Rules. Under ${MAX_WORDS} words. Spoken English, so no lists, no headings, no`,
-    "markdown, no emoji, no em-dashes. Lead with the answer. If the answer depends on",
-    "something in this kitchen, say the real thing rather than a general rule. If you do",
-    "not know, say so in one short sentence rather than guessing.",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${openrouterKey()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "anthropic/claude-sonnet-4.5",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 300,
-    }),
-  });
-  if (!res.ok) throw new Error(`openrouter ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const d = (await res.json()) as { choices: Array<{ message: { content: string } }> };
-  return (d.choices[0]?.message?.content ?? "").trim();
-}
 
 /**
  * Speak it, and write the file the page will play.
@@ -196,38 +150,36 @@ export function readVoice(artifactDir: string, principal: string): VoiceTurn[] {
 }
 
 /**
- * Answer one spoken question end to end.
+ * File one spoken answer, end to end.
  *
  * The turn is appended whether or not the audio worked, so the page always has
  * something to show and read out. Only the last twenty are kept: this is a
  * conversation at a stove, not a record.
  */
-export async function handleVoice(
-  account: string,
+export async function sayVoice(
   artifactDir: string,
   principal: string,
-  ask: VoiceAsk,
+  turn: { rid: string; ask: string; say: string },
 ): Promise<VoiceTurn> {
-  const say = await answer(account, ask);
   const dir = join(artifactDir, "voice");
   mkdirSync(dir, { recursive: true });
 
-  const file = `${safeName(principal)}-${ask.rid}.m4a`;
+  const file = `${safeName(principal)}-${turn.rid}.m4a`;
   let ok = false;
   try {
-    ok = await speak(say, join(dir, file));
+    ok = await speak(turn.say, join(dir, file));
   } catch {
     /* falls back to the browser's own voice */
   }
 
-  const turn: VoiceTurn = {
-    rid: ask.rid,
-    ask: ask.text,
-    say,
+  const t: VoiceTurn = {
+    rid: turn.rid,
+    ask: turn.ask,
+    say: turn.say,
     audio: ok ? `voice/${file}` : null,
     ts: new Date().toISOString(),
   };
-  const turns = [...readVoice(artifactDir, principal), turn].slice(-20);
+  const turns = [...readVoice(artifactDir, principal).filter((x) => x.rid !== t.rid), t].slice(-20);
   writeFileSync(threadPath(artifactDir, principal), JSON.stringify({ turns }, null, 2));
-  return turn;
+  return t;
 }

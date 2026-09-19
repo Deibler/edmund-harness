@@ -25,6 +25,9 @@ import { viewerForSession } from "../../orchestrators/visibility.ts";
 import { isMirrorSession } from "../../sessions/key.ts";
 import { chatIdFromKey, isGroupSession } from "../../sessions/key.ts";
 import { StateStore } from "../../sessions/store.ts";
+import { resolveTwilioCreds } from "../../sms/creds.ts";
+import { createSmsSender } from "../../sms/sender.ts";
+import { conversationIdFromKey, isSmsSession, smsChatGuidFor } from "../../sms/session.ts";
 import { assertPathSafe } from "../../util/path-safety.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
@@ -178,6 +181,65 @@ function normalizeReaction(input: string): string {
 }
 
 /**
+ * Deliver one text into the CURRENT chat when that chat is an SMS
+ * conversation rather than an iMessage one.
+ *
+ * Needed because this server is its own process. `channels/deliver.ts` picks
+ * the SMS channel off a `sms:`-prefixed chat guid, but the deliverer it
+ * consults is a module-level variable registered by main.ts — which does not
+ * exist here. Without this branch `send_message` fell through to the
+ * iMessage path and handed a Twilio Conversation SID to chat.db, which
+ * answered `chat_not_found`: the model believed it had spoken and the room
+ * heard nothing.
+ *
+ * Both processes build their sender from the same factory, so consent,
+ * chunking and the spend ledger have one implementation.
+ *
+ * Credentials come from the environment, which a worker only inherits under
+ * full host access (see src/claude/direct-env.ts). Under sandboxed access
+ * they are deliberately withheld, and that is reported as itself rather than
+ * as a send failure.
+ */
+async function deliverSms(
+  ctx: ToolContext,
+  text: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const conversationId = conversationIdFromKey(ctx.sessionKey);
+  if (!conversationId) return { ok: false, error: `no sms conversation in ${ctx.sessionKey}` };
+  if (!ctx.config.sms.from) return { ok: false, error: "sms.from (our E.164) is unset" };
+
+  const resolved = await resolveTwilioCreds();
+  if (!resolved) {
+    return {
+      ok: false,
+      error:
+        "twilio credentials are not available in this process — under sandboxed host access they are withheld, so SMS sends have to come from the daemon's own reply",
+    };
+  }
+
+  const sender = createSmsSender({
+    config: ctx.config,
+    creds: resolved.creds,
+    ownNumber: ctx.config.sms.from,
+    dataDir: ctx.dataDir,
+    statusCallbackUrl: ctx.config.sms.public_base_url
+      ? `${ctx.config.sms.public_base_url.replace(/\/+$/, "")}/sms/status`
+      : undefined,
+  });
+  try {
+    const delivery = await sender.deliver({
+      chatGuid: smsChatGuidFor(conversationId),
+      isGroup: isGroupSession(ctx.sessionKey),
+      text,
+    });
+    if (delivery.sent > 0) return { ok: true };
+    return { ok: false, error: delivery.errors.join("; ") || "sms send reported nothing sent" };
+  } finally {
+    sender.store.close();
+  }
+}
+
+/**
  * Post-send bookkeeping for tool-driven sends into the CURRENT chat. The
  * daemon's session store only learned about outbounds at end-of-turn
  * (sendDeliver / the tool-only branch in channels/turn.ts), so a turn that
@@ -322,6 +384,34 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           };
         }
 
+        // SMS is a different wire, not a different chat. Discriminated on the
+        // session key BEFORE any chat.db work below, which would resolve a
+        // Conversation SID to nothing (or, for a DM handle that also has an
+        // iMessage thread, to the wrong one — a green conversation answered
+        // in blue).
+        if (isSmsSession(ctx.sessionKey)) {
+          if (args.reply_to || args.effect || args.subject) {
+            console.warn(`[send_message] ${ctx.sessionKey} dropping iMessage-only options on SMS`);
+          }
+          const res = await deliverSms(ctx, cleaned);
+          if (!res.ok) {
+            console.error(`[send_message] ${ctx.sessionKey} FAILED: ${res.error}`);
+            return { content: [{ type: "text", text: `send error: ${res.error}` }], isError: true };
+          }
+          recordToolSend(ctx, cleaned);
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  args.reply_to || args.effect || args.subject
+                    ? "sent over SMS (threading/effect/subject are iMessage-only and were dropped)"
+                    : "sent over SMS",
+              },
+            ],
+          };
+        }
+
         const isGroup = isGroupSession(ctx.sessionKey);
         const to = chatIdFromKey(ctx.sessionKey);
 
@@ -411,6 +501,24 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           };
         }
 
+        // No Maps card on SMS. The link still opens Maps on the far end, so
+        // the place survives even though the preview does not — better than
+        // refusing, which would leave the model with no way to give an address.
+        if (isSmsSession(ctx.sessionKey)) {
+          const note0 = markdownToPlaintext(sanitizeOutbound(args.note ?? "")).trim();
+          const body = note0 ? `${note0}\n${url}` : url;
+          const res = await deliverSms(ctx, body);
+          if (!res.ok) {
+            return {
+              content: [{ type: "text", text: `send_location failed: ${res.error}` }],
+              isError: true,
+            };
+          }
+          recordToolSend(ctx, body);
+          console.log(`[send_location] ${ctx.sessionKey} ${url} (sms, link only)`);
+          return { content: [{ type: "text", text: `sent map link (SMS has no card): ${url}` }] };
+        }
+
         const isGroup = isGroupSession(ctx.sessionKey);
         const to = chatIdFromKey(ctx.sessionKey);
         const chatGuid = ctx.chatGuids[0];
@@ -457,6 +565,20 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
               {
                 type: "text",
                 text: "reactions are an iMessage social action; update or render mirror content instead",
+              },
+            ],
+            isError: true,
+          };
+        }
+        // Tapbacks do not exist on SMS. Say so rather than letting the
+        // chat.db lookup below fail with a message about a missing chat,
+        // which reads like a bug and invites a retry that cannot work.
+        if (isSmsSession(ctx.sessionKey)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "SMS has no tapbacks — say it in words, or say nothing",
               },
             ],
             isError: true,
@@ -518,6 +640,21 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
         "Send ANY file to the current conversation — images, audio, video, PDFs, documents, HTML, archives, whatever. If you've just produced a file the user asked for (pdf about cats, a generated image, a voice memo, a zipped project), CALL THIS TOOL to actually deliver it. Never just tell the user 'here's the pdf at /path/...' — they can't see paths. Path must be absolute. Text replies are auto-sent; use send_attachment ONLY for files.",
       inputSchema: AttachmentInput,
       handler: async (args) => {
+        // The SMS sender is text-only: outbound MMS media would need a
+        // publicly reachable URL per file, which nothing here mints. Refuse
+        // with the reason and the alternative rather than attempting a send
+        // that cannot carry the file.
+        if (isSmsSession(ctx.sessionKey)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "this conversation is SMS and outbound media is not wired up — describe the file in words, or ask them for an iMessage thread if they need the file itself",
+              },
+            ],
+            isError: true,
+          };
+        }
         const resolvedPath = resolveAttachmentPath(args.file_path, ctx.sandboxPath);
         try {
           assertPathSafe(resolvedPath);

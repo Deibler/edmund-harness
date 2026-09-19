@@ -401,7 +401,14 @@ export const CLIENT = `<script>
     clearTimeout(pollTimer);
     var me = who();
     if (!me) return;
-    if (n > 40) { say('Still working on it. It will appear here when it lands.'); return; }
+    // The answer is written by me in a chat turn, not by a five-second call,
+    // so it can take a few minutes. Quick polls for the first hundred seconds,
+    // then one honest line and a slower poll for six more minutes; giving up
+    // at the line, which this used to do, left a written answer on disk that
+    // the page never fetched.
+    if (n === 40) say('Still working on it. It will appear here when it lands.');
+    if (n > 76) { say('No answer came through. Ask again in a bit.'); return; }
+    var wait = n < 40 ? 2500 : 10000;
     // Two things here are load-bearing and both were bugs.
     //
     // '../' because this page lives in /recipe/ and the voice directory sits at
@@ -416,7 +423,7 @@ export const CLIENT = `<script>
       .then(function(r){ return r.ok ? r.json() : {turns:[]}; })
       .then(function(d){
         var hit = (d.turns||[]).filter(function(t){ return t.rid === waitingRid; })[0];
-        if (!hit) { pollTimer = setTimeout(function(){ poll(n+1); }, 2500); return; }
+        if (!hit) { pollTimer = setTimeout(function(){ poll(n+1); }, wait); return; }
         va.textContent = hit.say; say('');
         if (hit.audio) {
           // Stored relative to the artifact root, read from a page one level in.
@@ -424,7 +431,7 @@ export const CLIENT = `<script>
           var p = player.play(); if (p && p.catch) p.catch(function(){ speakLocally(hit.say); });
         } else speakLocally(hit.say);
       })
-      .catch(function(){ pollTimer = setTimeout(function(){ poll(n+1); }, 3000); });
+      .catch(function(){ pollTimer = setTimeout(function(){ poll(n+1); }, wait + 500); });
   }
 
   function ask(text){

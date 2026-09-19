@@ -204,6 +204,7 @@ export function portalRoutes(deps: Deps): Hono {
     ".ogg",
     ".aac",
     ".pdf",
+    ".html",
   ]);
   app.get("/:key/:token/file", (c) => {
     const sessionKey = auth(c, fileLimiter);
@@ -214,8 +215,8 @@ export function portalRoutes(deps: Deps): Hono {
     const ext = abs.slice(abs.lastIndexOf(".")).toLowerCase();
     const name = abs.slice(abs.lastIndexOf("/") + 1).replace(/["\\\r\n]/g, "_");
     const headers: Record<string, string> = {
-      // Never execute anything we serve — an HTML/SVG artifact opened
-      // directly must not be able to script against the portal origin.
+      // HTML artifacts may render inline, but scripts stay disabled so they
+      // cannot run against the portal origin.
       "Content-Security-Policy": "sandbox",
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, max-age=300",

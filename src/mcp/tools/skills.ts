@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -7,6 +7,7 @@ import { StateStore } from "../../sessions/store.ts";
 import { authorSkill, skillVisibleTo, updateAuthoredSkill } from "../../skills/author.ts";
 import { type ConsentDeps, consentState, recordDecision, serveAsk } from "../../skills/consent.ts";
 import { categoryOf, readDb } from "../../skills/installer.ts";
+import { skillDirectories, skillDirectoryForRecord } from "../../skills/paths.ts";
 import {
   GROUP_BLURB,
   SKILL_GROUPS,
@@ -19,8 +20,10 @@ import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
 
 /**
- * Progressive skill discovery. Skills live in `./skills/<name>/SKILL.md` with
- * YAML frontmatter `name:` / `description:`. The model:
+ * Progressive skill discovery. Shipped and authored skills live in
+ * `./skills/<name>/SKILL.md`; deployment-local curated skills live under
+ * `./skills/curated/<name>/SKILL.md`. Both use YAML frontmatter with `name:` /
+ * `description:`. The model:
  *   1. calls `list_skills(query?)` → one-line descriptions
  *   2. calls `read_skill(name)` → full SKILL.md when it decides to use one
  *
@@ -226,10 +229,10 @@ export function skillTools(ctx: ToolContext): ToolDef[] {
         "Load the full SKILL.md for one skill (instructions, scripts, usage examples). Only call this when you've decided to use the skill — it returns the complete prompt, which is larger than the summary.",
       inputSchema: ReadInput,
       handler: (args) => {
-        const path = skillManifestPath(join(SKILLS_ROOT, args.name));
-        if (!existsSync(path)) return text(`no such skill: ${args.name}`, true);
         const db = readDb(dbPath);
         const rec = db.skills[args.name];
+        const path = skillManifestPath(skillDirectoryForRecord(SKILLS_ROOT, args.name, rec));
+        if (!existsSync(path)) return text(`no such skill: ${args.name}`, true);
         if (rec?.disabled) {
           return text(`skill ${args.name} is disabled by operator`, true);
         }
@@ -338,7 +341,11 @@ export function skillTools(ctx: ToolContext): ToolDef[] {
         if (!ctx.config.public_skills.enabled) {
           return text("publishing is switched off in this deployment", true);
         }
-        const path = join(SKILLS_ROOT, args.name, "SKILL.md");
+        const db = readDb(dbPath);
+        const path = join(
+          skillDirectoryForRecord(SKILLS_ROOT, args.name, db.skills[args.name]),
+          "SKILL.md",
+        );
         if (!existsSync(path)) return text(`no such skill: ${args.name}`, true);
         const result = publishSkill({
           name: args.name,
@@ -449,11 +456,8 @@ export function skillManifestPath(dir: string): string {
 }
 
 function listSkills(): SkillEntry[] {
-  if (!existsSync(SKILLS_ROOT)) return [];
   const out: SkillEntry[] = [];
-  for (const name of readdirSync(SKILLS_ROOT)) {
-    const dir = join(SKILLS_ROOT, name);
-    if (!statSync(dir).isDirectory()) continue;
+  for (const { name, dir } of skillDirectories(SKILLS_ROOT)) {
     const manifest = skillManifestPath(dir);
     if (!existsSync(manifest)) continue;
     const description = parseDescription(readFileSync(manifest, "utf8")) ?? "(no description)";

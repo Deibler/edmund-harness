@@ -19,6 +19,7 @@
 export function clientScript(labelsJson: string): string {
   return `<script>
 (function(){
+  document.body.classList.remove('nojs');
   var KEY = location.search || '';
   var D = JSON.parse(document.getElementById('data').textContent);
 

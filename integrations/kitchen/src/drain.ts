@@ -15,18 +15,15 @@
  *   noting, undoing an automatic cleanup, ticking things off the shopping
  *   list. All deterministic folds over state that already exists.
  *
- *   ADDING TO THE LIST — needs a model, but a narrow one, and it runs right
- *   here rather than waiting for a session. Deciding what to buy for a dish is
- *   not a lookup: "chicken parm" needs breadcrumbs the ledger has never heard
- *   of, wants the 24 oz jar rather than "some sauce", and must not put mozzarella
- *   on the list when there is already mozzarella in the fridge. The model is
- *   handed the same three things I would read first — the recipe, everything on
- *   the shelves, and what is already on the list — so it answers with the same
- *   information rather than guessing from a name.
- *
- *   LEFT FOR ME — writing a recipe, building a variant, answering a question.
- *   Those are real writing, and pretending otherwise would put a worse version
- *   of my own work on the page under my name.
+ *   LEFT FOR ME — writing a recipe, building a variant, answering a question,
+ *   deciding what "chicken parm" actually needs from a supermarket, finding
+ *   dishes unlike anything this house cooks, answering something asked out
+ *   loud at the stove. Those are judgement about food and about these people,
+ *   and until 2026-09-19 three of them went to a narrow model on OpenRouter
+ *   that had never met the household, because the answer was "only a list".
+ *   A worse version of my own work under my name is the wrong trade for ten
+ *   seconds of latency, so the drain now leaves every one of them alone and
+ *   `wake.ts` brings them to me in a chat I already know the household from.
  *
  * Nothing here messages anybody. A confirmation text for a button somebody just
  * pressed is a notification about their own action.
@@ -36,11 +33,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { dirname, join } from "node:path";
 import { eaters, getAccount, updateAccount } from "./accounts.ts";
 import { getRecipe, loadCookbook } from "./cookbook.ts";
-import { generateExplore, readExplore } from "./explore.ts";
-import { addToList, readList, removeFromList, setAmount } from "./list.ts";
+import { readExplore } from "./explore.ts";
+import { addToList, removeFromList, setAmount } from "./list.ts";
 import { VIBES, refreshWeather } from "./mood.ts";
 import { WAIT_MS, syncNote } from "./notesync.ts";
-import { openrouterKey } from "./openrouter.ts";
 import { confirmPlan, cookedRecently, planFor, useLines } from "./plans.ts";
 import { addNote, skipPair, toggleFavorite, unskipPair } from "./profile.ts";
 import { METHOD_LABEL, loadRecipes } from "./recipes.ts";
@@ -59,7 +55,6 @@ import {
 import { settleAfterPurchase, tripCount } from "./shopping.ts";
 import { append, fold, live, openPlans, readLog, slug } from "./store.ts";
 import { contained, positive, safeId } from "./util.ts";
-import { handleVoice } from "./voice.ts";
 
 /** Kinds this module is willing to answer on its own. */
 const AUTO = new Set([
@@ -68,15 +63,15 @@ const AUTO = new Set([
   "note",
   "unsweep",
   "shopped",
+  // "addlist" only for the empty picker; a real pick is a shopping decision
+  // and falls through to a person, like an unwritten "make".
   "addlist",
-  "voice",
   "pairskip",
   "photo",
   "reconcile",
   "cooked",
   "restock",
   "pref",
-  "explore",
   "idealist",
   "sched",
   "keep",
@@ -93,78 +88,6 @@ export type DrainResult = {
   left: MakeRequest[];
   failed: string[];
 };
-
-/**
- * What to buy so this dish can be cooked, in a shopper's words.
- *
- * The prompt carries the whole kitchen rather than just the shortfall, because
- * the interesting mistakes are all things a shortfall list cannot see. A recipe
- * that calls for "cheese" when the fridge holds provolone needs nothing. A
- * recipe with no written ingredient list still needs eggs and breadcrumbs, and
- * the ledger will never say so, because the ledger only knows what the house
- * has owned before.
- */
-async function askForList(
-  account: string,
-  recipe: { id: string; name: string; desc?: string },
-  missingNames: string[],
-): Promise<Array<{ name: string; amount?: string; cat?: string; item?: string }>> {
-  const stock = live(account)
-    .map((i) => `${i.name}${i.qty !== null ? ` (${i.qty}${i.unit ? ` ${i.unit}` : ""})` : ""}`)
-    .sort();
-  const already = readList(account).entries.map((e) => e.name);
-  const built = getRecipe(account, recipe.id);
-  const written = built?.ingredients?.length
-    ? built.ingredients.map((i) => `${i.name}: ${i.amount}`).join("\n")
-    : null;
-
-  const prompt = [
-    `Somebody wants to cook "${recipe.name}" and pressed "add what I need to the list".`,
-    recipe.desc ? `The dish: ${recipe.desc}` : "",
-    "",
-    written
-      ? `The written recipe calls for:\n${written}`
-      : `There is no written recipe yet, so work out what this dish needs from its name.`,
-    "",
-    `ALREADY IN THE KITCHEN, do not put any of these on the list unless the recipe`,
-    `needs meaningfully more than what is there:`,
-    stock.join(", ") || "(nothing tracked)",
-    "",
-    already.length ? `ALREADY ON THE SHOPPING LIST, do not repeat: ${already.join(", ")}` : "",
-    missingNames.length ? `The site thinks these are short: ${missingNames.join(", ")}` : "",
-    "",
-    `Return JSON: {"buy":[{"name":"what to look for on the shelf","amount":"how much,`,
-    `as a shopper would say it","cat":"produce|meat|seafood|dairy|frozen|bakery|pantry|`,
-    `condiment|spice|drink|snack|other"}]}`,
-    "",
-    "Rules. Only what is genuinely needed and not already owned. Real supermarket",
-    "products, not recipe-speak: 'panko breadcrumbs, 8 oz' rather than 'breadcrumbs for",
-    "coating'. Pantry staples like salt, pepper, oil and common dried spices are assumed",
-    "present unless the kitchen list above proves otherwise. If nothing is needed, return",
-    "an empty array. Never invent a substitute for something the kitchen already has.",
-  ]
-    .filter((l) => l !== "")
-    .join("\n");
-
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${openrouterKey()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "anthropic/claude-sonnet-4.5",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-    }),
-  });
-  if (!res.ok) throw new Error(`openrouter ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const data = (await res.json()) as { choices: Array<{ message: { content: string } }> };
-  const parsed = JSON.parse(data.choices[0]!.message.content) as {
-    buy?: Array<{ name?: string; amount?: string; cat?: string; item?: string }>;
-  };
-  return (parsed.buy ?? []).filter(
-    (b): b is { name: string; amount?: string; cat?: string } =>
-      typeof b?.name === "string" && b.name.trim().length > 0,
-  );
-}
 
 /**
  * Resolve one request.
@@ -577,49 +500,21 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       );
     }
 
-    case "voice": {
-      if (!r.rid || !r.text?.trim() || !r.profile) return null;
-      const dir = getAccount(account)?.site?.artifact;
-      if (!dir) return null;
-      const turn = await handleVoice(account, dir, r.profile, {
-        rid: r.rid,
-        text: r.text.trim(),
-        recipe: r.recipe ?? null,
-        step: r.step ?? null,
-      });
-      return (
-        `asked out loud "${r.text.trim().slice(0, 48)}" -> ` +
-        `${turn.audio ? "spoken" : "text only, synthesis failed"}`
-      );
-    }
-
     case "addlist": {
       // `missing` is what the person actually confirmed on the page, not what
       // the site guessed. The button opens a picker first, because a tap on
       // "add to list" is interest in a dish rather than a decision to cook it,
       // and a list that fills itself with things nobody chose is a list people
       // stop reading.
-      if (!r.recipe) return null;
+      //
+      // An empty picker settles here. A real pick does not: what "chicken
+      // parm" needs from a supermarket, given what is already in the fridge
+      // and on the list, is a shopping decision, and it goes to me through
+      // `kitchen_shopping add`. `needsPerson` below has to agree with this.
+      if (!r.recipe) return `add to list: no recipe named, dropped`;
       if (!r.items?.length && !r.missing?.length)
         return `add to list for ${r.name ?? r.recipe}: nothing picked`;
-      const { recipes } = loadRecipes(account);
-      const cat = recipes.find((x) => x.id === r.recipe);
-      const book = loadCookbook(account).find((x) => x.id === r.recipe);
-      const dish = cat ?? book ?? { id: r.recipe, name: r.name ?? r.recipe, desc: "" };
-      const buy = await askForList(account, dish, r.missing ?? []);
-      if (!buy.length) return `add to list for ${dish.name}: nothing needed`;
-      const { added, merged } = addToList(
-        account,
-        buy.map((b) => ({
-          name: b.name,
-          amount: b.amount ?? null,
-          cat: b.cat ?? null,
-          item: b.item ?? null,
-          why: `for ${dish.name}`,
-          by: r.profile ?? null,
-        })),
-      );
-      return `add to list for ${dish.name}: +${added.length}${merged.length ? `, ${merged.length} already on it` : ""}${added.length ? ` (${added.map((a) => a.name).join(", ")})` : ""}`;
+      return null;
     }
 
     // How this house wants to be cooked for. Deterministic: it writes to the
@@ -655,19 +550,6 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
         return `preferences: ${mode}${budget ? `, $${budget}/week` : ""}${perMeal ? `, $${perMeal}/dinner ceiling` : ""}${methods.length ? `, avoiding ${methods.join(", ")}` : ""}`;
       }
       return null;
-    }
-
-    // A new set of dishes deliberately unlike this household's own. Narrow
-    // model call, same shape as the shopping one: it runs here rather than
-    // waiting for a session because the answer is a list, not writing.
-    case "explore": {
-      const acct = getAccount(account);
-      if (!acct) return null;
-      const set = await generateExplore(account, acct, { theme: r.text?.trim() || null });
-      return `explore: ${set.dishes.length} ideas${set.theme ? ` for "${set.theme}"` : ""} (${set.dishes
-        .slice(0, 3)
-        .map((d) => d.name)
-        .join(", ")})`;
     }
 
     // Shopping for a dish the house cannot make and has never made. The names
@@ -805,30 +687,41 @@ export async function drain(account: string): Promise<DrainResult> {
 }
 
 /**
+ * Whether a request is waiting on a person rather than on the next pass.
+ *
+ * Not the same question as AUTO membership. `make` is in AUTO but only settles
+ * itself when the dish is already written out, and `addlist` is in AUTO only
+ * to log the empty picker. This predicate is what decides who gets woken, so
+ * a kind that is arithmetic on some inputs and mine on others has to be
+ * described here exactly as `handleOne` treats it; the drain test pins the
+ * two together per kind, because reading AUTO alone once made every unwritten
+ * "make" vanish from the waiting list while it sat unanswered in the queue.
+ */
+export function needsPerson(account: string, dir: string, r: MakeRequest): boolean {
+  if (!AUTO.has(r.kind)) return true;
+  if (r.kind === "make") {
+    return !(
+      r.recipe &&
+      getRecipe(account, r.recipe) &&
+      existsSync(join(dir, "recipe", `${r.recipe}.html`))
+    );
+  }
+  if (r.kind === "addlist") return Boolean(r.recipe && (r.items?.length || r.missing?.length));
+  return false;
+}
+
+/**
  * Requests still waiting on a person, across every account. Cheap, no I/O
  * beyond the log.
- *
- * AUTO membership is not the same question as "does this need a person" any
- * more. `make` is in AUTO, but only resolves itself when the dish is already
- * written out; one that has never been written still needs somebody to write
- * it, and reading AUTO alone made every such request disappear from this list
- * while continuing to sit unanswered in the queue.
  */
 export function stillWaiting(account: string): MakeRequest[] {
   const acct = getAccount(account);
   const dir = acct?.site?.artifact;
   if (!dir) return [];
   const done = handled(account);
-  const needsMe = (r: MakeRequest) => {
-    if (!AUTO.has(r.kind)) return true;
-    if (r.kind !== "make") return false;
-    return !(
-      r.recipe &&
-      getRecipe(account, r.recipe) &&
-      existsSync(join(dir, "recipe", `${r.recipe}.html`))
-    );
-  };
-  return pending(account, dir).filter((r) => needsMe(r) && !done.has(requestKey(r)));
+  return pending(account, dir).filter(
+    (r) => needsPerson(account, dir, r) && !done.has(requestKey(r)),
+  );
 }
 
 /** What the trigger reads. Only the fields it needs to decide and to dedupe. */

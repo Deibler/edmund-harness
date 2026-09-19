@@ -26,12 +26,11 @@
  * volunteers them in conversation, never to prompt for them.
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { createAccount, getAccount, idOk, listAccounts, updateAccount } from "./accounts.ts";
 import { loadCookbook } from "./cookbook.ts";
-import { openrouterKey } from "./openrouter.ts";
-import { append, live, readLog, slug } from "./store.ts";
+import { append, live, readLog } from "./store.ts";
 import { type Account, CATEGORIES, type Category, LOCATIONS, type Location } from "./types.ts";
 
 /* ── is this person even a candidate ─────────────────────────────────────── */
@@ -223,47 +222,26 @@ export type Proposal = {
   because: string;
 };
 
-export type FirstStock = {
-  proposals: Proposal[];
-  /** What the photographs could not show. Said out loud, never inferred past. */
-  note: string;
-};
-
-const MIME: Record<string, string> = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-  ".heic": "image/heic",
-  ".gif": "image/gif",
-};
-
 /**
- * What is in these pictures, as things to add.
+ * What to look for in a first set of pictures, before anything is tracked.
  *
- * The deliberate opposite of `readShelves`, and the difference is the ledger.
- * That one hands the model a checklist and forbids it from naming anything new,
+ * The deliberate opposite of the shelf check, and the difference is the
+ * ledger. That one hands over a checklist and forbids naming anything new,
  * because against an established kitchen "what food do you see" produces a
  * shopping catalogue that would bury real corrections. Here there is no ledger
- * yet — the checklist would be empty, every real item would come back as an
- * unactionable `unknown`, and the household would finish onboarding with an
+ * yet: the checklist would be empty, every real item would come back as an
+ * unactionable unknown, and the household would finish onboarding with an
  * empty fridge.
  *
- * Still proposals, never writes. A photo is a sample, not an audit; the whole
- * output goes in front of a person before a single event is appended.
+ * I look at the photographs myself; this is the brief that used to be a
+ * vision model's prompt. Still proposals, never writes: a photo is a sample,
+ * not an audit, and the whole list goes in front of the person before
+ * `acceptStock` appends a single event.
  */
-export async function firstStock(files: string[], where?: string | null): Promise<FirstStock> {
-  if (!files.length) return { proposals: [], note: "no photographs were given" };
-  const images = files.map((f) => {
-    const mime = MIME[extname(f).toLowerCase()] ?? "image/jpeg";
-    return {
-      type: "image_url" as const,
-      image_url: { url: `data:${mime};base64,${readFileSync(f).toString("base64")}` },
-    };
-  });
-
-  const prompt = [
-    `These are photographs of a kitchen${where ? `, specifically the ${where}` : ""} belonging to somebody who is setting up a food ledger for the first time.`,
+export function stockBrief(files: string[], where?: string | null): string {
+  return [
+    `Look at ${files.length === 1 ? "this photograph" : `these ${files.length} photographs`} of a kitchen${where ? `, specifically the ${where}` : ""}, for somebody setting up a food ledger for the first time:`,
+    files.map((f) => `  ${f}`).join("\n"),
     "",
     "List the food you can actually see, so it can be put on their shelves.",
     "",
@@ -276,65 +254,14 @@ export async function firstStock(files: string[], where?: string | null): Promis
     "3. Count only what is countable and fully visible. Six eggs in an open carton is",
     "   six. A bag of rice is not a number, it is a bag: give qty null.",
     `4. cat is one of: ${CATEGORIES.join(", ")}.`,
-    `5. loc is one of: ${LOCATIONS.join(", ")} — where it is in THIS photo.`,
+    `5. loc is one of: ${LOCATIONS.join(", ")}, where it is in THIS photo.`,
     "6. One entry per distinct food. Do not list the same thing twice because it",
     "   appears on two shelves.",
     "",
-    `Return JSON: {"items":[{"name":"...","cat":"...","loc":"...","qty":number-or-null,`,
-    `"unit":"ct|lb|oz|bag|box|jar|can|bottle|pack|null","because":"what in the photo shows this"}],`,
-    `"note":"one sentence on what these photographs could not show"}`,
+    "Show the person the list and say in a sentence what the photographs could not",
+    `show. Drop what they say is wrong, then kitchen_onboard action:"accept" with`,
+    "items:[{name, cat, loc, qty, unit}] for what survives.",
   ].join("\n");
-
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${openrouterKey()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "anthropic/claude-sonnet-4.5",
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...images] }],
-      response_format: { type: "json_object" },
-    }),
-  });
-  if (!res.ok) throw new Error(`openrouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const data = (await res.json()) as { choices: Array<{ message: { content: string } }> };
-  const parsed = JSON.parse(data.choices[0]!.message.content) as {
-    items?: Array<Record<string, unknown>>;
-    note?: string;
-  };
-
-  // Everything below is coercion, not trust. The model is answering about a
-  // photograph and its category guesses land in a typed ledger.
-  const seen = new Set<string>();
-  const proposals: Proposal[] = [];
-  for (const raw of parsed.items ?? []) {
-    const name = typeof raw.name === "string" ? raw.name.trim() : "";
-    if (!name) continue;
-    const id = slug(name);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const qty =
-      typeof raw.qty === "number" && Number.isFinite(raw.qty) && raw.qty > 0 ? raw.qty : null;
-    proposals.push({
-      id,
-      name,
-      cat: (CATEGORIES as readonly string[]).includes(raw.cat as string)
-        ? (raw.cat as Category)
-        : "other",
-      loc: (LOCATIONS as readonly string[]).includes(raw.loc as string)
-        ? (raw.loc as Location)
-        : "pantry",
-      qty,
-      unit:
-        qty === null ? null : typeof raw.unit === "string" && raw.unit !== "null" ? raw.unit : "ct",
-      because: typeof raw.because === "string" ? raw.because : "visible in the photo",
-    });
-  }
-  return {
-    proposals,
-    note:
-      typeof parsed.note === "string" && parsed.note.trim()
-        ? parsed.note
-        : "a photograph shows one angle; anything behind something else is not in this list",
-  };
 }
 
 /**

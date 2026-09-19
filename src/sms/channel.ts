@@ -3,24 +3,12 @@ import type { Config } from "../config/config.ts";
 import type { InboundMessage } from "../imessage/types.ts";
 import { normalizeHandle } from "../sessions/key.ts";
 import { log } from "../util/log.ts";
-import {
-  TWILIO_STOP_ERROR,
-  type TwilioCreds,
-  fetchConversationParticipants,
-  sendConversationMessage,
-  sendSms,
-} from "./client.ts";
-import { estimateInboundUsd, estimateOutboundUsd } from "./costs.ts";
+import { type TwilioCreds, fetchConversationParticipants } from "./client.ts";
+import { estimateInboundUsd } from "./costs.ts";
 import { classifyKeyword, keywordReply } from "./inbound.ts";
-import { chunkForSms, segmentCount, toGsm7 } from "./segment.ts";
-import {
-  conversationIdFromKey,
-  isSmsChatGuid,
-  smsChatGuidFor,
-  smsGroupKeyFor,
-  smsKeyFor,
-} from "./session.ts";
-import { SmsStore } from "./store.ts";
+import { type SmsChannelDelivery, createSmsSender } from "./sender.ts";
+import { conversationIdFromKey, smsChatGuidFor, smsGroupKeyFor, smsKeyFor } from "./session.ts";
+import type { SmsStore } from "./store.ts";
 
 /**
  * The SMS channel — everything between the Twilio wire and the harness's
@@ -45,12 +33,7 @@ import { SmsStore } from "./store.ts";
  *    someone's history — and `sms:group:<CH sid>` for groups.
  */
 
-export type SmsChannelDelivery = {
-  sent: number;
-  sentChunks: string[];
-  errors: string[];
-  silenced: boolean;
-};
+export type { SmsChannelDelivery };
 
 export type SmsRuntime = {
   store: SmsStore;
@@ -86,7 +69,16 @@ export function createSmsChannel(opts: {
   statusCallbackUrl?: string;
 }): SmsRuntime {
   const { config, creds, pipeline } = opts;
-  const store = new SmsStore(opts.dataDir);
+  // One sender, two processes: the daemon registers `deliver` as the
+  // channel deliverer, and the MCP server builds its own from the same
+  // factory. See src/sms/sender.ts.
+  const { store, deliver: deliverer } = createSmsSender({
+    config,
+    creds,
+    ownNumber: opts.ownNumber,
+    statusCallbackUrl: opts.statusCallbackUrl,
+    dataDir: opts.dataDir,
+  });
   const own = normalizeHandle(opts.ownNumber);
   const sms = config.sms;
   let syntheticSeq = 0;
@@ -199,7 +191,8 @@ export function createSmsChannel(opts: {
           carrierHandlesKeywords: sms.carrier_handles_keywords,
           helpText: sms.help_text,
         });
-        if (reply) await sendDm(author, reply);
+        if (reply)
+          await deliverer({ chatGuid: smsChatGuidFor(author), isGroup: false, text: reply });
         return; // never a model turn
       }
       if (kw === "start") {
@@ -216,7 +209,8 @@ export function createSmsChannel(opts: {
           carrierHandlesKeywords: sms.carrier_handles_keywords,
           helpText: sms.help_text,
         });
-        if (reply) await sendDm(author, reply);
+        if (reply)
+          await deliverer({ chatGuid: smsChatGuidFor(author), isGroup: false, text: reply });
         return;
       }
       if (kw === "help") {
@@ -231,7 +225,8 @@ export function createSmsChannel(opts: {
           carrierHandlesKeywords: sms.carrier_handles_keywords,
           helpText: sms.help_text,
         });
-        if (reply) await sendDm(author, reply);
+        if (reply)
+          await deliverer({ chatGuid: smsChatGuidFor(author), isGroup: false, text: reply });
         return;
       }
     }
@@ -288,126 +283,6 @@ export function createSmsChannel(opts: {
       key,
       inboundFor({ conversationId, isGroup, fromHandle: author, text: mediaNote, messageSid }),
     );
-  };
-
-  /** One DM body over the Messages API, with consent enforced HERE — the last
-   *  gate before money and reach. */
-  const sendDm = async (to: string, body: string): Promise<SmsChannelDelivery> => {
-    const consent = store.checkConsent(to);
-    if (!consent.allowed) {
-      return {
-        sent: 0,
-        sentChunks: [],
-        errors: [`recipient opted out (${new Date(consent.sinceMs).toISOString()})`],
-        silenced: false,
-      };
-    }
-    const prepared = sms.normalize_to_gsm7 ? toGsm7(body) : body;
-    const chunks = chunkForSms(prepared, {
-      maxSegments: sms.max_segments_per_message,
-      maxParts: sms.max_parts,
-    });
-    const sentChunks: string[] = [];
-    const errors: string[] = [];
-    for (const chunk of chunks) {
-      const res = await sendSms({
-        creds,
-        to,
-        body: chunk,
-        messagingServiceSid: sms.messaging_service_sid,
-        from: sms.messaging_service_sid ? undefined : sms.from,
-        statusCallback: opts.statusCallbackUrl,
-      });
-      if (res.ok) {
-        sentChunks.push(chunk);
-        const segments = segmentCount(chunk);
-        store.record({
-          conversation: normalizeHandle(to),
-          direction: "out",
-          body: chunk,
-          messageSid: res.sid,
-        });
-        // Live ledger row with the estimate; the reconciler sweep replaces it
-        // with Twilio's posted price and forwards the actual to spend.db.
-        const estUsd = estimateOutboundUsd(segments);
-        store.recordSpend({
-          messageSid: res.sid,
-          direction: "out",
-          counterparty: to,
-          segments,
-          estUsd,
-        });
-        log.info("sms", "sent", { to, sid: res.sid, segments, est: `$${estUsd.toFixed(4)}` });
-      } else {
-        errors.push(res.error);
-        // 21610 is consent state wearing an error code: Twilio refused on the
-        // recipient's behalf. Record it so the harness stops asking.
-        if (res.code === TWILIO_STOP_ERROR) store.setOptedOut(to, "STOP(21610)");
-        break;
-      }
-    }
-    return { sent: sentChunks.length, sentChunks, errors, silenced: false };
-  };
-
-  /** One group reply, posted into the Conversation. No per-member consent
-   *  check — the room is the addressee, and Twilio suppresses delivery to any
-   *  member who opted out of the number pair. */
-  const sendGroup = async (conversationSid: string, body: string): Promise<SmsChannelDelivery> => {
-    const prepared = sms.normalize_to_gsm7 ? toGsm7(body) : body;
-    const chunks = chunkForSms(prepared, {
-      maxSegments: sms.max_segments_per_message,
-      maxParts: sms.max_parts,
-    });
-    const sentChunks: string[] = [];
-    const errors: string[] = [];
-    for (const chunk of chunks) {
-      const res = await sendConversationMessage({
-        creds,
-        conversationSid,
-        body: chunk,
-        author: opts.ownNumber,
-      });
-      if (res.ok) {
-        sentChunks.push(chunk);
-        store.record({
-          conversation: conversationSid,
-          direction: "out",
-          body: chunk,
-          messageSid: res.sid,
-        });
-        const members = store.groupInfo(conversationSid)?.participants.length ?? 1;
-        // Estimate only: one Conversations message fans out to N billable
-        // per-recipient sends whose SIDs surface later; the sweep ledgers them.
-        log.info("sms", "group sent", {
-          conversationSid,
-          sid: res.sid,
-          recipients: members,
-          est: `$${(estimateOutboundUsd(segmentCount(chunk)) * members).toFixed(4)}`,
-        });
-      } else {
-        errors.push(res.error);
-        break;
-      }
-    }
-    return { sent: sentChunks.length, sentChunks, errors, silenced: false };
-  };
-
-  const deliverer = async (args: {
-    chatGuid: string;
-    isGroup: boolean;
-    text: string;
-  }): Promise<SmsChannelDelivery> => {
-    if (!isSmsChatGuid(args.chatGuid)) {
-      return {
-        sent: 0,
-        sentChunks: [],
-        errors: [`not an sms chat guid: ${args.chatGuid}`],
-        silenced: false,
-      };
-    }
-    const conversationId = args.chatGuid.slice("sms:".length);
-    if (conversationId.startsWith("CH")) return sendGroup(conversationId, args.text);
-    return sendDm(conversationId, args.text);
   };
 
   return {

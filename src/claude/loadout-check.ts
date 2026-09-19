@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { codexCompatibilityWarning } from "../codex/executable.ts";
 import { backendForModel } from "../model/backend.ts";
+import { skillDirectories } from "../skills/paths.ts";
 import { findBin } from "./mcp-config.ts";
 import { PERSONA_DIR } from "./persona.ts";
 
@@ -69,10 +70,7 @@ export function checkLoadout(model?: string): LoadoutReport {
   if (!existsSync(SKILLS_ROOT)) {
     warnings.push(`skills dir missing: ${SKILLS_ROOT}`);
   } else {
-    for (const name of readdirSync(SKILLS_ROOT).sort()) {
-      if (name.startsWith(".")) continue; // .trash, .DS_Store & friends
-      const dir = join(SKILLS_ROOT, name);
-      if (!statSync(dir).isDirectory()) continue;
+    for (const { name, dir } of skillDirectories(SKILLS_ROOT)) {
       const manifest = join(dir, "SKILL.md");
       if (existsSync(manifest)) skillsNames.push(name);
       else missing.push(name);

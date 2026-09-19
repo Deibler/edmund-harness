@@ -87,6 +87,9 @@ CLAUDE.local.md
 docs/private/
 
 # ─── Personal skills and caches ───
+# Curator output is synthesized from this deployment's conversation corpus.
+# It remains loadable locally but never belongs in the public repository.
+/skills/curated/
 # A playbook written for one real person's newsletter, and a scraped 511PA
 # camera dump carrying agency staff emails. Both stay on disk for this
 # deployment and out of the tree.
