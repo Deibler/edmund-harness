@@ -446,23 +446,9 @@ export async function focusEditor(cdp: Page): Promise<boolean> {
  * is rewriting a shared note from a body that was never actually its body.
  */
 export async function readBody(cdp: Page): Promise<string | null> {
-  if (!(await focusEditor(cdp))) return null;
-  await selectAll(cdp);
-  await sleep(350);
-  await press(cdp, "c", "KeyC", 67, { modifiers: 4, commands: ["copy"] });
-  await sleep(700);
-  const html = await evaluate<string | null>(
-    cdp,
-    `
-    try {
-      const items = await navigator.clipboard.read();
-      for (const it of items) {
-        if (it.types.includes('text/html')) return await (await it.getType('text/html')).text();
-      }
-      return null;
-    } catch (e) { return null; }
-  `,
-  );
+  const got = await copyBody(cdp);
+  if (!got) return null;
+  const { html } = got;
   if (html === null) return null;
   // An empty note copies as nothing at all, which is a legitimate answer and
   // must stay distinguishable from a failed read.
@@ -471,6 +457,43 @@ export async function readBody(cdp: Page): Promise<string | null> {
   // Page chrome does not, so this is what separates "the note is empty" from
   // "the selection was never in the note".
   return /data-tt=/.test(html) ? html : null;
+}
+
+/** One copy, as both of the views the clipboard carries. */
+export type Copied = { html: string | null; text: string | null };
+
+/**
+ * Copy whatever is selected and hand back both clipboard views.
+ *
+ * The HTML is the one that knows what each line IS: a checklist item, ticked
+ * or not, a heading. The plain text is the one the caret moves through, one
+ * arrow press per character and one per line break, so anything that steers the
+ * caret by counting has to count in that.
+ */
+export async function copySelection(cdp: Page): Promise<Copied | null> {
+  await press(cdp, "c", "KeyC", 67, { modifiers: 4, commands: ["copy"] });
+  await sleep(700);
+  return await evaluate<Copied | null>(
+    cdp,
+    `
+    try {
+      let html = null, text = null;
+      for (const it of await navigator.clipboard.read()) {
+        if (it.types.includes('text/html')) html = await (await it.getType('text/html')).text();
+        if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+      }
+      return { html, text };
+    } catch (e) { return null; }
+  `,
+  );
+}
+
+/** The whole note body, as both clipboard views. Null when the caret never got in. */
+export async function copyBody(cdp: Page): Promise<Copied | null> {
+  if (!(await focusEditor(cdp))) return null;
+  await selectAll(cdp);
+  await sleep(350);
+  return await copySelection(cdp);
 }
 
 export type WriteResult = { ok: true; body: string } | { ok: false; why: string };

@@ -32,20 +32,19 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { accountDir, baseDir, getAccount, listAccounts, updateAccount } from "./accounts.ts";
-import { type Failure, openedUrl, readBody, withNote, writeBody } from "./icloud.ts";
+import { type Failure, openedUrl, readBody, withNote } from "./icloud.ts";
 import { addToList } from "./list.ts";
 import {
   adoptable,
   buildDoc,
   noteTitle,
   parseAppleHtml,
-  sameDoc,
   signatureOf,
   splitOwned,
   ticksIn,
-  toAppleHtml,
   wanted,
 } from "./notedoc.ts";
+import { writeNote } from "./notepatch.ts";
 import { handlesFor, shareOpenNote } from "./notes_share.ts";
 
 /** How long a note may go untouched before it is re-read to repair drift. */
@@ -278,6 +277,8 @@ export type SyncResult =
       title: string;
       /** False when the note was already correct and nothing was written. */
       wrote: boolean;
+      /** How a write went in: how many lines changed, or why the whole note was rewritten. */
+      how: string | null;
       /** Lines somebody typed into the note that are now on the real list. */
       adopted: string[];
       /** Lines of theirs a `fresh` wipe discarded, so it can be said out loud. */
@@ -399,16 +400,16 @@ async function syncOpenNote(account: string, title: string, opts: SyncOpts): Pro
       const changed = opts.fresh || before !== doc.signature || !current.length;
 
       let wrote = false;
+      let how: string | null = null;
       if (changed) {
         // The note has to come back saying what was sent, or this pass failed.
         // Reporting a write that did not replace anything is what let a note fill
         // up with copies of itself: the signature below would say the note was
         // current, and nothing would open it again to find out otherwise.
-        const w = await writeBody(cdp, toAppleHtml(doc.blocks), (body) =>
-          sameDoc(doc.blocks, parseAppleHtml(body)),
-        );
+        const w = await writeNote(cdp, doc.blocks, current.length > 0);
         if (!w.ok) return { ok: false as const, error: `The note was not rewritten: ${w.why}.` };
         wrote = true;
+        how = w.how;
       }
 
       // Sharing rides along in the same session rather than opening the note a
@@ -440,6 +441,7 @@ async function syncOpenNote(account: string, title: string, opts: SyncOpts): Pro
       return {
         ok: true as const,
         wrote,
+        how,
         adopted: adopted.map((a) => a.text),
         dropped,
         lines: doc.lines,
@@ -498,6 +500,7 @@ async function syncOpenNote(account: string, title: string, opts: SyncOpts): Pro
     account,
     title,
     wrote: out.wrote,
+    how: out.how,
     adopted: out.adopted,
     dropped: out.dropped,
     lines: out.lines,
