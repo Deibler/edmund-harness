@@ -14,6 +14,7 @@ import { markHandled, pending, requestKey } from "../src/requests.ts";
 import {
   type Dinner,
   MEALS,
+  carriedOver,
   composeText,
   describe,
   dinnersOf,
@@ -148,9 +149,7 @@ export function requestTools(ctx: ToolContext): ToolDef[] {
                 meal: a.meal ?? "dinner",
                 note: a.note ?? null,
                 on: true,
-                created: was?.created,
-                fired: was?.fired ?? null,
-                last: was?.last ?? null,
+                ...carriedOver(was),
               },
               acct,
             );

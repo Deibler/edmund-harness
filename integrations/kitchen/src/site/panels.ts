@@ -285,7 +285,7 @@ export function shoppingPanel(ctx: Ctx): string {
     <div class="head">
       <div class="eyebrow">Shopping</div>
       <h2>${s.lines.length} to pick up</h2>
-      <p>Only things that ran out, a meal you committed to, or a line you wrote.
+      <p>Only things that ran out, things we think you are out of, a meal you committed to, or a line you wrote.
       Ideas live in the tray at the bottom and never sneak onto the list.</p>
     </div>
     ${

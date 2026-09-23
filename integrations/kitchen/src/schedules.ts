@@ -136,6 +136,25 @@ function hash(s: string): number {
   return h;
 }
 
+/**
+ * What an edited schedule keeps from its previous row: when it was made, when it
+ * last fired and what it recently suggested. Every edit path spreads this, so a
+ * field added here cannot be dropped by one path and kept by another.
+ */
+export function carriedOver(was: Dinner | undefined): {
+  created: string;
+  fired: string | null;
+  last: string | null;
+  picks: Dinner["picks"];
+} {
+  return {
+    created: was?.created ?? new Date().toISOString(),
+    fired: was?.fired ?? null,
+    last: was?.last ?? null,
+    picks: was?.picks ?? [],
+  };
+}
+
 export function saveDinners(account: string, list: Dinner[]): Dinner[] {
   updateAccount(account, { dinners: list });
   return list;

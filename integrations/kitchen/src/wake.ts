@@ -141,6 +141,13 @@ export function describeRequest(acct: Account, r: MakeRequest): string {
         `   kitchen_chat profile:${q(r.profile)} reply:"<the answer>" then ${done}`
       );
     case "make":
+      if (r.note === "scheduled") {
+        // The dinner text already went out; the page follows it quietly.
+        return (
+          `The dinner text suggested ${q(dish)}, which has never been written out.\n` +
+          `   kitchen_plan, kitchen_recipe_save, then text the page link in one line to the people kitchen_requests lists for it. Then ${done}.`
+        );
+      }
       return (
         `${who} pressed Make on ${q(dish)}, which has never been written out.\n` +
         `   ${WRITE_IN_CHAT}: kitchen_plan, kitchen_recipe_save, then send the page with one line. Then ${done}.`
@@ -268,7 +275,7 @@ export function wakeForRequests(
       key: requestKey(r),
       requester: r.profile ?? null,
       line: describeRequest(acct, r),
-      talk: TALKS.has(r.kind),
+      talk: TALKS.has(r.kind) && r.note !== "scheduled",
     })),
     opts,
   );

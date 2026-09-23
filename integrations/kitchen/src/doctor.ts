@@ -146,7 +146,7 @@ export function checkAccount(id: string): Report {
       absent(
         "meals",
         "no catalog and no ideas yet",
-        "the daily pass writes ideas once the ledger has more than eight items",
+        "ask for ideas in chat (kitchen_ideas) or tap Make or Explore on the site",
       ),
     );
   } else if (!ready) {
@@ -154,7 +154,7 @@ export function checkAccount(id: string): Report {
       absent(
         "meals",
         `${recipes.length} dishes known, none cookable from current stock`,
-        "normal for a bare kitchen; the daily pass rewrites ideas against what is actually there",
+        "normal for a bare kitchen; ideas written in chat or from the site use what is actually there",
       ),
     );
   } else

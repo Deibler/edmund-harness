@@ -27,6 +27,7 @@ import { type MakeRequest, markHandled, pending, requestKey } from "./requests.t
 import { setDisposition, skip, unskip } from "./restock.ts";
 import {
   type Dinner,
+  carriedOver,
   describe,
   dinnersOf,
   normalize,
@@ -493,10 +494,7 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
           meal: r.meal as Dinner["meal"],
           note: r.text ?? null,
           on: true,
-          created: was?.created,
-          fired: was?.fired ?? null,
-          last: was?.last ?? null,
-          picks: was?.picks ?? [],
+          ...carriedOver(was),
         },
         acct,
       );
