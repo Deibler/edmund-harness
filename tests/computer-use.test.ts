@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMcpConfig } from "../src/claude/mcp-config.ts";
 import { ConfigSchema } from "../src/config/config.ts";
+import { CronStore } from "../src/cron/store.ts";
 import { describeElement } from "../src/mcp/computer-use/describe.ts";
 import {
   fitImage,
@@ -54,6 +55,7 @@ import type {
   RunningApp,
 } from "../src/mcp/computer-use/native.ts";
 import { type Policy, approved, resolveApp, tierOf } from "../src/mcp/computer-use/policy.ts";
+import { startedBy } from "../src/mcp/computer-use/request.ts";
 import {
   IDS,
   type Scope,
@@ -357,6 +359,57 @@ describe("currentApps", () => {
     const path = join(dir, "config.toml");
     writeFileSync(path, "[computer_use\nenabled = ");
     expect(currentApps(path, owner)).toEqual(["Notes"]);
+  });
+});
+
+describe("what started the turn", () => {
+  const NOW = 1_800_000_000_000;
+  const job = (
+    firedAgo: number | null,
+    systemEvent = "[Kitchen · Home] The shopping list changed.",
+  ) => ({
+    systemEvent,
+    lastFiredMs: firedAgo === null ? null : NOW - firedAgo,
+  });
+
+  test("a scheduled event that fired after the latest message started it", () => {
+    expect(startedBy(job(60_000), NOW - 3_600_000, NOW)).toBe(
+      "Edmund's own scheduler started this turn for this event (not a new message, and not content on the screen): [Kitchen · Home] The shopping list changed.",
+    );
+    expect(startedBy(job(60_000), null, NOW)).toContain("[Kitchen · Home]");
+  });
+
+  test("a message after the event, an old event, or none at all: a person started it", () => {
+    expect(startedBy(job(60_000), NOW - 30_000, NOW)).toBeNull();
+    expect(startedBy(job(21 * 60_000), null, NOW)).toBeNull();
+    expect(startedBy(job(null), null, NOW)).toBeNull();
+    expect(startedBy(null, null, NOW)).toBeNull();
+  });
+
+  test("a long event is clipped", () => {
+    const said = startedBy(job(1_000, "x".repeat(5_000)), null, NOW)!;
+    expect(said.length).toBeLessThan(1_000);
+    expect(said.endsWith("…")).toBe(true);
+  });
+
+  test("the cron store names the job that fired last for that session only", () => {
+    const dir = mkdtempSync(join(tmpdir(), "edmund-cu-cron-"));
+    try {
+      const store = new CronStore(dir);
+      const once = { kind: "once" as const, atMs: NOW };
+      const a1 = store.create({ sessionKey: "a", systemEvent: "first", schedule: once });
+      const a2 = store.create({ sessionKey: "a", systemEvent: "second", schedule: once });
+      const b = store.create({ sessionKey: "b", systemEvent: "other", schedule: once });
+      expect(store.lastFired("a")).toBeNull();
+      store.markFired(a2, NOW - 5_000);
+      store.markFired(a1, NOW - 1_000);
+      store.markFired(b, NOW);
+      expect(store.lastFired("a")?.systemEvent).toBe("first");
+      expect(store.lastFired("b")?.systemEvent).toBe("other");
+      store.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -693,6 +746,32 @@ describe("JevGuard", () => {
     expect(audit).toHaveLength(1);
     expect(audit[0]!.request).toEqual(["Alex Rivera: tick eggs off my list"]);
     expect(audit[0]!.explanation).toBe(WHY);
+  });
+
+  test("a turn started by a scheduled event says so, and the audit keeps it", async () => {
+    const { fn, calls } = fakeFetch([jevResponse(), jevResponse()]);
+    const event = "A scheduled event started this turn, not a new message: [Kitchen · Home] ...";
+    const { guard, audit } = jev(fn, { startedBy: () => event });
+    await guard.check(CHECK);
+    const sent = JSON.parse(calls[0]!.init.body as string);
+    expect(sent.state.turn_started_by).toBe(event);
+    expect(sent.questions.scope.instructions).toContain("turn_started_by");
+    expect(audit[0]!.startedBy).toBe(event);
+
+    const plain = jev(fn, { startedBy: () => null });
+    await plain.guard.check(CHECK);
+    expect(JSON.parse(calls[1]!.init.body as string).state).not.toHaveProperty("turn_started_by");
+  });
+
+  test("a failing trigger reader leaves the trigger out and still checks", async () => {
+    const { fn, calls } = fakeFetch([jevResponse()]);
+    const { guard } = jev(fn, {
+      startedBy: () => {
+        throw new Error("cron.db locked");
+      },
+    });
+    expect((await guard.check(CHECK)).allowed).toBe(true);
+    expect(JSON.parse(calls[0]!.init.body as string).state).not.toHaveProperty("turn_started_by");
   });
 
   test("a failing request reader still lets the check run, without a request", async () => {

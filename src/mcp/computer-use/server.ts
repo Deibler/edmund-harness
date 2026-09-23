@@ -47,7 +47,7 @@ import { type AuditEntry, JevGuard } from "./guard.ts";
 import { END_HOLD_SIGNAL, HOLD_IDLE_MS, ScreenLock, screenLockPath } from "./lock.ts";
 import { NativeHelper } from "./native.ts";
 import { type Policy, sessionPolicy } from "./policy.ts";
-import { requestReader } from "./request.ts";
+import { requestReader, triggerReader } from "./request.ts";
 import { type Scope, describeConversation, loadScope } from "./scope.ts";
 import { ComputerSession } from "./session.ts";
 import { INSTRUCTIONS, computerTools } from "./tools.ts";
@@ -105,6 +105,7 @@ async function main() {
       session: sessionKey,
       context: guardContext(scope),
       request: requestReader(config, sessionKey),
+      startedBy: triggerReader(config, sessionKey, dataDir),
       audit: auditTo(join(dataDir, "computer-use", "verdicts.jsonl")),
     });
     session = new ComputerSession({
