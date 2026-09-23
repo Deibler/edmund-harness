@@ -1,4 +1,4 @@
-/** Shared helpers. Small on purpose — anything domain-shaped belongs in a real module. */
+/** Small shared helpers. Anything domain-specific belongs in its own module. */
 
 import { isAbsolute, resolve, sep } from "node:path";
 
@@ -10,7 +10,7 @@ const ENT: Record<string, string> = {
   "'": "&#39;",
 };
 
-/** Escape for HTML text and attribute contexts. Item names come from receipts. */
+/** Escape for HTML text and attribute contexts; item names come from receipts. */
 export function escapeHtml(s: unknown): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ENT[c]!);
 }
@@ -20,29 +20,21 @@ export function fmtMoney(n: number): string {
 }
 
 /**
- * Is this string safe to put in a filename?
+ * Whether a string is a legitimate id and therefore safe in a filename.
  *
- * Ids in this integration are `slug()` output — lowercase, digits, dashes, with
- * a double dash marking a variant. Nothing else is legitimate, so anything else
- * is rejected rather than sanitised: a caller passing "../../config" wants
- * something, and quietly rewriting it into "config" grants a worse version of
- * the same wish.
+ * Ids are `slug()` output: lowercase letters, digits and dashes. Anything else
+ * is rejected rather than sanitised, so "../../config" never becomes "config".
  */
 export function safeId(id: unknown): id is string {
   return typeof id === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(id);
 }
 
 /**
- * Resolve `rel` inside `root`, or refuse.
+ * Resolve `rel` inside `root`, or return null.
  *
- * `join(root, rel)` is not containment — it happily walks out through "..", and
- * the callback endpoint that supplies some of these paths accepts any JSON
- * object from anybody holding the page link. A move whose source is chosen by
- * the caller is both a read of that file and a delete of it, so this is checked
- * rather than assumed.
- *
- * `prefix` narrows it further to the one directory a given caller is allowed to
- * name, because "inside the artifact" is still the whole served website.
+ * `join` alone walks out through "..", and some of these paths arrive from the
+ * public callback endpoint. `prefix` narrows the allowed area to one
+ * subdirectory, since "inside the artifact" is still the whole served site.
  */
 export function contained(root: string, rel: unknown, prefix?: string): string | null {
   if (typeof rel !== "string" || !rel || rel.includes("\0")) return null;
@@ -53,7 +45,7 @@ export function contained(root: string, rel: unknown, prefix?: string): string |
   return full === base || full.startsWith(base + sep) ? full : null;
 }
 
-/** A finite positive number, or nothing. Anything a browser sent needs this. */
+/** A finite positive number, or null. For values that arrive from a browser. */
 export function positive(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 }

@@ -1,31 +1,14 @@
 /**
  * Reading a photograph of a shelf against what the ledger believes.
  *
- * The fastest way to correct a kitchen is not to answer thirty questions, it is
- * to open the fridge door and take one picture. This turns that picture into a
- * set of proposals: things the ledger has that the photo confirms, things it has
- * that are visibly not there, counts that are visibly wrong, and things sitting
- * in the picture that the ledger has never heard of.
+ * Produces proposals only, never writes: a photo shows one shelf from one
+ * angle, and a closed drawer is not an empty drawer. A reading may say three
+ * things about items the ledger already tracks (seen, visibly gone, a different
+ * amount); anything untracked comes back separately as a suggestion.
  *
- * PROPOSALS, NEVER WRITES. Nothing here touches the ledger. A photograph is
- * evidence, not testimony: it shows one shelf at one angle, half the fridge is
- * behind the milk, and a closed drawer is not an empty drawer. The output is a
- * deck of questions for a human, pre-answered with what the picture suggests,
- * which is the fastest honest thing it can be. This is the same rule the whole
- * integration runs on and the one I have broken before by treating absence in a
- * photo as evidence of absence in the world.
- *
- * WHAT A READING IS ALLOWED TO SAY. Only three things, and only about slugs the
- * ledger already knows: I can see it, I cannot see it, I can see a different
- * amount. Anything spotted that is untracked comes back separately as a
- * suggestion to add, never as an automatic add, because a jar on a counter in
- * one photo is not a kitchen inventory.
- *
- * WHO LOOKS. Me, at the actual pictures, in the chat they arrived in. The
- * reading used to be delegated to a vision model on OpenRouter with the ledger
- * pasted into its prompt; that prompt is now `shelfBrief`, handed back to me
- * as the checklist, and `proposeShelves` is the same coercion applied to what
- * I say I saw.
+ * The model reads the photographs itself: `shelfBrief` is the checklist it reads
+ * them against, and `proposeShelves` turns what it reports into proposals that a
+ * person confirms before anything is written.
  */
 
 import type { Verdict } from "./reconcile.ts";
@@ -43,11 +26,9 @@ export type ShelfRead = {
 };
 
 /**
- * The checklist to read the pictures against.
- *
- * The ledger goes in as a checklist rather than an open question, because "what
- * food is in this photo" produces a shopping catalogue and "which of these
- * eleven things can you see" produces an answer that can be acted on.
+ * The checklist to read the pictures against. A closed question ("which of
+ * these can you see") gives answers that can be acted on; an open one ("what
+ * food is here") gives a catalogue.
  */
 export function shelfBrief(account: string, files: string[], where?: string | null): string {
   const checklist = live(account)
@@ -88,10 +69,8 @@ export type SeenLine = {
 };
 
 /**
- * What I said I saw, as proposals against the ledger.
- *
- * A slug the ledger has never heard of cannot be reconciled against anything,
- * so it is dropped rather than shown as a mystery card.
+ * The model's reading, as proposals against the ledger. Slugs the ledger does
+ * not track cannot be reconciled, so they are dropped.
  */
 export function proposeShelves(
   account: string,

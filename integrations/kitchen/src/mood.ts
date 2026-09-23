@@ -1,31 +1,13 @@
 /**
- * What kind of day it is, and therefore what the kitchen should be offering.
+ * What kind of day it is, and so what the kitchen should lead with.
  *
- * The complaint this answers is that a meal page goes stale: the same twelve
- * dinners, ranked the same way, in February and in July, on a Tuesday after
- * work and on the Sunday of a holiday weekend. A list that never changes is a
- * list you stop opening, and by then the fact that it was CORRECT is worth
- * nothing.
+ * Signals, most certain first: the calendar (weekday, season, holidays,
+ * football), the cached weather (absent means the page says nothing about
+ * weather, never a guessed temperature), and the household's own preferences,
+ * which override both. What is cookable is decided downstream by the ledger.
  *
- * So the home page reads the day before it ranks anything. Four signals, in
- * descending order of how sure we can be:
- *
- *   1. THE CALENDAR is arithmetic. The month, the weekday, whether it is a
- *      weekend, which holiday is close, whether football is on. None of this
- *      can be wrong and none of it needs a network.
- *   2. THE WEATHER is fetched and CACHED, and its absence is a first-class
- *      state. If nobody has refreshed it, or the household has no coordinates,
- *      the page says nothing about weather rather than guessing at a season's
- *      typical temperature. Inventing a plausible 78 degrees is exactly the
- *      class of lie the rest of this integration refuses to tell.
- *   3. THE HOUSEHOLD'S OWN PREFERENCE overrides both, because somebody saying
- *      "this week we are meal prepping" knows something the calendar doesn't.
- *   4. THE LEDGER decides what is actually cookable, which happens downstream
- *      and is not this module's business.
- *
- * Everything here RANKS and never FILTERS. A mood that hides food is a mood
- * that gets switched off the first time it hides the thing you wanted, and
- * then the page is a plain list again.
+ * Everything here ranks and never filters: a mood that hides food gets turned
+ * off.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -55,14 +37,7 @@ function weatherPath(account: string): string {
   return join(accountDir(), account, "weather.json");
 }
 
-/**
- * The cached reading, or null.
- *
- * Twelve hours is the staleness limit and it is deliberately generous: this
- * drives a sentence and a ranking nudge, not a decision anyone acts on. Past
- * that it returns null and the page falls silent about weather, which is the
- * correct behaviour and the reason every caller treats null as ordinary.
- */
+/** The cached reading if younger than `maxAgeHours`, else null (the page then says nothing). */
 export function readWeather(account: string, maxAgeHours = 12): Weather | null {
   const p = weatherPath(account);
   if (!existsSync(p)) return null;
@@ -76,11 +51,8 @@ export function readWeather(account: string, maxAgeHours = 12): Weather | null {
 }
 
 /**
- * Fetch the current conditions for a household that has coordinates.
- *
- * Returns null rather than throwing when the household has no `place`, because
- * having no coordinates is a normal state and not an error. NWS wants a real
- * user agent and answers with a two-step: points, then the gridpoint forecast.
+ * Fetch current conditions from NWS (points, then the gridpoint forecasts) for
+ * a household with coordinates. No `place` is a normal state and returns null.
  */
 export async function refreshWeather(
   account: string,
@@ -89,9 +61,7 @@ export async function refreshWeather(
 ): Promise<Weather | null> {
   const place = acct.place;
   if (!place || typeof place.lat !== "number" || typeof place.lon !== "number") return null;
-  // The drain calls this on every pass, seconds apart, and three NWS requests per
-  // pass per household is tens of thousands of calls a day for a sentence that
-  // changes on the hour. A reading younger than this is simply handed back.
+  // Called on every watch pass; a recent reading is returned without a fetch.
   const fresh = readWeather(account, minAgeMinutes / 60);
   if (fresh) return fresh;
   const ua = { "User-Agent": "edmund-harness kitchen (contact@example.com)" };
@@ -173,7 +143,7 @@ const lastOf = (year: number, month: number, weekday: number): Date => {
   return new Date(year, month - 1, last.getDate() - ((last.getDay() - weekday + 7) % 7));
 };
 
-/** Anonymous Gregorian computus. Easter moves and half the spring hangs off it. */
+/** Easter Sunday, by the anonymous Gregorian computus. */
 function easter(year: number): Date {
   const a = year % 19;
   const b = Math.floor(year / 100);
@@ -211,8 +181,7 @@ export function occasionsIn(year: number): Occasion[] {
     tags,
   });
   const labor = nth(year, 9, 1, 1);
-  // The NFL opens the Thursday after Labor Day. Close enough to be useful and
-  // it never claims to know a schedule it has not been told.
+  // The NFL opens the Thursday after Labor Day.
   const kickoff = new Date(labor.getFullYear(), labor.getMonth(), labor.getDate() + 3);
   return [
     o("newyear", "New Year's Day", new Date(year, 0, 1), 1, ["holiday", "party"]),
@@ -262,11 +231,8 @@ export type Vibe = {
 };
 
 /**
- * The moods a kitchen can be in.
- *
- * Deliberately few and deliberately overlapping: this is a dial somebody turns
- * when the page has misread the day, not a taxonomy. Order matters, because
- * the refresh button walks it.
+ * The moods a kitchen can be in: a small dial for when the page has misread the
+ * day, not a taxonomy. Listed in display order.
  */
 export const VIBES: Vibe[] = [
   { id: "easy", label: "Keep it easy", blurb: "On the table fast, nothing to think about." },
@@ -323,13 +289,7 @@ const MONTH = [
   "December",
 ];
 
-/**
- * Which vibe the day itself argues for.
- *
- * Ordered by how strong the claim is. A holiday beats the weather; the weather
- * beats the weekday; the weekday is the fallback and is right most of the time,
- * because most days are Tuesday.
- */
+/** The vibe the day argues for: an occasion beats the weather, which beats the weekday. */
 function autoVibe(d: Date, w: Weather | null, acct: Account): Vibe {
   const dow = d.getDay();
   const weekend = dow === 0 || dow === 6;
@@ -429,20 +389,8 @@ export function moodFor(acct: Account, weather: Weather | null, now = new Date()
 /* ── ranking ─────────────────────────────────────────────────────────────── */
 
 /**
- * How well a dish fits today, as a number that only means anything next to
- * another one from the same call.
- *
- * A nudge, never a gate. The largest term here is worth less than being
- * cookable from what is on the shelves, which is applied by the caller, so at
- * its most opinionated this reorders dinners you could already have made.
- */
-/**
- * What kind of dish this is, as a standing penalty.
- *
- * The catalog already ranks meal kinds so that a bowl of grapes cannot lead a
- * page asking what is for dinner, and the mood must not quietly undo that. It
- * can still be OUT-VOTED: a game day vibe lifts snacks by more than this takes
- * away, which is the one day they belong at the top.
+ * A standing penalty by dish kind, so the mood cannot put snacks above dinners.
+ * A game-day vibe lifts snacks by more than this takes away.
  */
 const KIND: Record<string, number> = {
   dinner: 0,
@@ -455,6 +403,10 @@ const KIND: Record<string, number> = {
   dessert: -26,
 };
 
+/**
+ * How well a dish fits today. Only comparable within one call, and a nudge,
+ * never a gate: its largest term is worth less than being cookable.
+ */
 export function moodScore(r: Recipe, mood: Mood, acct: Account): number {
   let s = KIND[r.cat] ?? -8;
   const effort = effortOf(r);
@@ -502,9 +454,8 @@ export function moodScore(r: Recipe, mood: Mood, acct: Account): number {
   if (mood.weekend && (r.occasions ?? []).includes("weekend")) s += 10;
   if (mood.football && (r.occasions ?? []).includes("gameday")) s += 8;
 
-  // The household's standing mode, applied on top of the day's vibe. Smaller
-  // than the vibe on purpose: it is a background preference, not tonight's
-  // decision, and it should not be able to out-vote what somebody just tapped.
+  // The household's standing mode: smaller than the vibe, so it never out-votes
+  // what somebody just picked.
   if (mode === "prep") s += feedsAllWeek(r) ? 14 : 0;
   if (mode === "ballout") s += ((r.spend ?? 2) - 2) * 10;
   if (acct.prefs?.per_meal != null && (r.spend ?? 2) === 3 && acct.prefs.per_meal < 15) s -= 12;
@@ -512,10 +463,4 @@ export function moodScore(r: Recipe, mood: Mood, acct: Account): number {
   if (acct.diet?.style === "high-protein" && (r.health ?? 3) >= 4) s += 4;
 
   return s;
-}
-
-/** The next vibe in the rotation, for the refresh button. Wraps. */
-export function nextVibe(current: string | null | undefined): string {
-  const i = VIBES.findIndex((v) => v.id === current);
-  return VIBES[(i + 1) % VIBES.length]!.id;
 }

@@ -1,12 +1,9 @@
 /**
- * What counts as a shopping trip, which is the only thing that ends a "not this
- * trip".
+ * What counts as a shopping trip, which is what ends a "not this trip" skip.
  *
- * The count used to be every write that added food. A leftover put away, a
- * shelf photo and "we have eggs after all" each spent a skip, so the list
- * brought back what somebody had just said not to buy without anyone going to
- * a store. These pin the narrower rule, and the migration of skips already on
- * disk, whose recorded number was taken on the old count.
+ * Only a receipt, a logged shop or ticking lines in a store count; a leftover,
+ * a shelf photo or a correction does not. Also pins how skips recorded under
+ * the old count are placed on the new one.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -93,8 +90,8 @@ describe("skips written before the count changed", () => {
   ];
 
   test("an old skip is placed by its time, not by a number taken on the old count", () => {
-    // The 9 was taken on the old count, which every write that added food moved.
-    // Read against the new count, which says one, it would outlive eight trips.
+    // A skip recorded as 9 on the old count would outlive eight trips on the
+    // new one, so it is placed by its time instead.
     write({ broth: { at: "2026-09-07T00:00:00+00:00", trips: 9 } });
     const book = readBook("hh");
     expect(book.skips.broth?.shops).toBeNull();

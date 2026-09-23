@@ -1,12 +1,6 @@
 /**
- * What every panel is handed.
- *
- * One object rather than a dozen parameters, because the panels are siblings
- * that all need the same view of the household and threading each piece
- * through by hand is how two panels end up disagreeing about what is in stock.
- * Assembled once per render in `site.ts`.
- *
- * Moved out of `site.ts` on 2026-08-17 unedited.
+ * The context every panel renders from, assembled once per render in `site.ts`
+ * so all panels share one view of the household.
  */
 
 import type { Assets } from "../assets.ts";
@@ -34,15 +28,9 @@ export type Ctx = {
   sweep: ReturnType<typeof lastSweep>;
   /** Every dish this household has logged cooking, for the "made before" badge. */
   made: MadeIndex;
-  /**
-   * Which dish leads into which, keyed both ways.
-   *
-   * `leads` is what a dish sets up for tomorrow, `needs` is what has to be
-   * cooked before it. Both are on the card because the pair is only useful
-   * BEFORE dinner, and it was previously only visible in a strip at the top
-   * that had nothing to do with the dish you were actually looking at.
-   */
+  /** What each dish sets up for tomorrow (compound pairs), keyed by dish. */
   leads: Map<string, Array<{ id: string; name: string; via: string[] }>>;
+  /** What has to be cooked before each dish, keyed by dish. */
   needsFirst: Map<string, Array<{ id: string; name: string; via: string[] }>>;
   /** Written variants hanging off a dish, for the diverging-arrows badge. */
   variantsOf: Map<string, Array<{ id: string; name: string; reason: string | null }>>;
@@ -54,6 +42,7 @@ export type Ctx = {
   explore: ExploreSet | null;
 };
 
+/** The dish's photo, falling back to its base recipe's, or null. */
 export const mealPhoto = (a: Assets, id: string): string | null => {
   if (a.meals.has(id)) return `img/meals/${id}.jpg`;
   const base = baseIdOf({ id, base: null });

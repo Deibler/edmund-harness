@@ -1,33 +1,12 @@
 /**
- * Talking to me from the stove.
+ * Spoken answers for questions asked aloud from a recipe page.
  *
- * The chat button was the wrong shape for the moment it exists to serve. Half
- * way through a recipe your hands are wet, the phone is propped against the
- * kettle, and the question is "can I use milk instead" or "how do I know when
- * this is done". Typing that means drying your hands, leaving the step you were
- * on, and reading an answer, which is three interruptions to avoid one.
- *
- * So: speak the question, hear the answer, never leave the step. Same shape as
- * the mirror, which is the other place I get asked things by somebody whose
- * hands are busy.
- *
- * HOW IT MOVES. The page has no server of its own, so the question goes out on
- * the same callback endpoint every other button uses, and the answer comes back
- * as two files written next to the page: an m4a and a line in a per-person JSON
- * the page polls. That is deliberately the same mechanism as the text chat
- * rather than a new one, because it is already proven behind the share token.
- *
- * SPEECH IN is the browser's own recogniser, which costs nothing, needs no
- * upload, and works offline. SPEECH OUT is generated here so it is my voice
- * rather than the system's, with the browser's synthesiser as the fallback when
- * generation fails. Answering in a robot voice beats not answering.
- *
- * THE ANSWER ITSELF IS MINE. A question asked at a stove used to go to a
- * narrow model that had never met the household, with the recipe and the
- * shelves pasted into its prompt. That is a worse version of me answering
- * under my name, so the question now wakes me instead (see `wake.ts`) and I
- * answer through `kitchen_voice`, which lands here as `say`. This module only
- * speaks it and files it where the page is polling.
+ * Speech in is the browser's own recogniser. The answer is written by the
+ * household's main session (woken by `wake.ts`) and delivered through
+ * `kitchen_voice`; this module only speaks it and files it where the page
+ * polls: an m4a plus a line in a per-person JSON, the same file-and-poll path
+ * the text chat uses. When synthesis fails the page falls back to the browser's
+ * speech synthesiser.
  */
 
 import { spawnSync } from "node:child_process";
@@ -35,17 +14,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { openrouterKey } from "./openrouter.ts";
 
-/** Kept short on purpose: this is read aloud, and nobody wants a paragraph. */
+/** Answers are read aloud, so they stay short. */
 export const MAX_WORDS = 70;
-
-export type VoiceAsk = {
-  /** The browser's id for this question, so it can poll for its own answer. */
-  rid: string;
-  text: string;
-  /** Recipe page they were on, and which step, when they asked. */
-  recipe?: string | null;
-  step?: number | null;
-};
 
 export type VoiceTurn = {
   rid: string;
@@ -57,14 +27,9 @@ export type VoiceTurn = {
 };
 
 /**
- * Speak it, and write the file the page will play.
- *
- * The model only emits audio when streaming, and only as raw pcm16 when it
- * does, which no browser will play. So the stream is collected and handed to
- * ffmpeg, which is the same pipeline the voice memos use. Returns null rather
- * than throwing: a missing audio file makes the page fall back to its own
- * synthesiser, and a spoken answer in the wrong voice is far better than a
- * question that goes unanswered because a codec was unavailable.
+ * Synthesise `text` into an m4a at `dest`. The model streams raw pcm16, which
+ * browsers cannot play, so the stream is collected and transcoded with ffmpeg.
+ * Returns false rather than throwing; the page then uses its own synthesiser.
  */
 async function speak(text: string, dest: string): Promise<boolean> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -132,14 +97,14 @@ async function speak(text: string, dest: string): Promise<boolean> {
   return r.status === 0 && existsSync(dest);
 }
 
-/** Where a person's spoken thread lives, next to the page they are reading. */
-export const safeName = (p: string) => p.replace(/[^A-Za-z0-9+.-]/g, "_");
+const safeName = (p: string) => p.replace(/[^A-Za-z0-9+.-]/g, "_");
 
-export function threadPath(artifactDir: string, principal: string): string {
+/** Where a person's spoken thread lives, next to the page they are reading. */
+function threadPath(artifactDir: string, principal: string): string {
   return join(artifactDir, "voice", `${safeName(principal)}.json`);
 }
 
-export function readVoice(artifactDir: string, principal: string): VoiceTurn[] {
+function readVoice(artifactDir: string, principal: string): VoiceTurn[] {
   const p = threadPath(artifactDir, principal);
   if (!existsSync(p)) return [];
   try {
@@ -150,11 +115,8 @@ export function readVoice(artifactDir: string, principal: string): VoiceTurn[] {
 }
 
 /**
- * File one spoken answer, end to end.
- *
- * The turn is appended whether or not the audio worked, so the page always has
- * something to show and read out. Only the last twenty are kept: this is a
- * conversation at a stove, not a record.
+ * Speak one answer and file it for the page. The turn is recorded even when
+ * the audio fails, so the page always has text to show; the last twenty are kept.
  */
 export async function sayVoice(
   artifactDir: string,

@@ -1,17 +1,16 @@
 /**
- * The daily pass, one run per household, unattended.
- *
- * Tracking tools die when keeping them current becomes a chore, so this pass
- * keeps the kitchen true without asking anyone for anything:
+ * The daily pass, one run per household, unattended
+ * (`com.edmund-harness.kitchen-daily`). Keeps the kitchen current without
+ * asking anyone for anything:
  *
  *   1. Leftovers nobody logged eating are retired.
- *   2. The inventory is reviewed: suspicions that waited long enough are
- *      settled, and what the kitchen is unsure of goes to the household's main
- *      session to be reasoned about (`review.ts`).
+ *   2. The inventory is reviewed (`review.ts`): suspicions that waited long
+ *      enough are settled, and uncertain items go to the household's session.
  *   3. Ideas built on food that is gone are retired.
- *   4. The site is re-rendered, so it shows today.
+ *   4. Missing dish photos are generated and the site is re-rendered.
+ *   5. Real breakage is reported.
  *
- * Nothing here messages anyone.
+ * Nothing here messages anyone. Usage: `bun scripts/daily.ts [account]`.
  */
 
 import { existsSync } from "node:fs";
@@ -57,7 +56,6 @@ async function runAccount(id: string): Promise<void> {
   // 4. Re-render, so the link shows today.
   const dir = acct.site?.artifact;
   if (dir && existsSync(dir)) {
-    // Photograph anything on the site that has no picture, before the render.
     const shots = await photographMissing(id, dir, { log: (l) => console.log(`  ${l}`) });
     if (shots.left) console.log(`  ${shots.left} still without a photo`);
 
@@ -66,13 +64,8 @@ async function runAccount(id: string): Promise<void> {
     const c = cookable(Object.fromEntries(items.map((i) => [i.id, i])), loadRecipes(id).recipes);
     console.log(`  rendered ${dir}: ${c.filter((x) => x.ready).length}/${c.length} cookable`);
 
-    // Confirm the render landed where the household actually looks.
-    //
-    // The registry pointed at a directory that no server had ever served, so
-    // this pass wrote a perfectly correct site into a folder nobody could see
-    // while the real page sat frozen. That failure is invisible by construction
-    // — everything reports success — and it is precisely the failure that makes
-    // a tool go stale, so it gets checked rather than assumed.
+    // Confirm the render is what the live URL serves. A registry pointing at a
+    // directory nobody serves reports success while the real page goes stale.
     const url = acct.site?.url;
     if (url) {
       try {
@@ -92,12 +85,8 @@ async function runAccount(id: string): Promise<void> {
     console.log("  no site artifact, skipped render");
   }
 
-  // 5. Say out loud what is wired up and what is not.
-  //
-  // The rest of this pass is deliberately silent, and that silence is exactly
-  // what let a household sit for a week with a perfect site nobody could open.
-  // Only real breakage is printed; "absent" states are normal and are the
-  // doctor's job to report on demand, not this pass's job to nag about.
+  // 5. Report real breakage. Absent optional pieces are normal and left to the
+  // doctor to report on demand.
   const rep = checkAccount(id);
   const bad = rep.findings.filter((x) => x.level === "broken");
   if (bad.length) {
@@ -113,7 +102,7 @@ for (const id of only ? [only] : listAccounts().map((a) => a.id)) {
   try {
     await runAccount(id);
   } catch (e) {
-    // One household's bad day must not stop the others'.
+    // One household's failure must not stop the others.
     console.error(`  ${id} FAILED: ${(e as Error).message}`);
   }
 }

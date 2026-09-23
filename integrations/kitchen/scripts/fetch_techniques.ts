@@ -1,11 +1,11 @@
 /**
- * Pull the reference photographs into an artifact directory.
+ * Download the technique reference photographs into an artifact directory.
  *
- * Downloaded rather than hotlinked: the page sits behind a share token, and
- * pointing <img> at upload.wikimedia.org would both leak which recipe is open
- * and break the day Commons rate-limits a residential IP. Re-runnable; existing
- * files are left alone.
+ * Downloaded rather than hotlinked, so the page neither leaks which recipe is
+ * open to Wikimedia nor breaks under rate limiting. Re-runnable; existing files
+ * are kept. Usage: `bun scripts/fetch_techniques.ts <artifact-dir>`.
  */
+
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TECHNIQUES } from "../src/techniques.ts";
@@ -38,8 +38,7 @@ for (const t of TECHNIQUES) {
     await fetch(u, { headers: { "User-Agent": UA } })
   ).json()) as CommonsResponse;
   const page = Object.values(meta.query?.pages ?? {})[0];
-  // thumburl, not url: an SVG's own url is the vector, which we want rasterised,
-  // and a 6000px original is a page nobody on a phone will wait for.
+  // The thumbnail, not the original: it rasterises SVGs and caps the size.
   const src = page?.imageinfo?.[0]?.thumburl ?? page?.imageinfo?.[0]?.url;
   if (!src) {
     console.log(`  MISS ${t.id}: ${t.image.file}`);

@@ -1,30 +1,14 @@
 /**
  * What to buy, and why each line is there.
  *
- * The old list was one flat set of checkboxes fed by two rules — anything the
- * ledger no longer had, plus anything standing between the kitchen and a nearly
- * cookable dish — and it collapsed into noise within a week of real use. The
- * complaint that started this rewrite listed twenty four lines, of which eight
- * were wrong in three different ways, and the person reading it could not tell
- * which eight because every line looked identical.
+ * A list holds commitments only, in four groups that are never mixed: gaps in a
+ * meal somebody planned, staples that ran out, items assumed out because nobody
+ * answered a follow-up, and lines somebody wrote. Everything else is a
+ * suggestion and lives in a separate tray; mixed into the list, a suggestion
+ * makes every other line suspect.
  *
- * The rewrite is mostly about separation. A shopping list has exactly three
- * kinds of line and mixing them is what destroys it:
- *
- *   1. You are out of something this house keeps. Needs no explanation.
- *   2. You are cooking a specific meal and these are the gaps. The meal IS the
- *      explanation, and the line should disappear when the meal does.
- *   3. Everything else, which is a suggestion and must never be on the list.
- *
- * Suggestions are the whole problem. "Buy imitation crab legs and two dishes
- * open up" is a reasonable thing to say and a terrible thing to put on a list
- * somebody is holding in a supermarket, because a list is a set of commitments
- * and a suggestion is not one. Kept in their own tray they are useful; mixed
- * into the list they make every other line suspect.
- *
- * Nothing here writes. This is a fold over the ledger, the plans, the written
- * list and the restock book, so a list is never stale and never needs to be
- * regenerated or cleaned up.
+ * Nothing here writes. The list is a fold over the ledger, open plans, the
+ * written list and the restock book, so it is never stale.
  */
 
 import { isConvenience } from "./foods.ts";
@@ -61,9 +45,8 @@ export type Suggestion = {
   item: string;
   cat: Category | null;
   /**
-   * "restock" is "this ran out, do you want it again" and is answered once,
-   * forever. "unlock" is "buying this opens up dinners" and is answered every
-   * time, because it is a fresh decision rather than a standing preference.
+   * "restock": this ran out, do you want it again. "unlock": buying this opens
+   * up dishes, a fresh decision each time.
    */
   kind: "restock" | "unlock";
   /** Recipe names this would make cookable. Empty for a plain restock ask. */
@@ -84,11 +67,7 @@ export type Shopping = {
   /** Every line across every group, in display order. */
   lines: Line[];
   suggestions: Suggestion[];
-  /**
-   * Things deliberately kept off, with the reason. Surfaced because a list that
-   * silently drops things is a list nobody can debug, and because "I already
-   * bought that" is exactly the correction that has to be easy to make.
-   */
+  /** Things deliberately kept off, with the reason, so an omission can be explained. */
   held: Array<{ name: string; why: string }>;
 };
 
@@ -100,7 +79,7 @@ export const ASSUMED_SHOWN_DAYS = 10;
 /** How many "buy this and dinners open up" ideas the tray will ever show. */
 const UNLOCK_CAP = 6;
 
-/** Leftovers are food, not groceries. Nobody can buy last night's rice. */
+/** Leftovers are food, not groceries. */
 export const isBuyable = (id: string, name = ""): boolean =>
   !id.startsWith("leftover-") && !/\bleftovers?\b/i.test(name);
 
@@ -127,8 +106,7 @@ export function shopping(account: string): Shopping {
   const { trips, shopsBy } = hist;
   const lastBought = new Map<string, string>();
   for (const [id, x] of hist.items) if (x.lastBought) lastBought.set(id, x.lastBought);
-  // The newest write per item, to find the ones that are out only because the
-  // kitchen assumed so.
+  // The newest write per item, to find items that are out only by assumption.
   const lastWrite = new Map<string, { src: string | null | undefined; ts: string }>();
   for (const e of events) if (e.item) lastWrite.set(e.item, { src: e.src, ts: e.ts });
   const { recipes } = loadRecipes(account);
@@ -136,10 +114,7 @@ export function shopping(account: string): Shopping {
   const held: Array<{ name: string; why: string }> = [];
   const age = (id: string) => daysSince(lastBought.get(id));
 
-  /* ── 1. lines somebody wrote down themselves ───────────────────────────── */
-  //
-  // First because they are the only lines nothing derived: a person typed them,
-  // so nothing here gets to second-guess them or drop them for being redundant.
+  /* ── 1. lines somebody wrote down: never second-guessed ─────────────────── */
   const asked: Line[] = written.map((w: ListEntry) => ({
     key: w.key,
     name: w.name,
@@ -152,12 +127,7 @@ export function shopping(account: string): Shopping {
   }));
   const claimed = new Set(asked.flatMap((a) => [a.key, a.item ?? ""]));
 
-  /* ── 2. gaps in a meal somebody has actually committed to ──────────────── */
-  //
-  // An open plan is a decision, which is what separates this from the
-  // suggestion tray: somebody said they were making this. The meal's name goes
-  // on the line so it can be defended three days later, and the line leaves on
-  // its own when the plan is cooked or called off.
+  /* ── 2. gaps in an open plan: they leave when the plan is settled ──────── */
   const meal: Line[] = [];
   for (const p of Object.values(plans)) {
     for (const l of p.lines) {
@@ -176,13 +146,11 @@ export function shopping(account: string): Shopping {
     }
   }
 
-  /* ── 3. out of something this house keeps ──────────────────────────────── */
+  /* ── 3. run-outs ────────────────────────────────────────────────────────── */
   //
-  // Only proven staples reach the list by themselves (see `onRunOut`). A run-out
-  // the house might want again is offered in the tray and in the next
-  // follow-up; one it bought once and never cooked with is dropped. Items that
-  // are out only because the kitchen assumed so get their own section, since
-  // nobody has confirmed them.
+  // Proven staples are listed (`onRunOut`), other recent run-outs are offered in
+  // the tray, one-offs never cooked with are dropped. Items out only by
+  // assumption get their own section, since nobody confirmed them.
   const staple: Line[] = [];
   const assumed: Line[] = [];
   const restockAsks: Suggestion[] = [];
@@ -227,8 +195,7 @@ export function shopping(account: string): Shopping {
       continue;
     }
     if (fate === "list") {
-      // Claimed so the same item cannot also appear in the tray below.
-      claimed.add(it.id);
+      claimed.add(it.id); // so it cannot also appear in the tray
       staple.push({ ...line, reason: "staple", why: it.gone ? "out" : "running low" });
       continue;
     }
@@ -251,19 +218,16 @@ export function shopping(account: string): Shopping {
   const uses = (id: string) => hist.items.get(id)?.mealUses ?? 0;
   restockAsks.sort((a, b) => uses(b.item) - uses(a.item));
 
-  /* ── 4. suggestions, which are not the list ────────────────────────────── */
+  /* ── 4. unlock suggestions: the tray, not the list ─────────────────────── */
   //
-  // Scored against presence only. A dish is one item away when that item is not
-  // in the house, never because a package holds fewer pieces than the recipe
-  // counted — see `cookable` for why that comparison cannot be trusted.
+  // Scored on presence only, like `cookable`.
   const unlocks = new Map<string, { name: string; recipes: string[] }>();
   for (const c of cookable(items, recipes)) {
     if (c.ready || c.missing.length > 2) continue;
     for (const m of c.missing) {
       if (!isBuyable(m.id, m.name) || claimed.has(m.id)) continue;
-      // Only food this house has bought before: the catalog is shared, and a
-      // suggestion built from somebody else's pantry is noise. Nor snacks:
-      // buying chips so a dish "opens up" is not a suggestion anyone wants.
+      // Only food this house has bought before (the catalog is shared), and
+      // never snacks.
       const owned = items[m.id];
       if (!owned || isConvenience(owned)) continue;
       if (dispositionOf(book, m.id) === "never") continue;
@@ -278,12 +242,7 @@ export function shopping(account: string): Shopping {
     const u = unlocks.get(s.item);
     if (u) s.unlocks = u.recipes;
   }
-  // Capped, and the cap is the point rather than a performance guard. Every
-  // recipe in the shared catalog contributes its missing ingredients here, so
-  // an uncapped tray is unbounded in exactly the case where it does the most
-  // damage: a household that has just started and owns almost nothing, where it
-  // fills with dozens of items from other people's recipes and reads as a
-  // machine listing its catalog rather than a kitchen making a suggestion.
+  // Capped at UNLOCK_CAP so the tray reads as a suggestion, not a catalog dump.
   const unlockSuggestions: Suggestion[] = [...unlocks.entries()]
     .filter(([id]) => !asking.has(id))
     .map(([id, u]) => ({
@@ -347,26 +306,7 @@ export function shopping(account: string): Shopping {
   return { groups, lines: groups.flatMap((g) => g.lines), suggestions, held };
 }
 
-/**
- * Settle the list against what actually came home.
- *
- * The receipt is ground truth and the list is a guess, so when they disagree
- * the list loses. This exists because of a specific observed failure that no
- * amount of list-quality work would have fixed: the household shopped from a
- * hand-written note in the shop, came back with a full car, and the site's list
- * still showed every line it had shown that morning. Nothing was ticked,
- * because nobody had the page open. A list that cannot be settled by anything
- * except somebody tapping twenty checkboxes is a list that goes stale the first
- * time it is ignored, and it only has to go stale once to stop being read.
- *
- * Derived lines settle themselves — buying broth makes broth present and it
- * leaves the list on the next fold. Only the WRITTEN lines need clearing, since
- * nothing else could know they were satisfied. Skips are cleared for the same
- * reason: "not this trip" is spent once the trip happens.
- *
- * Returns what was still outstanding, so a caller can say "eleven of the
- * fourteen things showed up" rather than silently deleting the difference.
- */
+/** Shopping trips this kitchen has seen; what spends a "not this trip". */
 export const tripCount = (account: string): number => history(readLog(account)).trips;
 
 export type AnswerTarget = { ok: true; id: string; name: string } | { ok: false; why: string };
@@ -374,17 +314,10 @@ export type AnswerTarget = { ok: true; id: string; name: string } | { ok: false;
 /**
  * The item a shopping answer ("always", "never", "not this trip") is about.
  *
- * The answer arrives as whatever the model had to hand, which is usually the
- * name it read on the list rather than the id behind it, and slugging a name
- * does not rebuild an id another member's list gave a prefix to: "flour
- * tortillas" is `flour-tortillas`, the line was `sam-s-flour-tortillas`. The
- * answer was then filed under an id nothing uses, the line stayed on the list,
- * and the reply said it had gone.
- *
- * So an answer lands on something that exists or is refused. Candidates are what
- * the list and the tray are showing plus everything the ledger tracks; the first
- * rule that matches anything decides, and more than one match is a question back
- * rather than a pick.
+ * The model usually answers with the name it read, which may not slug to the id
+ * (a member's line can carry a prefix: `sam-s-flour-tortillas`). Candidates are
+ * the list, the tray and the ledger; rules run narrowest first (id, slug, name,
+ * then a unique prefixed ending). No match or several matches is refused.
  */
 export function answerTarget(account: string, said: string): AnswerTarget {
   const names = new Map<string, string>();
@@ -421,6 +354,12 @@ export function answerTarget(account: string, said: string): AnswerTarget {
   };
 }
 
+/**
+ * Settle the list against what came home. The receipt is ground truth: written
+ * lines it satisfies are removed and "not this trip" skips on those items end.
+ * Derived lines settle themselves on the next fold. Returns what is still
+ * outstanding so the caller can report the difference.
+ */
 export function settleAfterPurchase(
   account: string,
   bought: string[],

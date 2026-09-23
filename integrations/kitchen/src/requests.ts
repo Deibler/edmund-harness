@@ -1,38 +1,21 @@
 /**
- * Taps on the website that need a model to answer them.
+ * Typed reader for taps on the household site.
  *
- * The site is a static file behind an instant-share token, so it cannot call
- * anything directly. What it can do is POST to the share server's `/callback`
- * endpoint, which appends the JSON body to `_callbacks.jsonl` next to the page.
- * A trigger watches that file and wakes the session; this module is the typed
- * reader for what it finds.
+ * The site is static, so buttons POST to the share server's `/callback`
+ * endpoint, which appends the JSON body to `_callbacks.jsonl` beside the page.
+ * The watch pass settles the arithmetic ones (`drain.ts`) and wakes a session
+ * for the rest (`wake.ts`).
  *
- * The kinds that need real writing rather than a fold:
- *   "make"    — cook this dish; write the long-form recipe if it has never been
- *               written, then text whoever was picked.
- *   "variant" — this dish is missing something; build a version around what the
- *               house actually has, and hang it off the original.
- *   "compose" — none of the cards is the right dinner. Write one for what is
- *               actually on the clock, with no card to start from.
- *
- * That third one is not a nicety. A fixed catalog ranked against stock can only
- * ever return the least-bad card it already holds, so a kitchen holding two
- * proteins a day past date and a catalog of pasta dishes will confidently
- * recommend pasta forever. Composition is the escape hatch, and keeping it a
- * request rather than a background job means it only ever runs because somebody
- * asked for it.
- *
- * Handled requests are recorded by their client timestamp rather than deleted,
- * because the callbacks file is append-only and owned by the share server. A
- * request that has been served must never be served twice: the cost of a
- * duplicate here is a duplicate text message to a real person.
+ * The callbacks file is append-only and owned by the share server, so served
+ * requests are recorded by key rather than deleted. Serving one twice would text
+ * a person the same thing twice.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { accountDir } from "./accounts.ts";
 
-/** Everything the page can ask for. Deliberately a closed set. */
+/** Everything the page can ask for. A closed set. */
 export const KINDS = [
   "make", // cook this dish
   "variant", // build a version around what the house has
@@ -68,10 +51,7 @@ export type MakeRequest = {
   name?: string;
   /** Principals the user picked to receive the recipe. Empty means "just me". */
   users?: string[];
-  /**
-   * Server-stamped time. Authoritative (a browser clock can be wrong) but only
-   * second-resolution, which is why it is not the dedup key on its own.
-   */
+  /** Server-stamped time: authoritative, but only second-resolution. */
   ts: string;
   /** The browser's own timestamp, kept by the share server as a tiebreaker. */
   client_ts?: string;
@@ -93,12 +73,9 @@ export type MakeRequest = {
   qty?: number | null;
   unit?: string | null;
   /**
-   * keep: which shopping line the answer is about.
-   *
-   * A ledger slug when the line maps to a tracked item, otherwise the written
-   * line's own key. Separate from `item` because that one is the shelf-check
-   * slug and is validated against live stock; a keep can legitimately name
-   * something the kitchen no longer has, which is the usual case.
+   * keep: the shopping line the answer is about (a ledger slug, or a written
+   * line's key). Separate from `item`, which is validated against live stock,
+   * because a keep usually names something the kitchen no longer has.
    */
   id?: string;
   /** Which profile was signed in when this was sent. */
@@ -114,22 +91,12 @@ export type MakeRequest = {
   items?: string[];
   /** plan: the plan id being confirmed or voided. */
   plan?: string;
-  /**
-   * pref: a second number, when one field is not enough.
-   *
-   * The settings sheet writes a weekly budget in `qty` and a per-dinner ceiling
-   * here rather than inventing a nested object, because every other request in
-   * this file is flat and a callback body that is sometimes nested is a parser
-   * with two shapes.
-   */
+  /** pref: the per-dinner ceiling (the weekly budget rides in `qty`). Bodies stay flat. */
   amount?: number | null;
   /**
-   * sched: the standing dinner text being saved or removed.
-   *
-   * The verb rides in `note` ("save", "pause", "delete"), the recipients in
-   * `users`, the weekdays in `days` and the time in `at`. Flat like everything
-   * else here — the schedule is validated against the household on arrival, so
-   * nothing the browser sends is trusted past the shape of it.
+   * sched: a standing dinner text. The verb rides in `note` ("save", "pause",
+   * "delete"), recipients in `users`, weekdays in `days`, the time in `at`.
+   * Validated against the household on arrival.
    */
   at?: string;
   days?: number[];
@@ -151,14 +118,9 @@ function handledPath(account: string): string {
 }
 
 /**
- * The dedup identity of a request.
- *
- * Not the timestamp alone: the share server overwrites whatever the page sent
- * with its own second-resolution clock, so two taps on DIFFERENT dishes inside
- * one second would share a `ts` and the second would be silently swallowed.
- * Including the verb and the dish means the only thing that collides is the
- * same person asking for the same thing twice in a second — which is a
- * double-tap, and swallowing that is the correct behaviour.
+ * The dedup identity of a request. The server timestamp alone is too coarse:
+ * two different taps in one second would collide. With the verb and dish in the
+ * key, only a genuine double-tap collides.
  */
 export function requestKey(r: Pick<MakeRequest, "ts" | "kind" | "recipe" | "client_ts">): string {
   return `${r.ts}|${r.kind}|${r.recipe ?? ""}|${r.client_ts ?? ""}`;
@@ -170,22 +132,14 @@ export function handled(account: string): Set<string> {
   try {
     return new Set(JSON.parse(readFileSync(p, "utf8")) as string[]);
   } catch {
-    // An unreadable ledger of what has been served must fail CLOSED, or the
-    // next poll re-texts everyone every dish they have ever asked for.
+    // Fail closed: an unreadable record would otherwise re-serve every request.
     throw new Error(`kitchen: cannot read ${p}; refusing to re-serve requests blindly`);
   }
 }
 
 /**
- * Record requests as served.
- *
- * Written to a temp file and renamed, because `handled` deliberately fails
- * CLOSED: a file it cannot parse throws, and that throw takes down every pass
- * for the household until a human edits JSON. A direct write leaves exactly
- * that file behind if the process dies mid-write, and this runs on every tap,
- * so it is the most frequently hit window in the integration rather than a
- * theoretical one. Rename is atomic, so a reader sees the old list or the new
- * one and never half of either.
+ * Record requests as served. Written via temp file and rename, because
+ * `handled` fails closed on a torn file and this runs on every tap.
  */
 export function markHandled(account: string, keys: string[]): void {
   const p = handledPath(account);
@@ -198,10 +152,8 @@ export function markHandled(account: string, keys: string[]): void {
 }
 
 /**
- * Unserved requests sitting in an artifact's callback log, oldest first.
- *
- * Lines that do not parse or are not requests are skipped rather than thrown
- * on: this file is written by a public endpoint, so anything can land in it.
+ * Unserved requests in an artifact's callback log, oldest first. Malformed lines
+ * are skipped: the file is written by a public endpoint.
  */
 export function pending(account: string, artifactDir: string): MakeRequest[] {
   const p = join(artifactDir, "_callbacks.jsonl");

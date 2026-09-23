@@ -1,14 +1,7 @@
 /**
- * The day-reading engine, which is the one part of this integration that is
- * allowed to have an opinion.
- *
- * Two classes of bug are worth a test here and neither shows up on screen until
- * a particular week of the year arrives. The first is the calendar arithmetic:
- * Thanksgiving is a rule, not a date, and getting the fourth Thursday wrong
- * means the page is confidently festive on the wrong Thursday. The second is
- * ranking sanity: the scorer is a pile of additive nudges, and the failure mode
- * is not a crash, it is chocolate chip cookies at the top of dinner because a
- * tray of them keeps for four days. That one actually happened.
+ * The day-reading engine: calendar arithmetic (holidays that are rules, not
+ * dates, and the year rollover) and ranking sanity (a dessert that keeps for
+ * days must not top the dinner list).
  */
 
 import {
@@ -69,8 +62,7 @@ check(
 );
 check("ten days before, it is not", occasionNow(new Date(2026, 10, 16))?.occ.id !== "thanksgiving");
 check("the day after, it is gone", occasionNow(new Date(2026, 10, 27))?.occ.id !== "thanksgiving");
-// Late December is the one place the year has to roll over, and a naive
-// same-year search finds nothing there because Christmas has passed.
+// In late December the next occasion is in the following year.
 check(
   "29 December finds New Year's Eve, not nothing",
   occasionNow(new Date(2026, 11, 29))?.occ.id === "nye",

@@ -1,20 +1,9 @@
 /**
- * A dish authored as lunch is lunch.
+ * Meal categories: a lunch dish is never the dinner pick, while a dinner dish
+ * may still be lunch. The relation is one-way, so both directions are tested.
+ * Also: a dish filed as dinner but built on deli meat is lunch food.
  *
- * 2026-08-27. The 4pm text offered "Ham and Swiss Sandwiches with Green Beans"
- * as dinner. The catalog was right — that recipe is filed `cat: "lunch"` — and
- * the picker was wrong: `CATS_FOR.dinner` reused `MEAL_CATS`, which exists to
- * answer a DIFFERENT question ("is this a meal rather than a side or a
- * dessert") and therefore includes lunch. Sharing the set let a fifteen-minute
- * sandwich that was fully in stock and had never been cooked outscore every
- * real dinner in the house, because `novelty` pays for never-made and nothing
- * in the score knew what meal it was answering.
- *
- * The asymmetry is the part worth protecting: a dinner may be lunch, a lunch
- * may not be dinner. It reads like a symmetric relation and it is not, so the
- * test states both directions rather than just the one that broke.
- *
- * Runs against a scratch KITCHEN_DIR — never the real one.
+ * Runs against a scratch KITCHEN_DIR.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -32,9 +21,8 @@ writeFileSync(
   }),
 );
 
-// Both dishes need exactly the same two things, so stock can never be the
-// reason one wins. The only difference the picker can see is `cat` — and, in
-// the sandwich's favour, that it is faster and has never been made.
+// Both dishes need the same two things, so only `cat` separates them; the
+// sandwich is faster and never made, which favours it on every other term.
 writeFileSync(
   join(BASE, "tenants", "t", "recipes.json"),
   JSON.stringify({
@@ -94,7 +82,7 @@ append("t", [
   },
 ]);
 
-/* ── the bug ──────────────────────────────────────────────────────────────── */
+/* ── a lunch dish is not dinner ───────────────────────────────────────────── */
 
 section("a sandwich is not dinner");
 
@@ -119,8 +107,6 @@ check("and a dish written for lunch wins it", lunch?.recipe.id === "test-sandwic
 
 /* ── lunch food does not anchor a dinner ──────────────────────────────────── */
 
-// 2026-09-23: "it constantly tries to get us to use deli meat for meals". A
-// dish filed as dinner whose main ingredient is deli meat is still lunch.
 section("deli meat is not the centre of a dinner");
 
 const { writeFileSync: write } = await import("node:fs");

@@ -1,20 +1,11 @@
 /**
- * Store pricing and best-deal ranking across Aldi, Giant, Walmart and Target.
+ * Store prices and best-deal ranking across Aldi, Giant, Walmart and Target.
  *
- * **Division of labour, and why.** This module owns storage, normalisation,
- * matching and ranking — all deterministic, all testable. It does NOT fetch.
- * Acquisition needs a browser, a store, a ZIP code and judgment about whether
- * the page actually loaded, which is the model's job through the existing web
- * tooling, handed back via `kitchen_price_import`.
- *
- * That split is deliberate. The alternative — a scraper buried in here that
- * silently returns nothing when a retailer changes their markup — produces a
- * deals page that looks fine and is quietly empty or, worse, stale. Prices
- * carry `fetched` and every read reports its age, because a grocery price from
- * three weeks ago presented as today's is a lie with a decimal point on it.
- *
- * An empty cache is an honest state and says so. It is never backfilled with
- * plausible-looking numbers.
+ * This module stores, normalises, matches and ranks; it never fetches. Getting a
+ * price needs a browser and judgement about whether the page loaded, which the
+ * model does and hands back through `kitchen_prices_import`. Every row carries
+ * `fetched` and reads report its age, so a stale price is never quoted as
+ * today's. An empty cache stays empty rather than being filled with guesses.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -26,7 +17,7 @@ import { slug } from "./store.ts";
 export const STORES = ["aldi", "giant", "walmart", "target"] as const;
 export type Store = (typeof STORES)[number];
 
-/** Resolved per call, like every other path in this integration. */
+/** Resolved per call, so a configured data directory always applies. */
 export function priceFile(): string {
   return join(baseDir(), "prices.json");
 }
@@ -39,12 +30,12 @@ export type PriceRow = {
   price: number;
   /** Human size the price covers, e.g. "16 oz", "dozen", "each". */
   size?: string | null;
-  /** Normalised unit price where the size was parseable — the only fair compare. */
+  /** Normalised unit price, when the size was parseable. */
   unitPrice?: number | null;
   unit?: string | null;
   /** True when it is a sale/circular price rather than shelf price. */
   sale?: boolean;
-  /** When the sale ends, if known. A deal nobody can still get is noise. */
+  /** When the sale ends, if known. */
   saleEnds?: string | null;
   fetched: string;
   /** Where it came from, e.g. a URL or "weekly circular". Auditable. */
@@ -67,12 +58,9 @@ export function savePrices(book: PriceBook): void {
 }
 
 /**
- * Parse a pack size into a comparable unit price.
- *
- * "$3.99 for 16 oz" versus "$5.49 for 32 oz" is the entire point of a deals
- * feature — comparing sticker prices across different pack sizes is worse than
- * useless, it recommends the wrong thing. Sizes it cannot parse return null and
- * are ranked separately rather than being guessed into comparability.
+ * Parse a pack size into a unit price comparable across stores (oz, fl oz or
+ * count). An unparseable size returns null and is ranked on sticker price
+ * instead of being guessed into comparability.
  */
 export function unitize(
   price: number,
@@ -80,24 +68,16 @@ export function unitize(
 ): { unitPrice: number | null; unit: string | null } {
   if (!size) return { unitPrice: null, unit: null };
   const s = size.toLowerCase().trim();
-  // A leading count is optional: shelf tags say "dozen" and "each" as often as
-  // "12 ct", and treating those as unparseable dropped eggs — one of the most
-  // price-compared items in a grocery store — out of every ranking.
+  // A leading count is optional ("dozen", "each").
   const m = /^([\d.]+)?\s*(fl\.?\s*oz|floz|oz|lbs|lb|kg|g|ml|l|ct|count|each|dozen|pk|pack)\b/.exec(
     s,
   );
-  // A number with no unit token used to fall through to "ct". That silently
-  // turned "16 fl oz" into sixteen COUNT, which then ranked against a real
-  // per-ounce row as if the two were comparable. An unparseable size has to stay
-  // unparseable — it gets ranked on sticker price instead, which is honest.
+  // A number with no recognised unit stays unparseable; defaulting to "ct"
+  // would compare counts against ounces.
   if (!m || !m[2]) return { unitPrice: null, unit: null };
   let n = m[1] ? Number.parseFloat(m[1]) : 1;
   let unit = m[2].replace(/\./g, "").replace(/\s+/g, "");
   if (!Number.isFinite(n) || n <= 0) return { unitPrice: null, unit: null };
-  if (unit === "floz") {
-    /* already normalised */
-  }
-  // Normalise to a small set so cross-store compare is apples to apples.
   if (unit === "lb" || unit === "lbs") {
     n *= 16;
     unit = "oz";
@@ -139,8 +119,7 @@ export function importPrices(rows: Array<Omit<PriceRow, "fetched"> & { fetched?:
       unitPrice: r.unitPrice ?? unitPrice,
       unit: r.unit ?? unit,
     };
-    // One current price per (item, store): a price book with three ages of the
-    // same row silently ranks on whichever the sort happened to reach first.
+    // One current price per (item, store).
     const i = book.rows.findIndex((x) => x.item === item && x.store === r.store);
     if (i >= 0) {
       book.rows[i] = row;
@@ -172,12 +151,9 @@ function ageDays(iso: string): number {
 }
 
 /**
- * Best price per item for a shopping list.
- *
- * Ranking: a live sale beats shelf price, then unit price where both sides
- * parsed, then sticker price. `preferred` breaks genuine ties only — it never
- * overrides a real saving, because a store preference is a convenience and
- * money is money.
+ * Best price per item for a shopping list. A live sale beats shelf price, then
+ * unit price when every row shares a unit, then sticker price; `preferred`
+ * stores only break exact ties.
  */
 export function bestDeals(
   wanted: Array<{ id: string; name: string }>,
@@ -204,11 +180,7 @@ export function bestDeals(
       });
       continue;
     }
-    // Unit price is only a fair comparison when every candidate is measured in the
-    // SAME unit. Ranking $/oz against $/ct because both happened to be non-null
-    // recommends whichever unit divides into a smaller number, which is arithmetic
-    // pretending to be a saving. Mixed units fall back to sticker price for all of
-    // them, so at least everyone is compared on the same thing.
+    // Unit prices only compare within one unit; mixed units fall back to sticker.
     const units = new Set(rows.filter((r) => r.unitPrice != null).map((r) => r.unit ?? "?"));
     const comparableUnits = units.size <= 1 && rows.every((r) => r.unitPrice != null);
     const score = (r: PriceRow) => {
@@ -234,9 +206,8 @@ export function bestDeals(
       name: w.name,
       best,
       alternatives: sorted.slice(1),
-      // Never report a negative saving. When ranking went by unit price the best
-      // row can carry the higher sticker (a bigger pack), and `worst - best` then
-      // printed "saves $-3.00", which reads as a bug to anyone looking at it.
+      // Never a negative saving: ranked by unit price, the best row can be a
+      // bigger pack with a higher sticker.
       saves:
         rows.length > 1 && worst.price > best.price
           ? Math.round((worst.price - best.price) * 100) / 100
@@ -257,11 +228,8 @@ export function bestDeals(
 }
 
 /**
- * Which store to actually drive to, given a whole list.
- *
- * People do one trip, not four. Optimising each line independently produces a
- * "best deal" that requires visiting every retailer in Lancaster County, so
- * this scores each store on the basket it can actually cover.
+ * Which single store to shop, given a whole list: stores ranked by how much of
+ * the basket they cover, then by total. People make one trip, not four.
  */
 export function bestBasket(
   wanted: Array<{ id: string; name: string }>,

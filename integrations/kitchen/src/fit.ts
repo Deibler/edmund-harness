@@ -1,26 +1,14 @@
 /**
- * How well a dish fits TONIGHT, as opposed to what kind of day it is.
+ * How well a dish fits tonight, on top of what kind of day it is (`mood.ts`).
  *
- * `mood.ts` reads the calendar and the weather and answers "what kind of day is
- * this". That is real information, and on its own it is also why the grid went
- * bland. A score built only from the day cannot know that the ground beef went
- * out of date yesterday, that this exact dinner was eaten on Tuesday, or that
- * the one time anybody made it they gave it a two.
+ * Three terms from the ledger and the household's history:
  *
- * Underneath the mood the sort fell through to `fewest missing ingredients,
- * then fastest`, which is an explicit preference for the blandest pantry-stable
- * thing in the catalog. That is not a tuning problem. A ranking with no term
- * for quality finds the least interesting dinner every single time, and it is
- * right by its own lights while doing it.
+ *   urgency  what the dish uses that would otherwise be thrown out
+ *   novelty  how long since the household last ate it
+ *   regard   stars and ratings
  *
- * Three facts the ledger already holds and nothing was reading:
- *
- *   URGENCY  what the dish spends that would otherwise be thrown out
- *   NOVELTY  how long since this house last ate it
- *   REGARD   whether anybody starred it, or said how it turned out
- *
- * These RANK and never FILTER, the same contract the mood keeps. A dish that
- * uses nothing urgent still appears; it just stops winning by default.
+ * These rank and never filter. Without a quality term a ranking falls back to
+ * "fewest missing, then fastest", which picks the blandest dish every time.
  */
 
 import { isConvenience } from "./foods.ts";
@@ -31,13 +19,9 @@ import { daysLeft } from "./store.ts";
 import type { Item } from "./types.ts";
 
 /**
- * Points for one ingredient's clock.
- *
- * Peaks the day before and the day of, not on the oldest thing in the fridge.
- * Something four days past date is a bin decision, not a dinner decision, and a
- * curve that kept climbing would have the home page leading with whatever has
- * been sitting there longest. It still scores above zero, because a day-old
- * package of beef is usually fine and this is a ranking, not a verdict.
+ * Points for one ingredient's clock. Peaks the day before and the day of its
+ * date; well past date is a bin decision rather than a dinner, so it scores low
+ * but not zero.
  */
 function clockPoints(days: number): number {
   if (days < -2) return 6;
@@ -54,25 +38,16 @@ const COSTLY = new Set(["meat", "seafood", "dairy"]);
 /**
  * Points for spending something that is about to be thrown away.
  *
- * Deliberately dominated by the SINGLE most urgent ingredient rather than the
- * sum. One protein a day past its date is the entire reason to cook a
- * particular dinner; eight things at four days out is not, and summing lets a
- * long ingredient list beat the dish that actually saves the beef. The rest
- * contribute at a quarter weight, which is enough to break a tie between two
- * dishes that both use it.
- *
- * An ingredient the ledger has never heard of scores ZERO rather than a
- * penalty. Not tracked is not the same claim as not here, and a lookup miss
- * must never read as an opinion about the dish.
+ * Dominated by the single most urgent ingredient, with the rest at a quarter
+ * weight, so a long ingredient list cannot outscore the dish that saves the
+ * beef. An untracked ingredient scores zero: not tracked is not "not here".
  */
 export function urgency(r: Recipe, items: Record<string, Item>, now = new Date()): number {
   const points: number[] = [];
   for (const [id] of r.needs) {
     const it = items[id];
     if (!it || it.gone) continue;
-    // Deli meat, bread and snacks go on their own clock and get eaten as they
-    // are. Letting them make a dinner urgent is how every other suggestion
-    // became "something with the deli ham".
+    // Lunch and snack food is eaten as it is; it never makes a dinner urgent.
     if (isConvenience(it)) continue;
     const d = daysLeft(it, now);
     if (d === null) continue;
@@ -86,15 +61,9 @@ export function urgency(r: Recipe, items: Record<string, Item>, now = new Date()
 }
 
 /**
- * Points for not having eaten this lately.
- *
- * The penalty near zero days is the biggest single number in this file on
- * purpose. Nothing else in the ranking could stop the same three cards leading
- * the page every evening, and a correct suggestion you have already eaten twice
- * this week is the exact failure that makes somebody stop opening the site.
- *
- * Never made is a mild BOOST, not a penalty: an untried dish in a catalog this
- * small is more likely to be a good night than the fourth repeat of one.
+ * Points for not having eaten this lately. The penalty for the last few days is
+ * the largest number in the ranking, so the same dishes cannot lead every
+ * evening. Never made is a mild boost.
  */
 export function novelty(r: Recipe, made: MadeIndex, now = new Date()): number {
   const last = lastMade(made, r);
@@ -112,13 +81,9 @@ export function novelty(r: Recipe, made: MadeIndex, now = new Date()): number {
 }
 
 /**
- * Points for what people said about it.
- *
- * A star is a standing preference and counts once no matter how many people
- * added one, because two housemates starring a dish does not make it twice as
- * good for the person reading the page. Ratings are averaged and centred on
- * three, so an unrated dish scores zero rather than being punished for having
- * no history, and a dish somebody rated a two sinks by as much as a five lifts.
+ * Points for what people said about it. A star counts once however many people
+ * added one; ratings are averaged and centred on three, so an unrated dish
+ * scores zero.
  */
 export function regard(r: Recipe, prof: ProfileState): number {
   let s = (prof.favorites[r.id]?.length ?? 0) > 0 ? 14 : 0;
@@ -143,16 +108,7 @@ export function fitScore(
   return urgency(r, items, now) + novelty(r, made, now) + regard(r, prof);
 }
 
-/**
- * The reason a dish is where it is, in words, or null when there is nothing
- * worth saying.
- *
- * A ranking nobody can see is a ranking nobody trusts, and the first thing
- * anyone asks about a reordered list is why. This is also the honest test of
- * whether a term earned its place: if the score moved a card to the top and
- * there is no sentence for it, the term is doing something the household would
- * not agree with.
- */
+/** Why a dish ranks where it does, in words, or null when there is nothing worth saying. */
 export function fitReason(
   r: Recipe,
   items: Record<string, Item>,
@@ -181,11 +137,8 @@ export function fitReason(
 }
 
 /**
- * What is actually running out, worst first.
- *
- * Shared by the ranking and by the page that offers to write a dish around it,
- * so the sentence a person reads and the score that ordered the grid cannot
- * disagree about which food is urgent.
+ * What is running out, worst first. Shared with the page that offers to write a
+ * dish around it, so the page and the ranking agree on what is urgent.
  */
 export function onTheClock(
   items: Record<string, Item>,
@@ -196,9 +149,7 @@ export function onTheClock(
   for (const it of Object.values(items)) {
     if (it.gone || isConvenience(it)) continue;
     const d = daysLeft(it, now);
-    // More than two days past date is a bin decision, not a dinner decision,
-    // and offering to cook it would be the one suggestion here nobody should
-    // follow. Same cutoff `clockPoints` uses, for the same reason.
+    // More than two days past date is a bin decision, not a dinner.
     if (d === null || d > withinDays || d < -2) continue;
     out.push({ item: it, days: d });
   }

@@ -1,50 +1,26 @@
 /**
- * The per-account website.
+ * The per-household website: assembly and file output.
  *
- * WHAT THIS IS. A storefront for food the household already owns, crossed with
- * a library. The shop half is HelloFresh and Instacart: browse dishes, see what
- * is in stock, put one in motion. The library half is Spotify: a history you
- * can scroll, favourites, and a recap that treats a year of dinners as a story
- * rather than a table. Everything on it is derived from the ledger, so no
- * feature here asks anyone to fill in a form first.
+ * `renderSite` gathers the ledger into one `Ctx`, asks each panel under `site/`
+ * for its markup and returns the hub page. `writeSite` writes the hub, one page
+ * per written recipe, the shelf-check page and the chat threads the hub polls.
  *
- * MOBILE FIRST, MEANT LITERALLY. The previous pass put filters in a horizontal
- * chip rail and nav in a top bar, which is a desktop layout that merely fits on
- * a phone. Here there are exactly three controls in the header — where you are,
- * a filter button, and the menu — and both the menu and the filters open as
- * full sheets. Nothing scrolls sideways. Every tap target clears 44px.
+ * Constraints the markup relies on:
+ *   - every image and data request carries the share key, appended client-side
+ *     from `location.search`, because the share server checks it on every GET;
+ *   - the page cannot call anything directly, so actions POST to the share
+ *     server's /callback and replies arrive as JSON files written beside it;
+ *   - the link is shared by a household, so the browser picks a profile once
+ *     and keeps it in a cookie.
  *
- * THINGS THAT DRIVE REAL DECISIONS, not just breakpoints:
- *   - every image request carries the share key, appended client-side from
- *     `location.search`, because the server validates the token on every GET.
- *     A plain relative `src` 403s.
- *   - the page cannot call anything, so every action POSTs to the share
- *     server's /callback and a trigger wakes the model. Chat replies come back
- *     by polling a JSON file this renderer writes next to the page.
- *   - two people share this link, so the browser picks a profile once and keeps
- *     it in a cookie. Without that, "text this to me" has no referent and a
- *     favourite belongs to nobody.
+ * Mobile first: three header controls, menu and filters as full sheets, no
+ * horizontal scrolling, 44px tap targets. No emoji and no em-dashes in copy.
  *
- * House rules: no emoji anywhere, no em-dashes in copy. Anything inferred
- * rather than measured is labelled inline, never in a footnote nobody reads.
- *
- * WHERE THINGS LIVE. This file was 3,000 lines until 2026-08-17 and is now the
- * assembly step only: gather the ledger into one `Ctx`, ask each panel for its
- * markup, and write the files out. The parts live under `site/`:
- *
- *   style.ts    the stylesheet and the web-font links
- *   icons.ts    the inline SVG set
- *   format.ts   dates, relative times, the image-or-monogram fallback
- *   ctx.ts      the `Ctx` every panel is handed, and the meal-photo lookup
- *   meals.ts    the home page: meal cards, the mood band, the cleanup receipt
- *   panels.ts   kitchen, history, shopping, explore, schedule
- *   recap.ts    the year in review
- *   client.ts   everything the page runs in the browser
- *
- * The split was a pure move, verified by rendering both live households before
- * and after and requiring the HTML to be byte-identical apart from its own
- * timestamp. If you split something else out of here, do the same: a refactor
- * of a page nobody is looking at right now is only safe if it is provable.
+ * Parts: style.ts (CSS, fonts), icons.ts (SVG), format.ts (dates, image or
+ * monogram), ctx.ts (shared context), meals.ts (home), panels.ts (kitchen,
+ * history, shopping, explore, schedule), recap.ts (year in review), client.ts
+ * (browser script). Refactors here are proven by rendering before and after
+ * and requiring byte-identical output.
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -61,12 +37,11 @@ import { priceBook } from "./cost.ts";
 import { lastSweep } from "./decay.ts";
 import { readExplore } from "./explore.ts";
 import { onTheClock } from "./fit.ts";
-import { meals, recap } from "./insights.ts";
 import { lastMade, madeIndex } from "./made.ts";
 import { VIBES, moodFor, readWeather } from "./mood.ts";
 import { METHOD_LABEL, type Recipe, compoundPairs, cookable, loadRecipes } from "./recipes.ts";
 import { MEALS, dinnersOf } from "./schedules.ts";
-import { fold, live, slug } from "./store.ts";
+import { fold, live } from "./store.ts";
 
 import { type Assets, noAssets } from "./assets.ts";
 import { type BuiltRecipe, baseIdOf, groupRecipes, loadCookbook } from "./cookbook.ts";
@@ -75,7 +50,7 @@ import type { Account } from "./types.ts";
 
 import { clientScript } from "./site/client.ts";
 import type { Ctx } from "./site/ctx.ts";
-import { j, shot } from "./site/format.ts";
+import { j } from "./site/format.ts";
 import { I } from "./site/icons.ts";
 import { homePanel } from "./site/meals.ts";
 import {
@@ -88,19 +63,13 @@ import {
 import { recapPanel } from "./site/recap.ts";
 import { CSS, FONTS } from "./site/style.ts";
 
-// ─── panels ──────────────────────────────────────────────────────────────────
-
-// ─── page ────────────────────────────────────────────────────────────────────
-
 /**
- * Write the whole site to disk: the hub, a page per written recipe, and the
- * chat threads the hub polls.
+ * Write the whole site to disk: the hub, a page per written recipe, the shelf
+ * check and the chat threads the hub polls.
  *
- * One function rather than three calls at each site, because there are four
- * places that re-render (the daily pass, the request drain, the MCP tool, and
- * a hand-run script) and any one of them forgetting the recipe pages produces
- * a hub full of links to files that do not exist. The failure would be silent
- * on the machine writing it and a dead end on the phone reading it.
+ * Every re-render path (daily pass, drain, MCP tool, scripts) goes through this
+ * one function so none of them can leave the hub linking to pages that were
+ * never written.
  */
 export function writeSite(
   account: string,
@@ -123,15 +92,13 @@ export function writeSite(
   }
   mkdirSync(join(dir, "recipe"), { recursive: true });
   for (const r of book) {
-    // The page sits one directory down, so its own photo is one level up. The
-    // share key is appended in the browser, as everywhere else.
+    // Recipe pages live one directory down; the share key is appended client-side.
     const photo = assets.meals.has(r.id)
       ? `../img/meals/${r.id}.jpg`
       : assets.meals.has(baseIdOf(r))
         ? `../img/meals/${baseIdOf(r)}.jpg`
         : null;
-    // Step photographs are checked on disk rather than through scanAssets,
-    // which only indexes items and meals. Cheap: a handful of stats per recipe.
+    // `scanAssets` indexes only items and meals, so step photos are checked on disk.
     const stepPhotos = new Set(
       r.steps
         .map((st) => st.n)
@@ -145,8 +112,8 @@ export function writeSite(
         title,
         photo,
         stepPhotos,
-        // A generated shot gets moved aside the first time a real one arrives, so
-        // its presence is exactly the signal that the hero is somebody's own.
+        // A generated shot is moved aside when a real photo arrives, so its
+        // presence means the hero image is the household's own.
         ownPhoto: existsSync(join(dir, "img", "meals-generated", `${r.id}.jpg`)),
         lastMade: lastMade(made, r) ?? null,
         variants: (byBase.get(baseIdOf(r)) ?? [])
@@ -155,8 +122,7 @@ export function writeSite(
       }),
     );
   }
-  // The shelf check is a page rather than a panel: it is a different posture
-  // (standing at the fridge, one hand) and it takes over the whole screen.
+  // The shelf check is its own full-screen page, used standing at the fridge.
   writeFileSync(
     join(dir, "check.html"),
     renderCheckPage({
@@ -188,8 +154,7 @@ const NAV: Array<[string, string, string]> = [
 
 export function renderSite(account: string, acct: Account, assets: Assets = noAssets()): string {
   const items = fold(account);
-  // Account-scoped: the shared catalog plus whatever the daily pass has written
-  // from THIS kitchen's shelves this week.
+  // The shared catalog plus this household's own ideas.
   const { recipes } = loadRecipes(account);
   const book = loadCookbook(account);
   const prof = loadProfiles(account);
@@ -208,9 +173,8 @@ export function renderSite(account: string, acct: Account, assets: Assets = noAs
   const cook = cookable(items, all);
   const pairs = compoundPairs(items, all);
 
-  // Index the pairs from both ends, best pair first. A dish can lead into more
-  // than one thing and be fed by more than one thing, and the card only ever
-  // names the strongest, so ordering here is the whole ranking.
+  // Compound pairs indexed from both ends, best first: a card names only the
+  // strongest pairing, so this order is the ranking.
   const leads = new Map<string, Array<{ id: string; name: string; via: string[] }>>();
   const needsFirst = new Map<string, Array<{ id: string; name: string; via: string[] }>>();
   for (const p of pairs) {
@@ -253,9 +217,7 @@ export function renderSite(account: string, acct: Account, assets: Assets = noAs
     needsFirst,
     variantsOf,
     skips: activeSkips(prof),
-    // Weather is read from cache and may well be absent. That is a normal
-    // state, not a degraded one: the mood works off the calendar alone and the
-    // page simply never mentions the weather rather than inventing a number.
+    // Cached weather may be absent; the mood then works from the calendar alone.
     mood: moodFor(acct, readWeather(account)),
     explore: readExplore(account),
   };
@@ -283,11 +245,8 @@ export function renderSite(account: string, acct: Account, assets: Assets = noAs
         from: c.recipe.from ?? [],
         needs: c.needs.map((n) => ({ name: n.name, state: n.state })),
         missing: c.missing.map((n) => n.name),
-        // Names are for reading, ids are for writing. The short sheet corrects the
-        // ledger, so it needs the slug, and pairing them by index keeps the two
-        // lists honest about being the same list.
-        // Names are for reading, ids are for writing, and the state and numbers are
-        // what tell "the shelf is empty" apart from "there is some, just not enough".
+        // Ids let the short sheet correct the ledger; state and quantities tell
+        // "none on the shelf" apart from "some, but not enough".
         missingDetail: c.missing.map((n) => ({
           id: n.id,
           name: n.name,
@@ -410,8 +369,7 @@ ${FONTS}
     itemCats: itemCats.map((c) => ({ id: c, n: itemCount(c) })),
     againCount: cook.filter((c) => c.ready && lastMade(ctx.made, c.recipe)).length,
     skips: [...ctx.skips.keys()],
-    // What is running out, so the compose sheet can name the actual food
-    // instead of asking somebody to describe their own fridge back to me.
+    // What is running out, so the compose sheet can name the actual food.
     clock: onTheClock(ctx.items, 2).map((c) => ({ name: c.item.name, days: c.days })),
     single: people.length <= 1,
     vibes: VIBES,

@@ -1,41 +1,29 @@
 /**
- * The browser this integration drives, and the handful of things it can do.
+ * The Chrome session that reaches iCloud Notes, and the primitives it offers.
  *
- * Apple Notes has two halves and neither is reachable the same way.
+ * Notes has two halves. Locally, AppleScript can write a body but cannot invite
+ * anyone (`shared` is read only and the share sheet exposes no accessibility
+ * children), and it strips checklist markup. On icloud.com sharing is ordinary
+ * DOM, but the note body is a `<canvas>`: the only ways in are the keyboard
+ * and the clipboard. Apple's clipboard HTML carries paragraph styling as JSON
+ * in `data-tt`, checklist ticks included, so a copy reads the whole note.
  *
- * Locally, AppleScript can write a note's body and nothing else: it cannot
- * invite anybody (the dictionary's `shared` is read only, `NSSharingService`
- * does nothing for Notes, and the share sheet reports zero children to
- * accessibility) and it silently strips every checklist markup, so a list
- * written that way can never be ticked.
+ * This module is transport only. `notedoc.ts` decides what a note says,
+ * `notepatch.ts` how a write is applied, `notes_share.ts` who is on it, and
+ * `notesync.ts` when any of it happens.
  *
- * On icloud.com both exist. Sharing is ordinary DOM. The note body is NOT: the
- * editor paints to a `<canvas>`, so there is no element to read or set, and the
- * only ways in are the ones a person has — the keyboard and the clipboard.
- * That turns out to be enough, because Apple's own clipboard flavour carries
- * the paragraph styling as JSON in `data-tt`, checklists included. One copy
- * reads the whole note with its tick state; one paste rewrites it.
- *
- * Everything here is transport. What to put in a note lives in `notedoc.ts`,
- * who to share it with in `notes_share.ts`, and when to do either in
- * `notesync.ts`.
- *
- * Rules, each one paid for:
- *
- *   - EVERY STEP HAS A DEADLINE. This is reachable from the ten-second watch
- *     pass, so a wedged browser has to fail in seconds rather than hold a lock.
- *   - NAVIGATE BY THE NOTE'S OWN URL when one is known. The note list is
- *     virtualised and recycles DOM nodes, so a title match can click a row that
- *     selects a different note — that happened, and it read one note's
- *     participants as another's.
- *   - THE PAGE MUST BELIEVE IT HAS FOCUS. The canvas editor ignores every key
- *     and paste when `document.hasFocus()` is false, which is always true for a
- *     background tab. `Emulation.setFocusEmulationEnabled` fixes that without
- *     taking focus away from whoever is actually using the Mac.
- *
- * There is no password in here and there must never be one. This borrows a
- * signed-in browser profile; if that session lapses the honest outcome is an
- * error telling a human to sign in, not a credential sitting in the repo.
+ * Invariants:
+ *   - Every step has a deadline. This runs from the ten-second watch pass, so a
+ *     wedged browser must fail in seconds rather than hold the note lock.
+ *   - Navigate by the note's own URL when one is known. The note list is
+ *     virtualised and recycles DOM nodes, so a title match can select a
+ *     different note.
+ *   - The page must believe it has focus. The canvas editor ignores keys and
+ *     pastes while `document.hasFocus()` is false, which is always true of a
+ *     background tab; `Emulation.setFocusEmulationEnabled` fixes that without
+ *     taking focus from whoever is using the Mac.
+ *   - No credentials. This borrows a signed-in browser profile; a lapsed
+ *     session is reported as an error for a person to fix.
  */
 
 import { spawn } from "node:child_process";
@@ -44,13 +32,12 @@ import { resolve } from "node:path";
 const HOST = "127.0.0.1";
 
 /**
- * A browser this integration owns, rather than whichever one happens to be open.
+ * A dedicated Chrome profile and debugging port for the kitchen.
  *
- * Borrowing the assistant's browsing profile was the first attempt and does not
- * work: that Chrome is launched with `--remote-debugging-pipe`, so it has no
- * socket for anything but its own parent, and copying the profile did not carry
- * the iCloud session across. A dedicated profile costs one sign-in, ever, and in
- * exchange the kitchen's session cannot be ended by somebody closing a tab.
+ * The assistant's own browser is launched with `--remote-debugging-pipe`, so it
+ * has no socket to attach to, and a copied profile does not carry the iCloud
+ * session. A dedicated profile needs one sign-in and cannot be closed from
+ * under a sync by somebody closing a tab.
  */
 const PORT = Number(process.env.KITCHEN_CDP_PORT || 9224);
 const PROFILE =
@@ -93,10 +80,8 @@ async function httpJson(path: string, ms = 3000): Promise<unknown> {
 }
 
 /**
- * Get a browser to talk to, starting one only if none is listening.
- *
- * Two processes cannot share a Chrome user-data-dir, so this never launches a
- * second copy on top of a running one.
+ * Start the kitchen's Chrome unless one is already listening. Two processes
+ * cannot share a user-data-dir, so this never launches a second copy.
  */
 async function ensureBrowser(): Promise<void> {
   try {
@@ -181,14 +166,11 @@ function connect(wsUrl: string): Promise<Cdp> {
 }
 
 /**
- * Get a session on a tab showing iCloud Notes.
+ * Attach to a tab showing iCloud Notes, reusing one when possible.
  *
- * Goes through the browser socket and the Target domain rather than the older
- * `/json/list` and `/json/new` HTTP helpers. On current Chrome those are not
- * equivalent: `/json/list` came back empty here with tabs plainly open, and
- * `/json/new` answers a GET with a non-JSON error, so the HTTP path fails in
- * the shape of "the browser has no tabs" when the truth is that the endpoint no
- * longer reports them.
+ * Uses the Target domain over the browser socket. On current Chrome the
+ * `/json/list` and `/json/new` HTTP helpers report no tabs even when tabs are
+ * open, which reads as a missing browser rather than a changed endpoint.
  */
 async function notesTab(): Promise<Page> {
   const version = (await httpJson("/json/version")) as BrowserVersion;
@@ -225,9 +207,8 @@ async function notesTab(): Promise<Page> {
     close: () => browser.close(),
   };
 
-  // Reading and writing the note body both go through the clipboard, and the
-  // canvas editor ignores input entirely unless the page thinks it is focused.
-  // Granted and enabled once per session, before anything tries to use them.
+  // The body is read and written through the clipboard, and the canvas editor
+  // ignores input unless the page believes it is focused.
   await browser
     .send("Browser.grantPermissions", {
       origin: ORIGIN,
@@ -237,8 +218,8 @@ async function notesTab(): Promise<Page> {
   await page.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
 
   if (goToNotes) await navigate(page, NOTES_URL);
-  // The app boots inside an iframe; the outer load event fires well before the
-  // note list exists, so callers still poll for what they need.
+  // The app boots inside an iframe after the outer load event, so callers still
+  // poll for what they need.
   await sleep(goToNotes ? 4000 : 1200);
   return page;
 }
@@ -248,12 +229,12 @@ async function notesTab(): Promise<Page> {
  * ------------------------------------------------------------------ */
 
 /**
- * Run a function in the tab and get its value back.
+ * Run a script body in the tab and return its value.
  *
- * Everything real lives in a same-origin iframe, so page code reaches it via
- * `contentDocument` rather than by hunting an execution context id — the id
- * changes whenever the app re-frames itself, and a stale one fails in a way
- * that reads exactly like "the button is missing".
+ * The app lives in a same-origin iframe, reached through `contentDocument`
+ * rather than an execution context id, which changes whenever the app
+ * re-frames itself. The body has `ARG`, `doc`, `all`, `label`, `byLabel` and
+ * `wait` in scope.
  */
 export async function evaluate<T>(cdp: Page, body: string, arg?: unknown): Promise<T> {
   const src = `(async () => {
@@ -289,18 +270,12 @@ export async function evaluate<T>(cdp: Page, body: string, arg?: unknown): Promi
 }
 
 /**
- * Go somewhere, and do not come back until the tab will answer again.
+ * Navigate, then wait until the tab answers a trivial expression again.
  *
- * A fixed pause after `Page.navigate` is not enough on its own. The old
- * execution context is torn down at some point during the load, and any script
- * that happens to be dispatched into it comes back as "Inspected target
- * navigated or closed" — which is thrown, aborts the whole operation, and reads
- * like the browser died rather than like a page that was simply not ready yet.
- *
- * So the wait is for evidence instead of for a duration: a trivial expression
- * is dispatched until one of them answers. It is trivial on purpose — the probe
- * has to be safe to send an unknown number of times, which nothing else here
- * is.
+ * A script dispatched while the old execution context is being torn down fails
+ * with "Inspected target navigated or closed", so readiness is probed rather
+ * than assumed from a fixed pause. The probe is side-effect free because it may
+ * be sent any number of times.
  */
 export async function navigate(cdp: Page, url: string, settleMs = 8_000): Promise<void> {
   await cdp.send("Page.navigate", { url });
@@ -322,11 +297,9 @@ export async function typeText(cdp: Page, text: string): Promise<void> {
 }
 
 /**
- * Press a key, optionally as an editing command.
- *
- * `commands` is what makes shortcuts work: WebKit-derived editors act on the
- * named editing command rather than on the modifier bits, so a Meta+A with no
- * `selectAll` command selects nothing at all.
+ * Press a key, optionally as a named editing command. The editor acts on
+ * `commands` rather than modifier bits, so Meta+A without `selectAll` does
+ * nothing.
  */
 export async function press(
   cdp: Page,
@@ -354,13 +327,9 @@ const selectAll = (cdp: Page) =>
   press(cdp, "a", "KeyA", 65, { modifiers: 4, commands: ["selectAll"] });
 
 /**
- * Empty the focused field the way a person would.
- *
- * Setting `.value` from page script does not work here: the search box is a
- * controlled component, so the app's own model keeps the old query and the next
- * thing typed lands on the end of it. That produced the worst possible failure
- * — a real note reported as not existing — so text goes out through the same
- * keyboard path a human would use.
+ * Empty the focused field with the keyboard. The search box is a controlled
+ * component, so setting `.value` leaves the old query in the app's model and a
+ * real note then reads as missing.
  */
 export async function clearField(cdp: Page): Promise<void> {
   await selectAll(cdp);
@@ -391,35 +360,25 @@ const CARET_IN_EDITOR = `
 `;
 
 /**
- * Put the caret in the note body, and prove it landed there.
+ * Put the caret in the note body and confirm it landed there.
  *
- * Aims at the RIGHT side deliberately: checklist circles sit in the left margin
- * and a click on one toggles it, so clicking into the middle of a note risks
- * silently ticking somebody's shopping as a side effect of opening it.
- *
- * The verification is not defensive padding. A click that misses leaves focus
- * on the page `<body>`, where a select-all then selects the entire app — the
- * sidebar, the search filters, the lot — and a copy returns that as if it were
- * the note. It did, and the app's own chrome ended up parsed as a line of
- * somebody's shopping list. So the caret is checked rather than assumed, and
- * several points are tried, because the one dead spot depends on how the window
- * happens to be sized.
+ * Clicks stay clear of the left margin, where a click on a checklist circle
+ * toggles it. The landing is verified because a missed click leaves focus on
+ * the page body, where select-all and copy return the app's own chrome as if it
+ * were the note. Several points are tried since the dead spot depends on the
+ * window size.
  */
 export async function focusEditor(cdp: Page): Promise<boolean> {
-  // Close anything floating over the note first. The share popover in
-  // particular covers the top right of the editor, which is where a click aimed
-  // at empty space would otherwise land — it would hit the popover, focus would
-  // stay off the note, and the read would come back as page chrome.
+  // Close any popover first: the share popover covers part of the editor and
+  // would swallow the click.
   await evaluate(cdp, DISMISS).catch(() => {});
   await sleep(300);
 
   const r = await evaluate<{ x: number; y: number; w: number; h: number } | null>(cdp, EDITOR_RECT);
   if (!r) return false;
 
-  // Past the checklist gutter but well clear of the right-hand overlays.
-  // Circles sit about 36px in and a click on one toggles it, so nothing here
-  // goes near the left margin: silently ticking somebody's shopping while
-  // opening their note would be a nasty way to lose their place.
+  // Past the checklist gutter (circles sit about 36px in) and clear of the
+  // right-hand overlays.
   const safe = Math.round(r.x + Math.min(200, r.w * 0.3));
   const points: Array<[number, number]> = [
     [safe, Math.round(r.y + r.h * 0.75)],
@@ -435,27 +394,21 @@ export async function focusEditor(cdp: Page): Promise<boolean> {
 }
 
 /**
- * The whole note body as Apple's own clipboard HTML.
+ * The whole note body as Apple's clipboard HTML, via a real select-all and copy
+ * (`withNote` restores the clipboard afterwards).
  *
- * There is no DOM to read, so this is a real select-all and copy. The system
- * clipboard is genuinely clobbered by that, which is why `withNote` puts back
- * whatever was on it when it is done.
- *
- * Returns null rather than a guess. Every caller treats null as "could not
- * read" and refuses to write, which is the only safe reading: the alternative
- * is rewriting a shared note from a body that was never actually its body.
+ * Returns "" for an empty note and null for a failed read. The two must stay
+ * distinct: every caller refuses to write on null, because rewriting a shared
+ * note from a body that was never its body destroys the household's lines.
  */
 export async function readBody(cdp: Page): Promise<string | null> {
   const got = await copyBody(cdp);
   if (!got) return null;
   const { html } = got;
   if (html === null) return null;
-  // An empty note copies as nothing at all, which is a legitimate answer and
-  // must stay distinguishable from a failed read.
   if (!html.trim()) return "";
-  // Anything that came out of this editor carries Apple's paragraph styling.
-  // Page chrome does not, so this is what separates "the note is empty" from
-  // "the selection was never in the note".
+  // Editor content always carries Apple's paragraph styling; page chrome does
+  // not, so this rejects a selection that was never in the note.
   return /data-tt=/.test(html) ? html : null;
 }
 
@@ -463,12 +416,9 @@ export async function readBody(cdp: Page): Promise<string | null> {
 export type Copied = { html: string | null; text: string | null };
 
 /**
- * Copy whatever is selected and hand back both clipboard views.
- *
- * The HTML is the one that knows what each line IS: a checklist item, ticked
- * or not, a heading. The plain text is the one the caret moves through, one
- * arrow press per character and one per line break, so anything that steers the
- * caret by counting has to count in that.
+ * Copy the current selection and return both clipboard views. The HTML says
+ * what each line is (checklist item, tick, heading); the plain text is what the
+ * caret moves through, one arrow press per character or line break.
  */
 export async function copySelection(cdp: Page): Promise<Copied | null> {
   await press(cdp, "c", "KeyC", 67, { modifiers: 4, commands: ["copy"] });
@@ -499,27 +449,15 @@ export async function copyBody(cdp: Page): Promise<Copied | null> {
 export type WriteResult = { ok: true; body: string } | { ok: false; why: string };
 
 /**
- * Replace the whole note body with this HTML, and prove it was replaced.
+ * Replace the whole note body with this HTML: select-all, then one paste.
  *
- * Select-all then paste, rather than typing: a paste is one operation the
- * editor either applies or does not, where typing thirty lines is thirty
- * chances to end up half-written. It also carries checklist state, which
- * keystrokes cannot.
+ * Only a fallback (see `notepatch.ts`): a whole-body paste deletes every line,
+ * and a member's device can resurrect deleted lines as stacked copies.
  *
- * The select-all is the dangerous half, and it is the half that cannot be
- * watched. There is no DOM selection to inspect — the editor paints to a canvas
- * — so a select-all that did not take is indistinguishable from one that did
- * right up until the paste lands, at which point it has ADDED a copy of the
- * note instead of replacing it. This used to return true the moment the
- * keystroke was dispatched, which made that outcome invisible: the caller
- * recorded the note as current, stopped opening it, and a household's list
- * quietly accumulated ten stacked copies of itself over a few days.
- *
- * So a write is not finished until the note has been read back and the caller
- * has recognised what it says. `accepts` belongs to the caller because only the
- * caller knows what it asked for. A rejected write is retried rather than
- * reported, since a select-all that DOES take replaces everything — including
- * whatever mess the previous attempt made.
+ * A select-all that silently misses turns the paste into an insert, and that
+ * cannot be observed on a canvas. So the write only counts once the note has
+ * been read back and `accepts` recognises it; a rejected write is retried,
+ * since a select-all that does take replaces whatever the last attempt left.
  */
 export async function writeBody(
   cdp: Page,
@@ -589,19 +527,12 @@ const FIND_NOTE = `
 `;
 
 /**
- * Click the row whose title matches exactly, then prove the app agreed.
+ * Click the row whose title matches exactly, and confirm the app selected it.
  *
- * Two hazards here, both of which bit.
- *
- * The list is VIRTUALISED and recycles its DOM nodes, so `.list-item` includes
- * off-screen leftovers still carrying the title of a note that is no longer
- * there. Matching one of those and clicking it selects something else entirely
- * — that is how a run once reported this household's note as being shared with
- * a throwaway address, which belonged to a different note. Only rows the app
- * has marked `on-screen` are real, and the row must end up `is-selected`.
- *
- * And it polls for the MATCHING row rather than for any rows at all, because a
- * fixed pause races both the search filter and iCloud syncing a recent write.
+ * The list is virtualised: off-screen `.list-item` nodes keep stale titles, and
+ * clicking one selects a different note. Only rows marked `on-screen` count,
+ * and the row must end up `is-selected`. It polls for the matching row, since a
+ * fixed pause races the search filter and iCloud syncing a recent write.
  */
 const PICK_ROW = `
   const want = ARG.trim();
@@ -663,24 +594,18 @@ export type NoteOpts = {
   /** The note's own address, if the household has one on file. */
   known?: string | null;
   /**
-   * Make the note when no note by this title exists.
-   *
-   * Off by default, and the default is the important one. Creating a note from
-   * the sharing path would leave a second, empty, shared note beside the real
-   * list and the household would then tick the wrong one. Only the module that
-   * owns the note's CONTENT is allowed to bring one into existence, and it does
-   * so in the same operation that fills it in.
+   * Create the note when none has this title. Off by default: only the caller
+   * that writes the note's content may create one, or a second empty shared note
+   * appears beside the real list.
    */
   create?: boolean;
 };
 
 /**
- * Open one note by title and do something with it.
+ * Open one note (by stored URL, else by title) and run `fn` against it.
  *
- * Restores the system clipboard afterwards. Reading a note means a real
- * select-all and copy, and this can run unattended from the watch pass; walking
- * off with whatever somebody had copied would be a rude way to sync a shopping
- * list.
+ * Restores the system clipboard afterwards, since reading a note clobbers it
+ * and this runs unattended.
  */
 export async function withNote<T>(
   title: string,
@@ -693,10 +618,8 @@ export async function withNote<T>(
   try {
     await ensureBrowser();
     cdp = await notesTab();
-    // Deliberately NOT Page.bringToFront. Input events are dispatched into the
-    // renderer and do not need the OS window, and this can run from the watch
-    // pass — stealing focus from whoever is using the Mac to tick a shopping
-    // list would be a worse bug than anything it guards against.
+    // No Page.bringToFront: input goes to the renderer directly, and this must
+    // not steal focus from whoever is using the Mac.
 
     if (await evaluate<boolean>(cdp, SIGNED_OUT)) {
       return {
@@ -717,13 +640,8 @@ export async function withNote<T>(
 
     type Picked = { ok: boolean; why?: string; saw?: string[]; url?: string };
 
-    /**
-     * The cheap, exact route: go straight to the note's own address.
-     *
-     * A share link works too — iCloud redirects it to the canonical note URL —
-     * so whichever of the two is on file is fine. The title is still checked
-     * afterwards, because a stored URL can outlive the note it pointed at.
-     */
+    // Direct route: the note's URL or share link (iCloud redirects the latter).
+    // The title is still checked, since a stored URL can outlive its note.
     if (opts.known) {
       await navigate(cdp, opts.known);
       await sleep(7000);
@@ -732,8 +650,7 @@ export async function withNote<T>(
         lastUrl = at.url;
         return await fn(cdp);
       }
-      // Fall through and search by title: the note may have been renamed, or
-      // the link replaced by somebody re-sharing it.
+      // Renamed, or re-shared under a new link: fall back to the title search.
     }
 
     const select = async (): Promise<Picked> => {
@@ -744,13 +661,8 @@ export async function withNote<T>(
       return await evaluate<Picked>(cdp!, PICK_ROW, title);
     };
 
-    /**
-     * A tab left open for hours stops reflecting reality: notes written since it
-     * loaded never appear in its list, and deleted ones linger. Reloading first
-     * every time would cost ten seconds on every call, so the reload is the
-     * retry — the cheap path is tried once, and a miss earns one fresh page
-     * before the note is declared missing.
-     */
+    // A long-lived tab's list goes stale, so a miss earns one reload before the
+    // note is declared missing.
     let picked = await select();
     if (!picked.ok) {
       await navigate(cdp, NOTES_URL);
@@ -761,8 +673,7 @@ export async function withNote<T>(
       return { ok: false as const, error: `iCloud Notes did not finish loading (${picked.why}).` };
     }
     if (!picked.ok && opts.create) {
-      // The search box still holds the title and would filter the new note out
-      // of the list before it has one, so clear it before composing.
+      // Clear the search first, or it filters out the new, untitled note.
       await evaluate(cdp, FIND_NOTE);
       await clearField(cdp);
       await sleep(600);
@@ -770,8 +681,8 @@ export async function withNote<T>(
       if (!made.ok) return { ok: false as const, error: `Could not create a note (${made.why}).` };
       lastUrl = null;
       const out = await fn(cdp);
-      // Only knowable after the body is written, since a note's title IS its
-      // first line and an empty note has no title to search for.
+      // A note's title is its first line, so its URL is only findable once the
+      // body has been written.
       const at = await evaluate<{ ok: boolean; url: string }>(cdp, CONFIRM_OPEN, title);
       if (at.ok) lastUrl = at.url;
       return out;

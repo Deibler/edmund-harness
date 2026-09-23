@@ -1,28 +1,11 @@
 /**
- * The shelf check, as a deck of cards.
+ * The shelf check: a deck of item cards answered one at a time, swipe right if
+ * the ledger is right and left if not (then which kind of wrong).
  *
- * One item, one question, one gesture. Right if the ledger has it correct, left
- * if it does not, and only then does it ask which kind of wrong. Everything
- * about the pacing is chosen so somebody standing in front of an open fridge
- * gets through thirty items before they get bored, because a check that gets
- * abandoned at item six has taught the ledger almost nothing.
- *
- * WHY A DECK RATHER THAN A LIST. A list of thirty checkboxes is a form, and a
- * form is a thing you put off. A deck has no visible end, gives one decision at
- * a time, and every answer physically removes the question. It is the difference
- * between auditing and just looking, and looking is the only version anybody
- * actually does twice.
- *
- * WHAT IT WRITES. Nothing, directly. Every swipe posts a verdict to the same
- * callback endpoint the rest of the site uses; the drain records it and, at the
- * end, folds the whole pass into the ledger as one retractable batch. That means
- * a closed tab loses nothing, and a pass abandoned half way is still worth
- * exactly what it answered.
- *
- * WHO LOOKED IS NOT OPTIONAL. Attribution is the whole reason this beats a
- * guess, so the page will not start without a profile. Three people share this
- * kitchen and "the ledger thinks there are four onions" is a much weaker
- * statement than "Jordan counted four onions on Sunday".
+ * The page writes nothing itself. Each verdict is posted to the site's callback
+ * endpoint; the drain records it and folds the finished pass into the ledger as
+ * one retractable batch, so an abandoned pass still counts for what it answered.
+ * A profile is required before starting, because every count records who looked.
  */
 
 import type { Assets } from "./assets.ts";
@@ -43,6 +26,7 @@ export type CheckPageCtx = {
   people: Array<{ principal: string; label: string }>;
 };
 
+/** Relative age of a card's last update. Unlike the hub's `ago`, never "just now". */
 const ago = (iso: string): string => {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (mins < 60) return `${mins} min ago`;
@@ -165,9 +149,7 @@ footer{flex:0 0 auto;border-top:1px solid hsl(var(--line));background:hsl(var(--
 `;
 
 export function renderCheckPage(ctx: CheckPageCtx): string {
-  // Ordered and capped by checkOrder, so the deck opens on the chicken rather
-  // than the steak sauce and ends before it becomes a chore. Shared with the
-  // version I drive over text, so both ask in the same order.
+  // Order and size come from `checkOrder`, shared with the chat-driven check.
   const deck = checkOrder(ctx.items, Date.now(), DECK_SIZE, ctx.account).map((i) => ({
     id: i.id,
     name: i.name,

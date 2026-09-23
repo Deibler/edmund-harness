@@ -1,17 +1,9 @@
 /**
- * The ranking terms that were missing, which is why the home page went bland.
+ * The ranking terms beyond cookability: urgency (spend what is expiring), novelty
+ * (not what was eaten lately) and regard (stars and ratings).
  *
- * The complaint was not that a suggestion was wrong. Every suggestion was
- * correct: the dish was cookable, it suited the weather, it was quick. The
- * complaint was that it was boring, night after night, while two proteins sat
- * in the fridge a day past date.
- *
- * That is what a sort with no term for quality does. The old chain ended in
- * `fewest missing ingredients, then fastest`, which is a preference for the
- * blandest pantry-stable card in the catalog, applied forever and correct by
- * its own lights every time. So the assertions here are about ORDER, not about
- * any single score: what matters is that the dish spending the expiring beef
- * beats the one that could have been cooked any night this year.
+ * The assertions are about order, not scores: a dish that spends the expiring beef
+ * must beat one that could be cooked any night.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -102,8 +94,7 @@ check(
     fitScore(pantryDish, fridge, NO_MADE, NO_PROF, NOW),
 );
 
-// The exact regression: the old sort broke ties on ingredient count, so the
-// SHORTER pantry dish won. Urgency has to be big enough to overturn that, not
+// Urgency must be large enough to overturn a tie broken on ingredient count, not
 // merely present.
 check(
   "a long recipe using the urgent thing beats a short one that does not",
@@ -125,8 +116,7 @@ check(
   ) === 0,
 );
 
-// Four days past date is a bin decision, not a dinner decision. It still
-// scores, because a ranking is not a verdict, but it must not lead the page.
+// Food well past its date still scores a little, but must not lead the page.
 check(
   "something long past date stops leading",
   urgency(dish("old", ["ancient"]), shelf(item("ancient", "meat", day(-6))), NOW) <
@@ -160,8 +150,8 @@ check(
 );
 check("never cooked here is a mild boost, not a penalty", novelty(beefDish, NO_MADE, NOW) > 0);
 
-// The whole point: repetition has to be able to beat urgency, or the page will
-// suggest the same beef dish every night until the beef is gone.
+// Repetition must be able to beat urgency, or the same dish leads every night until
+// the food runs out.
 check(
   "eating it last night outweighs the beef going off",
   fitScore(beefDish, fridge, madeIdx("beef-skillet", day(-1)), NO_PROF, NOW) <
@@ -246,9 +236,7 @@ section("a dish logged in the plural is the same dish");
 
 const { lastMade } = await import("../src/made.ts");
 
-// The real one: the card is "Buffalo Chicken Wrap", the night they cooked it
-// went in as "Buffalo Chicken Wraps", every match missed, and a dinner eaten
-// three days earlier collected the boost meant for something never tried.
+// A dish logged in the plural ("Wraps") is the same dish as its singular card.
 const wrap = dish("buffalo-chicken-wrap", ["ground-beef"]);
 wrap.name = "Buffalo Chicken Wrap";
 const pluralLog: MadeIndex = new Map([["buffalo-chicken-wraps", day(-3)]]);
@@ -259,9 +247,8 @@ check(
   novelty(wrap, pluralLog, NOW) < 0,
 );
 
-// The narrowness is the point. Folding more than a trailing "s" on the last
-// segment starts letting dishes that merely share a first word claim each
-// other's nights, which is the collision `made.ts` already guarded against.
+// Only a trailing "s" on the last segment is folded; anything looser lets dishes that
+// share a first word claim each other's nights.
 const soup = dish("beef-quesadilla-soup", ["ground-beef"]);
 soup.name = "Beef Quesadilla Soup";
 check(

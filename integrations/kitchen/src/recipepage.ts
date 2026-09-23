@@ -1,36 +1,13 @@
 /**
- * One dish, one step at a time.
+ * A written recipe as a stack of step cards, one visible at a time.
  *
- * The first version of this page was a single long scroll, which is how recipes
- * are written down and not how they are cooked from. Cooking, you are on step
- * six, your hands are busy, and the thing you need is the amount for step six
- * and nothing else. A scroll makes you find your place again after every glance,
- * and finding your place is the moment people lose the thread and improvise.
- *
- * So the page is a stack of cards and you are always on exactly one. Next
- * advances, back reverses, the position lives in the URL so a locked phone comes
- * back where it was, and the step you are on carries everything that step needs:
- * its own ingredients with the amount for THIS step, the instruction in full, a
- * photograph of any technique it names, and its own timer. Timers keep running
- * across steps, which is the entire reason they are on the page rather than in
- * the clock app.
- *
- * THINGS DELIBERATELY NOT HERE:
- *
- *   No two-cook mode. It made every step ask "is this mine" before it asked
- *   "what do I do", which is a question about the interface rather than the
- *   food. One recipe, one order, follow it.
- *
- *   No typing as the primary input. The button is a microphone, because the
- *   questions that come up mid-recipe arrive when your hands are wet: ask out
- *   loud, hear the answer, never leave the step. Typing is still there for a
- *   browser that will not listen. See voice.ts.
- *
- *   No scrolling up for the ingredient list. It is still there, collapsed on the
- *   intro card, for shopping and mise en place. It is not the cooking view.
- *
- * House rules as everywhere else: no emoji, no em-dashes, and anything inferred
- * rather than measured says so on the line where it appears.
+ * Each step carries what it needs at the stove: its own ingredients with the
+ * amount for that step, the instruction split into single actions, reference
+ * photos for any technique it names, and a timer that keeps running across
+ * steps. The position lives in the URL so a locked phone returns to the same
+ * step. The full ingredient list is collapsed on the intro card for shopping.
+ * Questions are asked by voice from the step (see voice.ts), with typing as a
+ * fallback. There is deliberately no two-cook mode.
  */
 
 import type { BuiltRecipe } from "./cookbook.ts";
@@ -56,13 +33,7 @@ export type RecipePageCtx = {
   stepPhotos?: Set<number>;
   /** True when the hero is a real plate rather than a generated shot. */
   ownPhoto?: boolean;
-  /**
-   * Other written takes on the same dish, each with its own page.
-   *
-   * A variant is not a footnote: it is usually the version you can actually
-   * cook, built around what was in the house the day the original came up
-   * short. Burying it inside the original is how it never gets found again.
-   */
+  /** Other written versions of the same dish, each linked from the intro card. */
   variants?: Array<{ id: string; name: string; reason?: string | null }>;
 };
 
@@ -76,15 +47,13 @@ const fmtDate = (iso: string) => {
   });
 };
 
-/**
- * The same, from a full timestamp.
- *
- * Every stored instant is UTC, so slicing its first ten characters is a
- * different day for the whole Eastern evening. A recipe written at nine on
- * Sunday night said it was written Monday.
- */
+/** A stored UTC instant as a local calendar date (not the UTC date prefix). */
 const fmtInstant = (iso: string) => fmtDate(dayKey(new Date(iso)));
 
+/**
+ * Words that describe an ingredient rather than name it. Ignored when matching
+ * a step's words to the ingredient list, or "chopped" would match everything.
+ */
 const MODIFIER = new Set([
   "sliced",
   "diced",
@@ -117,11 +86,8 @@ const MODIFIER = new Set([
 ]);
 
 /**
- * Whether the kitchen has what a written ingredient line asks for.
- *
- * Only lines carrying a ledger slug can be answered. A line without one is not
- * reported as missing: "salt" is not tracked and never will be, and flagging it
- * red would train people to ignore the colour on the lines that matter.
+ * Stock badge for a written ingredient line. Lines without a ledger slug are
+ * untracked (salt, water) and get no badge rather than a false "out".
  */
 function stockState(ing: { item?: string | null }, items: Record<string, Item>) {
   if (!ing.item) return null;
@@ -132,20 +98,10 @@ function stockState(ing: { item?: string | null }, items: Record<string, Item>) 
 }
 
 /**
- * The slug a written line MEANT, given what the ledger actually knows.
- *
- * Both an ingredient line's `item` and the first half of a `needs` pair are
- * authored rather than derived, so either can arrive as a display name
- * ("Boneless skinless chicken thighs") instead of a slug
- * ("boneless-skinless-chicken-thighs"). That failed in the worst possible
- * direction: an unresolvable key is indistinguishable from an item the house
- * has run out of, so on 2026-08-17 a recipe written with display names rendered
- * every single line "out" and told two people to go shopping for a fridge full
- * of food they already had.
- *
- * Re-slugging recovers the link, because a slug is exactly what the display
- * name gets minted into. The order matters: trust an exact hit first, since a
- * real slug must never be second-guessed, and only then try re-slugging.
+ * The ledger slug a written line means. `item` and `needs` are authored, so
+ * they sometimes hold a display name instead of a slug; an unresolved key would
+ * otherwise render as "out". An exact slug is trusted first, then the raw value
+ * and the display name are re-slugged.
  */
 function resolveSlug(
   raw: string | null | undefined,
@@ -161,11 +117,8 @@ function resolveSlug(
 }
 
 export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
-  // Repair `needs` BEFORE anything reads it. It feeds the cost, the shortfall
-  // and the vocabulary every ingredient line is checked against, so a display
-  // name left in here is wrong three times over. A slug that resolves nowhere
-  // is kept as written rather than dropped, because an item the house has
-  // genuinely never had is a real shortfall and must still be reported.
+  // Repair `needs` first: it feeds the cost, the shortfall and line matching.
+  // An unresolvable slug is kept, since it is a genuine shortfall.
   const needs = r.needs.map(
     ([id, q]) => [resolveSlug(id, null, ctx.items, new Set()) ?? id, q] as [string, number],
   );
@@ -176,20 +129,8 @@ export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
     ctx.prices,
   );
 
-  // Back-fill the slug on any line that is missing one OR carrying one the
-  // ledger does not recognise.
-  //
-  // The written ingredient list is prose and its `item` is best-effort, so a
-  // line can name something the ledger tracks and still carry a null slug. That
-  // is not cosmetic: an unslugged line cannot be checked against the shelves, so
-  // a dish the house is out of rendered with every line marked "have" and a
-  // summary saying everything was here. Slugging the display name recovers the
-  // link for free, because that is exactly how the slug was minted.
-  //
-  // A line still unresolvable after that is set back to null rather than left
-  // pointing at a dead key. Null means untracked and draws no badge, which is
-  // the rule stockState already documents; leaving the dead key in place is
-  // what made "salt" and every other staple render as "out".
+  // Resolve each ingredient line's slug so it can be checked against stock.
+  // A line that still resolves nowhere becomes null (untracked, no badge).
   const known = new Set(needs.map(([s]) => s));
   const lines = r.ingredients.map((i) => {
     const hit = resolveSlug(i.item, i.name, ctx.items, known);
@@ -197,10 +138,7 @@ export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
   });
   const byName = new Map(lines.map((l) => [l.name, l]));
 
-  // The shortfall comes from `needs`, which is the authoritative list of ledger
-  // slugs this dish consumes, NOT from whichever prose lines happen to resolve.
-  // Deriving it from the prose meant the page's honesty depended on how well a
-  // recipe had been transcribed, which is the wrong thing to depend on.
+  // The shortfall comes from `needs`, the authoritative slug list, not the prose.
   const missing = needs
     .map(([id]) => id)
     .filter((id) => {
@@ -239,26 +177,9 @@ export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
     .join("");
 
   /**
-   * What this step puts in the pan.
-   *
-   * The amount shown is the step's own portion where it has one, falling back to
-   * the shopping amount. Those are genuinely different numbers: the intro card
-   * answers "what do I buy", a step answers "what goes in now", and a recipe
-   * with only the first makes you do the division in your head at the stove.
-   */
-  /**
-   * The ingredients a step mentions but never listed.
-   *
-   * The writer is asked to attach `uses` to every step that puts something in
-   * the pan and it misses some, which leaves a step that says "add the
-   * mushrooms" with no amount and no stock beside it. That is the exact failure
-   * this feature exists to prevent, so the step's own words are matched against
-   * the ingredient list as a floor. Amount is left blank so the row falls back
-   * to the shopping amount rather than inventing a portion.
-   *
-   * Whole words only. Matching on a substring made "oil" fire on "boil" and
-   * "salt" on "unsalted", which puts confident wrong rows on a page people are
-   * cooking from.
+   * Ingredients a step mentions in its text, for steps written without `uses`.
+   * Whole-word matches only ("oil" must not match "boil"); the amount is left
+   * blank so the row falls back to the shopping amount.
    */
   const inferUses = (st: BuiltRecipe["steps"][number]) => {
     const text = `${st.title}. ${st.body}`.toLowerCase();
@@ -268,17 +189,15 @@ export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
       .filter((l) => {
         const n = l.name.toLowerCase();
         if (hit(n)) return true;
-        // Recipes name an ingredient in full at the top and by its head noun in
-        // the steps: "Sliced mushrooms" becomes "the mushrooms". Matching only
-        // the full phrase missed exactly the steps most in need of a quantity.
-        // Modifiers are dropped rather than matched on, because "sliced" and
-        // "fresh" appear in half the steps in any recipe.
+        // Steps usually name the head noun ("the mushrooms" for "Sliced
+        // mushrooms"), so the last non-modifier word also counts.
         const words = n.split(/\s+/).filter((w) => w.length >= 5 && !MODIFIER.has(w));
         return words.length > 0 && hit(words[words.length - 1]!);
       })
       .map((l) => ({ ingredient: l.name, amount: null }));
   };
 
+  /** What this step puts in the pan, with the step's own amount where it has one. */
   const usesBlock = (st: BuiltRecipe["steps"][number]) => {
     const uses = st.uses?.length ? st.uses : inferUses(st);
     if (!uses.length) return "";
@@ -286,10 +205,8 @@ export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
       .map((u) => {
         const ing = byName.get(u.ingredient);
         const stock = ing ? stockState(ing, ctx.items) : null;
-        // The step's own portion when it has one. Falling back to the whole-dish
-        // amount is better than a blank, but that text describes the recipe and
-        // not this step, so it is usually a sentence rather than a quantity and
-        // has to be laid out as one.
+        // The whole-dish amount is the fallback; it is often a phrase, so long
+        // text gets its own layout.
         const amount = u.amount || ing?.amount || "";
         const long = amount.length > 22;
         return `<div class="u${long ? " long" : ""}">
@@ -301,18 +218,12 @@ export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
       .join("")}</div>`;
   };
 
-  /**
-   * The reference panel: a real photograph, a real chef, a written source.
-   *
-   * On the step rather than collected at the bottom, because the moment you need
-   * to know how small a small dice is, is the moment you are holding the knife.
-   */
+  /** Technique references (photo, video, written source), shown on the step itself. */
   const techBlock = (st: BuiltRecipe["steps"][number]) => {
     const named = (st.techniques ?? [])
       .map((id) => BY_ID.get(id))
       .filter((t): t is NonNullable<typeof t> => !!t);
-    // Fall back to reading the step's own words, so recipes written before any
-    // of this existed still get their references.
+    // Steps with no named techniques are matched by their own words.
     const list = (named.length ? named : techniquesFor(st)).slice(0, 2);
     return list
       .map(
@@ -345,18 +256,13 @@ export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
   };
 
   /**
-   * The instruction, as a list of single actions.
-   *
-   * Recipes written before `parts` existed carry one paragraph, so it is split
-   * on sentence boundaries as a fallback. That is a real improvement rather than
-   * a hack: a recipe sentence is almost always exactly one action, which is why
-   * the paragraph was hard to scan in the first place. Abbreviations that end in
-   * a period are protected, or "1/2 in. cubes" becomes two steps.
+   * The instruction as single actions: `parts` when written, otherwise the body
+   * split on sentence boundaries, protecting abbreviations like "in." and "oz.".
    */
   const partsOf = (st: BuiltRecipe["steps"][number]): string[] => {
     if (st.parts?.length) return st.parts;
     const guarded = st.body.replace(
-      /\b(approx|approx|in|oz|lb|tbsp|tsp|qt|pt|deg|min|sec|Dr|Mr|Mrs|St|no)\./gi,
+      /\b(approx|in|oz|lb|tbsp|tsp|qt|pt|deg|min|sec|Dr|Mr|Mrs|St|no)\./gi,
       "$1\u0000",
     );
     return guarded

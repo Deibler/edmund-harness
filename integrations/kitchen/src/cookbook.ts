@@ -1,22 +1,11 @@
 /**
- * Recipes that have actually been written out, and the variants that hang off
- * them.
+ * Recipes that have been written out in full, and their variants.
  *
- * The catalog in `recipes.ts` is a standing description of a dish — a name, a
- * time, and the ledger slugs it consumes. That is enough to answer "can I cook
- * this tonight", which is all the catalog was ever for. It is nowhere near
- * enough to cook from: no amounts, no order, no technique.
- *
- * Writing that long form costs a model call, so it is written ONCE and kept.
- * The second time somebody makes chicken and rice they get the same page
- * instantly, which is the whole point of this file. A recipe is not an event,
- * so it does not go in the ledger; it is a document, and it lives as one.
- *
- * Variants are the other half. When a meal cannot be made because the house is
- * out of something, the useful move is not "sorry" — it is "here is that meal
- * built around what you do have". A variant records its parent, and the two
- * group in the UI as one dish with several versions rather than two unrelated
- * dinners cluttering the catalog.
+ * The catalog (`recipes.ts`) knows enough to answer "can we cook this"; a
+ * written recipe has amounts, order and technique. Writing one costs a model
+ * call, so it is written once and kept as a document per dish. A variant (the
+ * dish rebuilt around what the house has) records its parent, and the site
+ * groups them as one dish with several versions.
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -28,11 +17,9 @@ import { safeId } from "./util.ts";
 export type Ingredient = {
   /** Display line, e.g. "Yellow onion". */
   name: string;
-  /** Display amount, e.g. "1 medium, diced". Free text on purpose — a recipe
-   *  amount is prose ("a splash", "2 cloves"), not a number with a unit. */
+  /** Display amount, e.g. "1 medium, diced". Free text: recipe amounts are prose. */
   amount: string;
-  /** Ledger slug when this maps to tracked stock, so a recipe page can show
-   *  live availability per line instead of just listing words. */
+  /** Ledger slug when this maps to tracked stock, for live availability per line. */
   item?: string | null;
   note?: string | null;
 };
@@ -44,46 +31,18 @@ export type Step = {
   /** Minutes this step takes, when it is a timed one. Drives the page timer. */
   minutes?: number | null;
   /**
-   * Two-cook assignment, retired 2026-08-16.
-   *
-   * Steps used to carry a cook number and handoff notes, and the page could
-   * filter to one person's half. It was removed because it made every step ask
-   * "is this mine" before it asked "what do I do", which is a question about the
-   * interface rather than about the food. Recipes written while it existed still
-   * carry the fields; nothing reads them.
-   */
-  /**
-   * What this step actually puts in the pan, with the amount for THIS step.
-   *
-   * `ingredient` matches an entry in the recipe's `ingredients` by name, so the
-   * page resolves live stock and the shopping amount from one place and the two
-   * can never disagree. `amount` is the portion used here ("half the onion"),
-   * which is the number you need while cooking; the top-of-page figure is the
-   * one you need while shopping, and conflating them is why a recipe makes you
-   * scroll up mid-step.
+   * What this step puts in the pan and how much of it, by `ingredients` name.
+   * The per-step amount is what the cook needs mid-step; the ingredient list
+   * holds the shopping amount.
    */
   uses?: Array<{ ingredient: string; amount?: string | null }>;
-  /**
-   * The step broken into single actions, in order.
-   *
-   * A step used to be one paragraph carrying every detail, which is correct and
-   * unreadable: standing at a stove you need to find your place in it after
-   * every glance at the pan. Same detail, one action per line, so a glance
-   * lands somewhere. `body` becomes the one-line why, not the instruction.
-   */
+  /** The step as single actions, in order. `body` is then the one-line why. */
   parts?: string[];
-  /**
-   * How to tell the step is finished, in what you can see, hear or smell.
-   *
-   * Pulled out of the prose deliberately. It is the single most looked-at
-   * sentence in any step and it was buried in the middle of a paragraph.
-   */
+  /** How to tell the step is finished, in what you can see, hear or smell. */
   watch?: string | null;
   /**
-   * Technique ids from `techniques.ts` this step is demonstrating.
-   *
-   * Optional because the page infers them from the step's own words; this is
-   * for the cases where the writer knows better than a regex.
+   * Technique ids from `techniques.ts` the step demonstrates. When absent, the
+   * page infers them from the step's words.
    */
   techniques?: string[];
 };
@@ -112,13 +71,9 @@ function dir(account: string): string {
 }
 
 /**
- * Where a recipe lives, and the one place an id becomes a path.
- *
- * Validated here rather than at each caller because there are seven of them and
- * the ids reach this from three directions: a model writing a recipe, a page id
- * in a URL, and a `recipe` field on a callback that anyone with the site link
- * can post. Any of those carrying "../.." would read or write outside the
- * cookbook, so the check sits at the chokepoint where it cannot be skipped.
+ * The one place a recipe id becomes a path. Ids arrive from the model, from
+ * URLs and from public site callbacks, so a traversal is refused here rather
+ * than at each caller.
  */
 export function recipePath(account: string, id: string): string {
   if (!safeId(id)) {
@@ -127,14 +82,7 @@ export function recipePath(account: string, id: string): string {
   return join(dir(account), `${id}.json`);
 }
 
-// The two READ paths answer "no" for a malformed id rather than throwing: a
-// lookup is a question, and the honest answer to "is ../../etc/passwd a recipe
-// in this cookbook" is no. Writing with one is a different matter and keeps the
-// throw, because nothing legitimate ever asks for it.
-export function hasRecipe(account: string, id: string): boolean {
-  return safeId(id) && existsSync(recipePath(account, id));
-}
-
+/** A written recipe, or null. A malformed id is "not a recipe" here; writing with one throws. */
 export function getRecipe(account: string, id: string): BuiltRecipe | null {
   if (!safeId(id)) return null;
   const p = recipePath(account, id);
@@ -174,10 +122,8 @@ export function saveRecipe(
 }
 
 /**
- * A free id for a variant of `baseId`, e.g. `chicken-rice--no-cream`.
- *
- * The double dash is load-bearing: it makes the parent recoverable from the id
- * alone, so a variant whose file predates the `base` field still groups right.
+ * The id for a variant of `baseId`, e.g. `chicken-rice--no-cream`. The double
+ * dash keeps the parent recoverable from the id alone (see `baseIdOf`).
  */
 export function variantId(baseId: string, label: string): string {
   return `${baseId}--${slug(label)}`;

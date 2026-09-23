@@ -1,16 +1,9 @@
 /**
- * `[kitchen]` settings, applied to the modules that need them.
+ * Applies `[kitchen]` settings to the modules that read them.
  *
- * Two entry points reach this integration: the MCP tools, which are handed a
- * loaded `Config`, and the launchd scripts, which are handed nothing. Both must
- * agree about where the ledgers live and how stale a price may be, or a tap
- * settled by the minute pass and the same tap answered by a tool would read two
- * different kitchens.
- *
- * `dir` and `price_max_age_days` were declared in the schema and read by
- * nobody for long enough that setting either did exactly nothing — a config
- * surface that lies is worse than one that is missing, because it invites
- * somebody to set it and then debug why it had no effect.
+ * The MCP tools receive a loaded `Config`; the launchd scripts load one
+ * themselves. Both paths go through `applyKitchenConfig`, so a tap settled by
+ * the watch pass and the same tap answered by a tool read the same kitchen.
  */
 
 import { join, resolve } from "node:path";
@@ -26,13 +19,10 @@ const ROOT = join(import.meta.dir, "..", "..", "..");
 let maxPriceAge = 21;
 
 /**
- * The harness data dir, where `cron.db` lives.
- *
- * The kitchen wakes a session by inserting a one-shot cron row, which is the
- * one place it has to agree with the daemon about a path. Resolved against the
- * checkout rather than the working directory, because the launchd jobs and a
- * test runner do not share one, and `./data` from the wrong directory would
- * quietly create a second, empty cron store that nothing ever polls.
+ * The harness data dir, where the daemon's `cron.db` lives. Wakes are cron rows,
+ * so this must match the daemon exactly. It is resolved against the checkout,
+ * not the working directory: a relative `./data` from the wrong directory would
+ * create a second, empty cron store that nothing polls.
  */
 let dataRoot = process.env.EDMUND_DATA_DIR ?? join(ROOT, "data");
 
@@ -40,16 +30,11 @@ export function dataDir(): string {
   return dataRoot;
 }
 
-/** Point the wake path at another data dir. Tests use a throwaway one. */
-export function useDataDir(dir: string): void {
-  dataRoot = dir;
-}
-
 export function priceMaxAgeDays(): number {
   return maxPriceAge;
 }
 
-/** Apply an already-loaded config. Used by the MCP tools, which are given one. */
+/** Apply an already-loaded config (the MCP tools' path). */
 export function applyKitchenConfig(config: Config): void {
   if (!process.env.EDMUND_DATA_DIR) dataRoot = resolve(ROOT, config.paths.data_dir);
   const cfg = kitchenConfig(config);
@@ -61,16 +46,14 @@ export function applyKitchenConfig(config: Config): void {
 }
 
 /**
- * Load and apply the harness config. Used by the launchd scripts.
- *
- * Best-effort on purpose: these scripts must keep running from a checkout with
- * no config at all, and every setting here has a working default. A missing
- * config is not a reason to stop confirming somebody's dinner.
+ * Load and apply the harness config (the launchd scripts' path). Best-effort:
+ * every setting has a working default, and the scripts must keep running from
+ * a checkout with no config.
  */
 export function loadKitchenSettings(path = "./config.toml"): void {
   try {
     applyKitchenConfig(loadConfig(path));
   } catch {
-    // Defaults stand. Nothing here is required for correctness.
+    // Defaults stand.
   }
 }

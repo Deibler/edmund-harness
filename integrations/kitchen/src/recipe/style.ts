@@ -1,13 +1,7 @@
 /**
- * The recipe page's stylesheet.
- *
- * Moved out of `recipepage.ts` on 2026-08-17 by copying text, unedited. It is
- * 290 lines and it was sitting between the page's type definitions and the
- * function that renders it, which is why neither could be found.
- *
- * Most rules here exist to keep one step readable at arm's length on a phone
- * with wet hands, and the comment beside a rule is the only record of which
- * failure it is preventing.
+ * The recipe page's stylesheet, emitted verbatim. Most rules keep one step
+ * readable at arm's length on a phone; comments in the CSS say which problem
+ * each workaround prevents.
  */
 
 export const CSS = `
@@ -324,10 +318,3 @@ nav.step .mic svg{width:22px;height:22px}
 footer{margin:36px 0 10px;padding-top:18px;border-top:1px solid hsl(var(--line));
   color:hsl(var(--ink-faint));font:400 12.5px/1.6 ui-sans-serif,system-ui,sans-serif}
 `;
-
-/**
- * Words that describe an ingredient rather than name it.
- *
- * Used when matching a step's prose back to the ingredient list: matching on
- * these would attach half the pantry to every step that says "chopped".
- */

@@ -1,14 +1,6 @@
 /**
- * The site's stylesheet and web-font links.
- *
- * Split out of `site.ts` on 2026-08-17 purely by moving text: this file is the
- * same declarations that used to sit at the top of the renderer, unedited. It
- * is 500 lines of CSS and it was the single largest reason nothing else in that
- * file could be found.
- *
- * The rules themselves are documented where they sit, because most of them
- * exist to work around something specific about a phone browser and the comment
- * is the only record of what.
+ * The site's stylesheet and web-font links. The CSS is emitted verbatim into
+ * the page; its comments document phone-browser workarounds where they apply.
  */
 
 export const FONTS =

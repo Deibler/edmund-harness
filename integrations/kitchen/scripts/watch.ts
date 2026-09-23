@@ -1,23 +1,14 @@
 /**
- * The loop that makes buttons feel like buttons.
+ * The ten-second pass (`com.edmund-harness.kitchen-watch`).
  *
- * Runs every ten seconds under launchd (`com.edmund-harness.kitchen-watch`),
- * drains whatever the site's callback log has collected for every household,
- * and re-renders any page whose state actually changed. A tap resolves in
- * seconds with nobody in the loop.
+ * For every household: fires due dinner texts, settles the site's taps that
+ * need no judgement (`drain.ts`), re-renders only when something changed,
+ * wakes the right member session for taps that need a person, and sends the
+ * follow-up owed after a meal. Then it keeps at most one shared Apple Note in
+ * step with its list.
  *
- * Why a poller rather than a trigger that wakes a session: the deterministic
- * answers here — a meal confirmed, a cleanup undone, a line ticked off — do not
- * improve for having a model think about them, and routing them through one
- * makes the cheapest interaction on the site the slowest. What needs writing
- * or judgement is deliberately left in the queue by `drain`, and this loop
- * then wakes ME for it, in the chat of whoever tapped, with the tool that
- * writes the answer back. Not a sub-agent: the wake is a scheduled event in
- * my own session, so the answer comes from somebody who knows the household.
- *
- * Re-rendering only on change matters: the render is a few hundred kilobytes,
- * this runs 8,640 times a day, and a page that rewrites itself every pass
- * would churn the disk to say nothing.
+ * Deterministic answers (a meal confirmed, a line ticked) are settled here
+ * because routing them through a model would only make them slower.
  */
 
 import { existsSync } from "node:fs";
@@ -33,14 +24,7 @@ import { wakeForFollowup, wakeForRequests } from "../src/wake.ts";
 
 const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 
-/**
- * Standing dinner texts, fired from the same minute-by-minute pass.
- *
- * Here rather than in its own launchd job because the two need the same thing —
- * a loop that has already read every household this minute — and a second timer
- * is a second thing that can silently stop. Each schedule is isolated: one that
- * throws must not cost the others theirs.
- */
+/** Fire this household's due dinner texts. Each schedule fails independently. */
 function fireDue(id: string): void {
   const acct = getAccount(id);
   if (!acct) return;
@@ -55,16 +39,13 @@ function fireDue(id: string): void {
         console.error(`${stamp()} ${id}: schedule ${d.id} could not text ${f.principal}: ${f.why}`);
       }
     } catch (e) {
-      // Left unfired on purpose. The grace window means the next pass tries
-      // again, which is the right behaviour for a transient send failure.
+      // Left unfired: the next pass inside the grace window retries it.
       console.error(`${stamp()} ${id}: schedule ${d.id} FAILED ${(e as Error).message}`);
     }
   }
 }
 
-// Same `[kitchen]` settings the MCP tools get. Without this a configured `dir`
-// would apply to tools and not to the pass that answers taps, and the two would
-// read different kitchens.
+// The same `[kitchen]` settings the MCP tools use, so both read the same kitchen.
 loadKitchenSettings();
 
 for (const { id } of listAccounts()) {
@@ -76,14 +57,12 @@ for (const { id } of listAccounts()) {
     for (const line of res.done) console.log(`${stamp()} ${id}: ${line}`);
     for (const line of res.failed) console.error(`${stamp()} ${id}: FAILED ${line}`);
 
-    // Only worth re-rendering if something was actually decided.
+    // Re-render only when something was decided.
     if (res.done.length) {
       const acct = getAccount(id);
       const dir = acct?.site?.artifact;
       if (acct && dir && existsSync(dir)) {
-        // Caught here rather than by the outer handler so that a render that
-        // cannot run still publishes a queue saying so. Silently serving a
-        // page that stopped updating is the worse failure.
+        // Caught here so a failed render is still published as trouble.
         try {
           const { pages } = writeSite(id, acct, dir);
           console.log(`${stamp()} ${id}: re-rendered (${pages} recipe pages)`);
@@ -94,11 +73,8 @@ for (const { id } of listAccounts()) {
       }
     }
 
-    // Anything left that a person has to answer wakes me. Filtered through the
-    // same predicate `stillWaiting` uses, so a malformed tap the drain declined
-    // does not wake anybody, and rate-limited inside `wake` so an unanswered
-    // one costs the household three turns at most. A wake that cannot be
-    // queued is trouble worth publishing, not a reason to skip the stamp.
+    // Taps that need a person wake the member who made them. Filtered by the
+    // same predicate as `stillWaiting`, and rate-limited inside `wake`.
     const acct = getAccount(id);
     if (acct) {
       try {
@@ -122,9 +98,7 @@ for (const { id } of listAccounts()) {
     }
 
     // A meal sent yesterday gets one short follow-up in the chat it was planned
-    // in: did you make it, and anything worth adding to the list. Suspicions
-    // about stock and recent run-outs ride along, so the household hears from
-    // the kitchen once instead of every time it has a question.
+    // in, carrying any stock suspicions and recent run-outs worth offering.
     if (acct) {
       try {
         const due = followupDue(id);
@@ -157,24 +131,19 @@ for (const { id } of listAccounts()) {
       }
     }
 
-    // Last, and only on a pass that got this far: the stamp is what says the
-    // loop is alive, so it must not be written by a pass that failed early.
+    // Written last: the queue's timestamp is the liveness signal, so a pass
+    // that failed early must not write it.
     publishQueue(id, trouble);
   } catch (e) {
-    // One household's bad minute must not stop the others'.
+    // One household's failure must not stop the others.
     console.error(`${stamp()} ${id}: FAILED ${(e as Error).message}`);
   }
 }
 
-/**
- * Keep the shared Apple Note equal to the list, for whoever needs it.
- *
- * After the per-household loop rather than inside it, and at most one household
- * per pass, because this is the only thing here that drives a browser: it costs
- * the better part of a minute where everything above costs milliseconds.
- * `syncDueNotes` decides with a pure fold whether there is anything to do, so
- * the overwhelmingly common case — the list has not changed since the last
- * pass — opens nothing and costs nothing.
+/*
+ * Keep the shared Apple Notes in step with the lists. This drives a browser, so
+ * it runs after the household loop and handles at most one note per pass;
+ * `syncDueNotes` decides with a pure fold whether any note needs opening.
  */
 try {
   for (const r of await syncDueNotes()) {

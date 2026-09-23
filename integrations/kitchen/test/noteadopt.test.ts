@@ -1,25 +1,15 @@
 /**
- * A line somebody typed into the note on their phone, and where it ends up.
- *
- * This is the round trip the browser sits in the middle of, with the browser
- * taken out: read a note, adopt what they wrote below the sentinel, build the
- * note that goes back. The bug it pins is not a crash — those three lines were
- * on a phone in a supermarket and on nothing else. They were carried through
- * every write, and the site, the tools and the trip's cost all behaved as
- * though nobody had asked for them.
- *
- * The second half is the trap that adopting sets: the line is now on the real
- * list AND still written where they typed it, so a naive build renders it
- * twice, once ticked and once not.
+ * Lines typed into the shared note below the sentinel are adopted onto the real
+ * list, and the rebuilt note shows each such line once, with its tick kept.
+ * Adoption is idempotent, since a failed write means the next pass reads the
+ * same lines again.
  */
 
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// Type-only, so it is erased and cannot import the module before KITCHEN_DIR is
-// set — which is the difference between a fixture and writing into a real
-// household's ledger.
+// Type-only import: erased at runtime, so nothing loads before KITCHEN_DIR is set.
 import type { Block } from "../src/notedoc.ts";
 
 const BASE = mkdtempSync(join(tmpdir(), "kitchen-noteadopt-"));
@@ -58,12 +48,8 @@ const pass = (note: Block[]) => {
 };
 
 /**
- * The note as a phone leaves it.
- *
- * The mushrooms are a checklist line somebody ticked in a shop. The paper
- * towels are PLAIN TEXT, which is what typing under the sentinel actually
- * produces, and is the case a checklist-only rule would have missed entirely.
- * The last line is a sentence, and sentences stay where they were written.
+ * The note as a phone leaves it: a ticked checklist line, a plain-text line
+ * (what typing below the sentinel produces), and a sentence, which stays put.
  */
 const NOTE: Block[] = [
   { kind: "title", text: "Kitchen" },
@@ -103,8 +89,7 @@ describe("a line added below the sentinel", () => {
   });
 
   test("still ticked, because they ticked it in a shop", () => {
-    // Adoption moves the line. Moving it un-ticked would tell somebody standing
-    // in an aisle that they had not picked it up yet.
+    // The tick moves with the adopted line.
     const line = first.doc.blocks.find((b) => b.text.startsWith("Sliced mushrooms"));
     expect(line?.done).toBe(true);
   });
@@ -116,9 +101,8 @@ describe("a line added below the sentinel", () => {
 });
 
 describe("reading the same note again", () => {
-  // The write can fail, and then the next pass reads a note that still has the
-  // line sitting below the sentinel. Adopting it a second time must change
-  // nothing at all.
+  // After a failed write the line is still below the sentinel; adopting it
+  // again must change nothing.
   const again = pass(NOTE);
 
   test("adopts it again without duplicating the list entry", () => {

@@ -1,13 +1,10 @@
 /**
- * The one path that takes food off the shelves.
+ * Confirming a meal: the one path that takes food off the shelves.
  *
- * Everything here is a way a household loses food it still has, or keeps food
- * it has eaten, and none of it is visible until somebody opens the fridge and
- * finds the ledger lying. The three defects pinned below all shipped, and all
- * three came from the same root: three surfaces asserting one fact about one
+ * The defects pinned here came from several surfaces asserting one fact about one
  * dinner, each with its own copy of the arithmetic.
  *
- * Runs against a scratch KITCHEN_DIR — never the real one.
+ * Runs against a scratch KITCHEN_DIR.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -30,8 +27,8 @@ const { confirmPlan, cookedRecently, planFor, useLines } = await import("../src/
 
 import { check, section } from "./harness.ts";
 
-// `fold`, not `live` — live() drops anything marked gone, which is precisely
-// the state half of these assertions are about.
+// `fold`, not `live`: live() drops gone items, which half of these assertions are
+// about.
 const item = (id: string) => fold("t")[id];
 const qty = (id: string) => item(id)?.qty ?? null;
 const gone = (id: string) => !!item(id)?.gone;
@@ -71,12 +68,8 @@ check("a level-tracked staple starts uncounted", qty("ranch") === null && !gone(
 
 /* ── an unwritten amount is not the whole bottle ──────────────────────────── */
 
-// 2026-08-17. A recipe card listed `["ranch", null]`, meaning "a wrap uses
-// ranch, nobody wrote down how much". The fold read that null the way a PERSON
-// means it — "we finished the ranch" — and emptied a full bottle for a dish
-// that spends a tablespoon. Same for the cheese. The two meanings have to be
-// told apart at the write, because by the time the fold sees them the events
-// are identical.
+// A recipe line with no amount (`["ranch", null]`) means "some", not "all of it". The
+// two meanings are told apart at the write, because the fold sees identical events.
 
 section("a recipe's missing amount");
 
@@ -100,25 +93,20 @@ check(
   (item("ranch")?.uses_since_check ?? 0) === 1,
 );
 
-// The other half. A human saying "we used it up" still has to mean exactly that,
-// or there is no way left to say it.
+// A person saying "we used it up" still means all of it.
 append("t", [
   { op: "use", item: "oil", qty: null, fields: {}, why: "finished it", src: "kitchen_record" },
 ]);
 check("a person can still say a bottle is finished", gone("oil"));
 
-// A counted item is unchanged: one cucumber, used, is no cucumbers. That
-// reading was always right and must not be softened along with the rest.
+// A counted item is unchanged: one cucumber, used, is no cucumbers.
 append("t", useLines("t", [{ item: "cucumber", qty: null }], "Salad"));
 check("using the cucumber still finishes the cucumber", gone("cucumber"));
 
 /* ── the leftovers a confirmed meal leaves behind ─────────────────────────── */
 
-// `kitchen_plan_resolve` had its own copy of this and had already drifted: it
-// wrote the consumption but never the leftovers, so a batch cook confirmed from
-// a chat lost its second night while the same meal confirmed from the site kept
-// it. Nobody would notice until the site offered "fried rice from last night"
-// and then insisted there was no rice.
+// Every confirmation path must also write the leftovers, or a batch cook confirmed
+// from a chat loses its second night.
 
 section("leftovers");
 
@@ -166,10 +154,9 @@ check("and the plan is closed", !Object.keys(openPlans("t")).includes("pl-batch"
 
 /* ── one dinner cannot be paid for twice ──────────────────────────────────── */
 
-// The button gives no receipt on the page, so pressing it again is the normal
-// human response to "did that work?". Two genuine taps carry two different
-// request keys, so the replay stamp cannot see them, and once the first tap has
-// closed the plan there is nothing open left to protect the second.
+// Pressing the button again is a normal "did that work?", and two taps carry
+// different request keys, so a repeat confirmation of the same dinner shortly after
+// must not consume it twice.
 
 section("a dish tapped twice");
 
@@ -182,8 +169,7 @@ check("and the guard lets go after the window", cookedRecently("t", "Big batch",
 
 /* ── retracting a meal really retracts it ─────────────────────────────────── */
 
-// An undone batch must stop counting as evidence the dish was cooked, or a
-// correction leaves the house unable to log the meal it actually ate.
+// An undone batch must stop counting as evidence the dish was cooked.
 
 section("undo");
 
@@ -248,10 +234,8 @@ check(
 check("a display name works too", planFor("t", "nope", "Big Batch")?.id === "pl-match");
 check("and an unrelated dish matches nothing", planFor("t", "lasagne") === null);
 
-// Two open plans for one dish is a real state: a plan gets re-scoped during the
-// afternoon, or an undo restores an older one. Whichever the object yielded
-// first used to win, so which quantities came off the shelves depended on
-// insertion order.
+// Two open plans for one dish can exist (a re-scope, an undo); the choice must not
+// depend on insertion order.
 append("t", [
   {
     op: "plan",

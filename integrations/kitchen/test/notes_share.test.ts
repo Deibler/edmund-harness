@@ -1,10 +1,6 @@
 /**
- * The parts of note sharing that can be tested without a browser.
- *
- * The DOM driving cannot be unit tested — it is a real UI on somebody else's
- * site — so the value here is in pinning the two decisions that would silently
- * do damage if they drifted: who counts as already invited, and which household
- * principals are people you can actually invite.
+ * Note sharing without a browser: who counts as already invited, and which
+ * household principals can be invited at all.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -12,8 +8,8 @@ import { handlesFor, idKey } from "../src/notes_share.ts";
 
 describe("recognising the same person twice", () => {
   test("the formatting iCloud applies does not make somebody look new", () => {
-    // This is the whole reason idKey exists. iCloud renders what you typed as
-    // "+1 (555) 010-0001"; a literal comparison would re-invite on every run.
+    // iCloud shows "+1 (555) 010-0001" for what was typed, so a literal
+    // comparison would re-invite on every run.
     expect(idKey("+15550100001")).toBe(idKey("+1 (555) 010-0001"));
     expect(idKey("5550100001")).toBe(idKey("+1 (555) 010-0001"));
     expect(idKey("(555) 010-0001")).toBe(idKey("+15550100001"));
@@ -29,16 +25,13 @@ describe("recognising the same person twice", () => {
   });
 
   test("a display name never collides with a phone number", () => {
-    // Participants can come back as "Edmund Bot" rather than a handle. That
-    // has no digits, so it must not reduce to the same key as a bare number.
+    // A participant shown by name has no digits and must not match a number.
     expect(idKey("Edmund Bot")).not.toBe(idKey("+15550100001"));
   });
 
   test("and two different display names do not collide with each other", () => {
-    // The bug this pins: names reduced to "" because they contain no digits, so
-    // every person without a number in their label looked like every other one.
-    // iCloud swaps a handle for a contact name the moment somebody accepts an
-    // invite, so this is the steady state, not an edge case.
+    // Names without digits must not all reduce to the same empty key: iCloud
+    // shows contact names once an invite is accepted, so this is the norm.
     expect(idKey("Alex Example")).not.toBe(idKey("Edmund Bot"));
     expect(idKey("Alex Example")).not.toBe("");
     expect(idKey("Alex Example")).toBe(idKey("  alex   example "));

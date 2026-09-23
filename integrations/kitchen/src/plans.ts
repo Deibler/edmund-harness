@@ -1,17 +1,9 @@
 /**
- * Taking food off the shelves.
+ * Consuming a cooked meal: the one write path for "we made it".
  *
- * Every path that consumes a meal goes through this module, and that is the
- * whole point of it existing. "We made it" can be pressed on a recipe page, a
- * plan can be confirmed on the meals page, and I can confirm one from a chat —
- * three surfaces asserting ONE fact about ONE dinner. When each surface owned
- * its own copy of the arithmetic they drifted apart, and on 2026-08-17 that
- * drift ate a real evening: a tap deducted a different ingredient list than the
- * one that got cooked, left the plan open, and stood ready to charge the same
- * dinner a second time the moment anybody answered the check-in.
- *
- * So: one write path, and the interesting decisions live here where they can be
- * read in one place.
+ * A meal can be confirmed from a recipe page, the meals page or a chat. All of
+ * them go through `confirmPlan`, so the same dinner is never deducted with two
+ * different ingredient lists or charged twice.
  */
 
 import { loadRecipes } from "./recipes.ts";
@@ -22,12 +14,9 @@ import type { KitchenEvent } from "./types.ts";
 export type ConsumeLine = { item: string; qty: number | null };
 
 /**
- * What a confirmed meal leaves in the fridge.
- *
- * Plans record the meal by the name somebody typed, not by recipe id, so the
- * join back to the catalog is the same fuzzy one the history uses: the id, the
- * slugged display name, or a logged name that EXTENDS the recipe name on a slug
- * boundary ("beef and onion gravy over egg noodles, side salad").
+ * The leftovers a confirmed meal leaves in the fridge. Plans name the meal as
+ * typed, so the recipe is matched by id, slugged name, or a logged name that
+ * extends the recipe name on a slug boundary ("... over egg noodles, side salad").
  */
 export function yieldsOf(account: string, meal: string): Array<[string, number | null]> {
   const { recipes } = loadRecipes(account);
@@ -39,23 +28,12 @@ export function yieldsOf(account: string, meal: string): Array<[string, number |
 }
 
 /**
- * Turn what a dish needs into what actually comes off the shelves.
+ * The `use` events for a dish's ingredients.
  *
- * The subtle one. A `null` quantity means two completely different things
- * depending on what it is attached to, and collapsing them is what emptied a
- * bottle of chipotle ranch for a recipe that spends a tablespoon of it.
- *
- *   - On a COUNTED item, null means "use up what is there". One cucumber, one
- *     package of thighs. That reading is right and is left alone.
- *   - On a LEVEL-TRACKED staple — oil, ranch, salt, anything nobody has ever
- *     counted — null cannot mean that, because nothing ever knew how much was
- *     in the bottle. The only honest reading is "this dish used some", so the
- *     event is marked `some` and the fold accrues it instead of declaring the
- *     bottle empty.
- *
- * The distinction has to be drawn HERE rather than in the fold, because the
- * fold sees an identical event when a person says "we finished the ketchup",
- * and that one really does mean gone.
+ * A null quantity means "all of it" on a counted item (one cucumber) but "some"
+ * on a level-tracked staple (a spoon of ranch), so the latter is marked `some`.
+ * The distinction is made here because the fold cannot tell a recipe's null
+ * from a person saying "we finished the ketchup".
  */
 export function useLines(
   account: string,
@@ -82,13 +60,8 @@ export function useLines(
 }
 
 /**
- * Consume a plan, leave its leftovers, and close it.
- *
- * Shared rather than inlined because the same dinner can be confirmed from
- * three different places. When only the meals page ran this, confirming from a
- * recipe page deducted a second, differently-derived list and left the plan
- * OPEN, and confirming from a chat quietly dropped the leftovers entirely —
- * the second night of a batch cook simply never made it into the fridge.
+ * Consume a plan, add its leftovers and close it, all in one batch so a single
+ * undo retracts the whole dinner.
  */
 export function confirmPlan(
   account: string,
@@ -96,15 +69,9 @@ export function confirmPlan(
   p: { meal: string; lines: ConsumeLine[] },
   extra: { req?: string } = {},
 ): { batch: string; items: number; yields: number; summary: string } {
-  // Cooking the first half of a pair actually puts the leftovers in the fridge,
-  // so the ledger says so. Without this the second night was permanently
-  // hypothetical: the site would keep offering "fried rice from last night"
-  // while insisting there was no rice, because nothing ever wrote the rice
-  // down. The decay engine retires these on its own after four days, which is
-  // what stops them accumulating.
+  // Leftovers are written so the second night of a pair is cookable; the
+  // leftover sweep retires them after a few days.
   const yields = yieldsOf(account, p.meal);
-  // One batch, so the whole dinner — what it ate, what it left, and the fact
-  // that it happened — retracts as a single honest unit.
   const batch = append(account, [
     ...useLines(account, p.lines, p.meal, extra),
     ...yields.map(([s]) => ({
@@ -139,13 +106,8 @@ export function confirmPlan(
 }
 
 /**
- * The plan that is already open for this dish, if there is one.
- *
- * Plans record the meal by name and a page knows it by recipe id, so the join
- * is the same slug comparison `yieldsOf` uses. Matching matters more than it
- * looks: the plan carries the quantities somebody actually agreed to for
- * TONIGHT — half a package of thighs rather than the whole one — while any
- * ingredient list reconstructed from a recipe carries the general case.
+ * The open plan for this dish, if any, matched by slug. Preferred over the
+ * recipe's own list because it carries tonight's actual quantities.
  */
 export function planFor(
   account: string,
@@ -155,10 +117,7 @@ export function planFor(
   const want = new Set([recipe, slug(recipe), ...(name ? [slug(name)] : [])]);
   const hits = Object.entries(openPlans(account)).filter(([, p]) => want.has(slug(p.meal)));
   if (!hits.length) return null;
-  // Two open plans can name the same dish — a plan re-scoped mid-afternoon, or
-  // one restored by an undo. Taking whichever the object happened to yield first
-  // meant the quantities that got consumed depended on insertion order. The
-  // NEWEST is the one somebody most recently agreed to, so it wins.
+  // Several open plans can name one dish; the newest is what was last agreed.
   hits.sort((a, b) => String(b[1].created ?? "").localeCompare(String(a[1].created ?? "")));
   const [id, plan] = hits[0]!;
   return { id, plan };
@@ -168,17 +127,9 @@ export function planFor(
 const REPEAT_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 /**
- * Was this dish already taken off the shelves in the last few hours?
- *
- * The request-key stamp catches a REPLAY of one tap. It cannot catch a person
- * tapping "we made it" twice — two genuine taps, two different keys, one
- * dinner — and that is the likelier story, because the button gives no visible
- * receipt on the page and a second press is the normal human response to that.
- * Once the first tap has closed the plan, the second finds nothing open and
- * would happily deduct a whole second dinner from a reconstructed list.
- *
- * Six hours is chosen so that lunch and dinner of the same dish on the same day
- * still both count, while a double tap never does.
+ * Whether this dish was already consumed within `REPEAT_WINDOW_MS`. Catches a
+ * person pressing "we made it" twice (two keys, one dinner), which the request
+ * stamp cannot.
  */
 export function cookedRecently(
   account: string,

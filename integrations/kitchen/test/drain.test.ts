@@ -1,13 +1,11 @@
 /**
- * The buttons that settle themselves have to settle CORRECTLY, exactly once.
+ * Site taps the watch pass settles by itself must settle correctly and exactly once.
  *
- * Every case here is a way the old "wake a model and hope" path could not fail
- * but this one can: a double tap consuming a dinner's ingredients twice, a
- * cancelled meal emptying the shelves anyway, a retry re-retracting a cleanup
- * that was already put back. Those are all silent and all destructive, so the
- * queue-marking and the fold both get round-tripped rather than eyeballed.
+ * Each case is a silent, destructive failure: a double tap consuming a dinner twice,
+ * a cancelled meal emptying the shelves, a retry re-retracting a cleanup already put
+ * back. Queue marking and the fold are both round-tripped.
  *
- * Runs against a throwaway KITCHEN_DIR so it never touches a real household.
+ * Runs against a scratch KITCHEN_DIR.
  */
 
 import {
@@ -154,8 +152,8 @@ tap({ kind: "unsweep", batch: sweepBatch });
 tap({ kind: "unsweep", batch: sweepBatch });
 await drain("t");
 check("undoing the cleanup put the milk back", qty("milk") === 1);
-// A second retraction of the same batch is a no-op in the fold, but writing it
-// would still be a lie in the log about what a person did.
+// A second retraction would change nothing in the fold but would misrecord what a
+// person did.
 const undos = live("t").length;
 await drain("t");
 check("a repeated unsweep changed nothing", live("t").length === undos);
@@ -181,8 +179,7 @@ check(
   (cream?.why ?? "").includes("parm") && (cream?.why ?? "").includes("mushroom"),
 );
 
-// ── cooking the first half of a pair puts the leftovers in the fridge, or the
-//    second half is permanently hypothetical.
+// ── cooking the first half of a pair puts its leftovers in the fridge.
 process.env.KITCHEN_RECIPES = join(BASE, "recipes.json");
 writeFileSync(
   join(BASE, "recipes.json"),
@@ -242,8 +239,7 @@ tap({ kind: "pairskip", recipe: "roast-beef>beef-sandwiches", note: "undo" });
 await drain("t");
 check("undoing the skip clears it", activeSkips(lp("t")).size === 0);
 
-// ── the shelf check. Confirming must WRITE, or a pass leaves the kitchen
-//    looking staler than before it happened.
+// ── the shelf check: confirming must write, even when nothing changed.
 const { live: liveNow } = await import("../src/store.ts");
 const { readLog } = await import("../src/store.ts");
 tap({ kind: "reconcile", session: "rc-test", item: "onion", note: "have" });
@@ -263,9 +259,8 @@ tap({ kind: "reconcile", session: "rc-test", note: "apply" });
 await drain("t");
 check("a corrected count landed", qty("milk") === 3);
 check("a gone item left the shelves", !liveNow("t").some((i) => i.id === "leftover-beef"));
-// The point of a confirmation is that it WRITES. Asserting on the timestamp
-// alone is not enough: nowIso is second-resolution, so a test that runs inside
-// one second sees no change and passes or fails by luck.
+// A confirmation must write. The timestamp alone cannot show it: nowIso has one-
+// second resolution.
 check(
   "a confirmation wrote evidence somebody looked",
   readLog("t").some((e) => e.src === "reconcile" && e.item === "onion" && e.op === "set"),
@@ -287,8 +282,7 @@ check("a vibe is pinned", getAccount("t")?.prefs?.vibe === "allweek");
 tap({ kind: "pref", text: "vibe", note: null });
 await drain("t");
 check("and handed back to the day", getAccount("t")?.prefs?.vibe === null);
-// A vibe id nobody ships must not be storable, or the site renders a mood with
-// no label and the page silently loses its heading.
+// An unknown vibe id must not be stored; the page would lose its heading.
 tap({ kind: "pref", text: "vibe", note: "nonsense" });
 await drain("t");
 check("an unknown vibe is refused rather than stored", getAccount("t")?.prefs?.vibe === null);
@@ -310,8 +304,8 @@ check(
   "a method that does not exist is dropped",
   JSON.stringify(p.prefs?.avoid_methods) === JSON.stringify(["grill"]),
 );
-// Zero has to mean "no opinion", not "this house spends nothing on food",
-// because the stepper's floor is zero and that is how somebody clears it.
+// Zero clears the per-meal ceiling (the stepper floor); it does not mean "spends
+// nothing".
 tap({ kind: "pref", text: "settings", note: "normal", items: [], qty: 0, amount: 0 });
 await drain("t");
 check("zero clears the budget rather than storing zero", getAccount("t")?.budget === null);
@@ -346,8 +340,7 @@ tap({ kind: "idealist", recipe: "tagine", name: "Lamb tagine" });
 await drain("t");
 const ideaLines = readList("t").entries.filter((e) => e.why === "to try Lamb tagine");
 check("the shopping landed", ideaLines.length === 2);
-// No ledger slug on purpose. Claiming one would invent an inventory row for
-// food the house has never bought.
+// No ledger slug: claiming one would invent an inventory row for food never bought.
 check(
   "and claims no ledger identity",
   ideaLines.every((e) => e.item === null),
@@ -374,11 +367,9 @@ check("nothing it left was marked done", res.done.length === 0);
 
 /* ── a replayed "we cooked it" ───────────────────────────────────────────── */
 
-// The minute pass marks a tap served AFTER acting on it. A crash in that window
-// leaves the tap in the queue, so the next pass sees it again. Every other
-// auto-handled kind is naturally idempotent; this one takes food off shelves,
-// so it has to recognise its own second run. The crash is simulated by clearing
-// the served marker, which is exactly the state a crash would leave behind.
+// The pass marks a tap served after acting on it, so a crash in between replays it.
+// Cooking is the one auto-handled kind that is not naturally idempotent, so it must
+// recognise its own second run. The crash is simulated by clearing the served marker.
 section("a cooked tap that gets replayed");
 
 append("t", [
@@ -424,11 +415,8 @@ check(
 
 /* ── "make this" for a dish that is already written out ──────────────────── */
 
-// The brief was always "write the recipe page, or if it exists send it". Only
-// the first half was built, so every tap woke a session which then discovered
-// the page already there. Routing is asserted rather than delivery: whether the
-// text lands is the messaging layer's problem, but a make request for a written
-// dish must stop being reported as work waiting for a person.
+// A make request for a dish already written out must not be reported as waiting for a
+// person. Routing is asserted, not delivery.
 section("make, once the recipe exists");
 
 const bookDir = join(BASE, "tenants", "t", "cookbook");
@@ -460,11 +448,8 @@ check(
 
 /* ── the file the alarm reads ────────────────────────────────────────────── */
 
-// The alarm used to watch the raw callback log, which lists every tap including
-// the ones this module answers in ten seconds. It fired on work already done,
-// and acting on such a wake-up sends somebody the same recipe twice. So the
-// contract asserted here is narrow and load-bearing: what is published is
-// exactly what stillWaiting says, and the stamp moves on every pass.
+// The published queue is exactly what stillWaiting reports, never taps already
+// settled, and its stamp moves on every pass.
 section("published queue");
 
 const { publishQueue } = await import("../src/drain.ts");
@@ -495,8 +480,8 @@ check(
   q2.waiting.every((w: { key?: string }) => typeof w.key === "string" && w.key.length > 0),
 );
 
-// The stamp is the outage alarm. If it did not move every pass, a drain that
-// died at import time would look identical to a quiet kitchen.
+// The stamp is the liveness signal: a drain that died at import time must not look
+// like a quiet kitchen.
 check(
   "the stamp moves even when nothing changed",
   (() => {
@@ -527,13 +512,9 @@ check(
 
 /* ── a callback cannot name a file it does not own ───────────────────────── */
 
-// The `/upload` endpoint is careful: it rebuilds the filename from scratch and
-// writes only into `img/upload/`. But `/callback` accepts any JSON object from
-// anyone holding the page link, so a `photo` request can be posted directly
-// with a `file` the server never wrote. This handler RENAMES that path, which
-// is a read of the file and a delete of it in one move, into the directory the
-// public tunnel serves. An unchecked "../.." was therefore both exfiltration of
-// anything on the machine and destruction of it.
+// `/callback` accepts any JSON from anyone holding the page link, and the photo
+// handler renames the named file into the served directory. An unchecked path would
+// be both exfiltration and deletion of any file on the machine.
 section("photo path confinement");
 
 const outside = join(BASE, "secret.txt");
@@ -583,26 +564,12 @@ check(
 
 /* ── the dinner that was cooked, not the dish that shares its name ────────── */
 
-// 2026-08-17, live, while Alex was standing at the stove. He tapped "we made
-// it" at the end of a recipe I had written that morning around the raw chicken
-// thighs in his fridge. The tap took a package of DELI buffalo chicken off the
-// shelf instead — the meat he had told me hours earlier they were not using —
-// then emptied a bottle of chipotle ranch the recipe spends a tablespoon of,
-// and the whole bag of cheese it spends a fifth of.
+// "We made it" on a dish must consume what was actually planned and written for
+// tonight, not a catalog card that shares its id, and an open plan for the dinner
+// outranks every reconstruction so the food cannot come off twice.
 //
-// Two independent causes, and both are pinned here.
-//
-// The card and the written recipe share an id and disagree completely: the card
-// is the general idea of a dish, the cookbook entry is the one written for this
-// house on this night around what was actually in the fridge. The card was
-// winning.
-//
-// And an open plan for the same dinner was ignored entirely, so the food came
-// off once for the tap and stood ready to come off AGAIN the moment anybody
-// answered the "did you make it" check-in. Consuming a meal twice is the single
-// most destructive thing this module can do, which is why the plan — the only
-// list a human actually agreed to, already scoped to tonight — outranks every
-// reconstruction.
+// Pins both causes of a tap that removed deli chicken the recipe did not use and
+// emptied condiments it only spent a spoonful of.
 
 section("a cooked tap prefers what was actually cooked");
 

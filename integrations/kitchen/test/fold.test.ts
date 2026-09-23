@@ -24,7 +24,7 @@ const { spend } = await import("../src/insights.ts");
 
 import { expect, test } from "bun:test";
 
-/** Same shape as the old script helper, but the comparison is a real test. */
+/** An equality check that registers as a test. */
 const check = (name: string, got: unknown, want: unknown) => {
   test(name, () => {
     expect(JSON.parse(JSON.stringify(got ?? null))).toEqual(

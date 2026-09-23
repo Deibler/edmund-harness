@@ -1,16 +1,10 @@
 /**
- * Everything the recipe page runs in the browser.
+ * The recipe page's browser script: step navigation, timers, the step/list
+ * view toggle, voice questions, photo upload and the "we made it" tap.
  *
- * Step navigation, the per-step timers, the view toggle between one step at a
- * time and the whole thing as a list, the microphone, the photo upload and the
- * "we made it" tap. Moved out of `recipepage.ts` on 2026-08-17 unedited.
- *
- * A string rather than a real module for the same reason as the main site's:
- * the page is one static file behind a token, and a second request for a .js
- * file would need the key appended the way every image does.
- *
- * It takes no parameters. Everything it needs about the recipe arrives in the
- * JSON payload the renderer writes into the page above it.
+ * Inlined as a string because the page is one static file behind a share key;
+ * a separate .js request would need the key appended. It reads everything it
+ * needs from the JSON payload the renderer writes into the page.
  */
 
 export const CLIENT = `<script>

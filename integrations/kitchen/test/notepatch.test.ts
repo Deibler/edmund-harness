@@ -1,12 +1,9 @@
 /**
  * The line-level note writer, minus the browser.
  *
- * What is pinned here is everything that decides WHICH lines get touched. The
- * failure it exists to prevent is quiet: a whole-body write looks identical on
- * the web and only shows up days later as stacked copies on somebody's phone.
- * So the tests are about restraint — an unchanged title is never in a hunk, an
- * unchanged line is never in a hunk, and a note the caret cannot be steered
- * through is refused rather than guessed at.
+ * Pins which lines get touched: an unchanged title or line is never in a hunk, and a
+ * note the caret cannot be steered through is refused rather than guessed at. A
+ * whole-body write would look fine on the web and stack copies on phones.
  */
 
 import { describe, expect, test } from "bun:test";

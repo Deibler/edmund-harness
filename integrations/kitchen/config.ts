@@ -1,8 +1,8 @@
 /**
- * `[kitchen]` configuration.
+ * `[kitchen]` configuration schema.
  *
- * The schema lives with the package rather than in core's config, which is what
- * lets this whole directory be deleted without touching core source.
+ * Owned by the package rather than core config, so the integration can be
+ * removed without touching core source.
  */
 
 import { resolve } from "node:path";
@@ -11,12 +11,11 @@ import { defineSection } from "../../src/integrations/section.ts";
 
 export const Schema = z
   .object({
-    /** Master switch. False = no tools at all. */
+    /** Master switch. False registers no tools. */
     enabled: z.boolean().default(true),
     /**
-     * Where the ledgers live. Deliberately outside any session sandbox: one
-     * physical kitchen is shared across chats, so a per-chat copy would be
-     * fiction in every thread at once.
+     * Where the ledgers live. Outside any session sandbox, because one kitchen
+     * is shared by every chat that belongs to the household.
      */
     dir: z.string().default(resolve(process.env.EDMUND_DATA_DIR ?? "./data", "kitchen")),
     /** How old an imported grocery price may be before it stops being quotable. */

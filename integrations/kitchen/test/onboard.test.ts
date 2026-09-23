@@ -1,16 +1,9 @@
 /**
- * Getting a stranger from "what can I make with chicken" to a working kitchen.
+ * Onboarding: nothing is half-built, the checklist is derived from real data, and
+ * photographs only propose.
  *
- * The failure this guards is not a crash, it is a half-provisioned household:
- * an account that exists with nothing on its shelves answers every food
- * question worse than having no account at all, because now the replies are
- * hedged against a ledger that knows nothing, and the person has learned that
- * this does not work. So the properties asserted here are about refusing to
- * start rather than about finishing.
- *
- * The photo reading itself happens in the household's main session. What is
- * tested here is everything around it, because that is where a bad reading
- * turns into a bad ledger.
+ * The photo reading itself happens in the household's main session; what is tested is
+ * everything around it.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -33,10 +26,8 @@ const OTHER = "imessage:dm:+15551231111";
 
 /* ── deciding whether to offer at all ────────────────────────────────────── */
 
-// This is the one question that must answer for somebody with no kitchen.
-// `resolveAccount` throws for an unknown caller, which is correct when food is
-// about to be read or written and useless as the thing that decides whether to
-// make an offer, since "no account" is the entire population being offered to.
+// `accountOf` must answer for somebody with no kitchen, unlike `resolveAccount`,
+// which throws.
 section("is there anything here yet");
 
 check("a stranger resolves to no household rather than an error", accountOf(NEW) === null);
@@ -84,8 +75,7 @@ check(
 );
 check("which is what accountOf now returns", accountOf(NEW) === "morgan");
 
-// Running it twice is what happens when somebody mentions their budget three
-// messages after setup. It must fill in, not fail and not duplicate.
+// Provisioning again fills in details without failing or duplicating.
 const again = provision("morgan", { principal: NEW, budget: 120 });
 check(
   "running it again does not create a second household",
@@ -94,8 +84,7 @@ check(
 check("it fills in what was volunteered later", getAccount("morgan")!.budget === 120);
 check("without dropping what was already there", getAccount("morgan")!.people?.[NEW] === "Morgan");
 
-// One person, one kitchen. The registry enforces this on join and create; this
-// is the third door into it.
+// One person, one kitchen, enforced on this path too.
 check(
   "somebody else's kitchen cannot be silently joined",
   (() => {
@@ -123,9 +112,7 @@ check(
 
 /* ── the checklist is derived, not stored ────────────────────────────────── */
 
-// A stored "setup complete" flag is a claim that outlives what it describes:
-// empty the ledger and the flag still says finished. Every step here reads the
-// real artifact, so this cannot go stale.
+// The checklist reads real data, so it cannot go stale the way a stored flag would.
 section("readiness");
 
 const st0 = state("morgan");
@@ -184,9 +171,7 @@ check(
 check("a counted thing keeps its count", live("morgan").find((i) => i.id === "eggs")!.qty === 12);
 check("and the batch is reported so it can be undone", Boolean(put.batch));
 
-// Somebody will photograph the same fridge twice. Doubling their eggs because
-// of it would be exactly the kind of quiet wrongness this ledger exists to
-// avoid.
+// Accepting the same photograph twice must not double the stock.
 const twice = acceptStock("morgan", props);
 check("running the same photo again adds nothing", twice.added.length === 0);
 check("and says what it skipped instead of staying silent", twice.skipped.length === 3);
@@ -219,9 +204,7 @@ check(
   })(),
 );
 
-// Ready means usable, and a household that has not cooked yet is usable.
-// Holding it hostage to a logged meal would tell somebody their setup is broken
-// when the only thing missing is dinner.
+// Ready means usable; a household that has not cooked yet is usable.
 check(
   "a stocked, named, published kitchen is ready even before its first meal",
   (() => {
