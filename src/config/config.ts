@@ -1303,6 +1303,43 @@ export const ConfigSchema = z.object({
       config_file: z.string().default("./integrations/integrations-config.yaml"),
     })
     .default({}),
+  /**
+   * Screen control (src/mcp/computer-use), for the operator and every
+   * allowlisted contact; guests never get it. Off by default. The app lists
+   * stand in for the approval dialog Claude Code shows a person: request_access
+   * grants exactly these, by display name or bundle id. Every action is
+   * checked by Jev through OpenRouter ([keys].openrouter) before it runs. The
+   * process that launches the daemon also needs Screen Recording and
+   * Accessibility in System Settings.
+   */
+  computer_use: z
+    .object({
+      enabled: z.boolean().default(false),
+      /** Apps the operator's own sessions may be granted. */
+      apps: z.array(z.string()).default([]),
+      /**
+       * Apps everyone else may be granted. Messages and Notes are scoped: a
+       * contact acts only in the conversation they asked from and on their
+       * own household's list, and their screenshots black out the rest.
+       */
+      contact_apps: z
+        .array(z.string())
+        .default(["Messages", "Notes", "Maps", "Calculator", "Weather", "Clock", "Dictionary"]),
+      /** Allow the operator the clipboardRead and clipboardWrite grants. */
+      clipboard: z.boolean().default(false),
+      /** Allow the operator quit, switch-app and similar system-wide combos. */
+      system_key_combos: z.boolean().default(false),
+      /**
+       * The Jev safety check on every action. "enforce" refuses flagged
+       * actions. "shadow" only records verdicts, and serves operator
+       * sessions alone, since nothing is being refused.
+       */
+      classifier: z.enum(["enforce", "shadow"]).default("enforce"),
+      classifier_model: z.string().default("typesafe/jev-1.13"),
+      /** Refuse when any harm's probability reaches this. */
+      classifier_threshold: z.number().min(0).max(1).default(0.5),
+    })
+    .default({}),
   instant_share: z
     .object({
       /** Admin password for the share server's /admin panel. Injected into the

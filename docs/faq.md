@@ -80,7 +80,8 @@ There is no telemetry. [security.md](security.md) has the table.
 **The tests fail on a clean checkout. Is it broken?**
 Some tests are known to flake under parallel load, and the list is in
 `CLAUDE.md`. Compare the set of failures against that list, not the count. Run
-`bun test tests/`, not bare `bun test`.
+`bun test ./tests/`, with the `./`: a bare `bun test` or `bun test tests/` also
+runs copies and vendored specs from elsewhere in the checkout.
 
 **Can I use it commercially or build a product on it?**
 The licence is MIT. Whether injecting into Messages.app is acceptable for your

@@ -23,6 +23,10 @@ access:
   # gets a hard error rather than somebody else's fridge.
   sessions: ["*"]
 
+# Core also calls screenScope() in screen-scope.ts (from src/mcp/computer-use)
+# to learn which household list a session may edit on screen, and which lists
+# belong to other households.
+
 tools:
   - export_name: kitchenTools
     description: >-

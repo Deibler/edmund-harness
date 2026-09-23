@@ -37,7 +37,7 @@
     "dev": "bun --watch run src/main.ts",
     "logs": "tail -F data/daemon.log",
     "typecheck": "tsc --noEmit",
-    "test": "bun test tests integrations",
+    "test": "bun test ./tests ./integrations",
     "lint": "biome check .",
     "format": "biome format --write .",
     "knip": "knip",

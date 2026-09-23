@@ -12,6 +12,13 @@ import { directClaudeEnv } from "./direct-env.ts";
 // anchored via import.meta.url so the lookup doesn't break if a caller has
 // a different cwd than the daemon.
 const SERVER_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "..", "mcp", "server.ts");
+const COMPUTER_USE_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "mcp",
+  "computer-use",
+  "server.ts",
+);
 
 /**
  * MCP config bundle written once per process. Two variants:
@@ -75,6 +82,13 @@ export function ensureMcpConfig(config: Config): McpConfigPaths {
   const radarOmegaServer = radarOmegaMcpServer(config);
   if (radarOmegaServer) {
     coreServers.radaromega = radarOmegaServer;
+  }
+  // Screen control. The server serves tools to operator sessions only, and
+  // guests never get this file. It is not called "computer-use": Claude Code
+  // reserves that name for its built-in server and silently drops a
+  // configured server that uses it.
+  if (config.computer_use?.enabled) {
+    coreServers.computer = { command: findBin("bun") ?? "bun", args: [COMPUTER_USE_PATH] };
   }
 
   writeFileSync(defaultPath, JSON.stringify({ mcpServers: coreServers }, null, 2));

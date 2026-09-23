@@ -9,7 +9,7 @@ get right.
 bun run dev              # daemon in the foreground with reload
 bun run typecheck        # tsc --noEmit over src, cli, scripts, integrations
 bun run lint             # biome check
-bun test tests/          # the suite; see below about the root sweep
+bun test ./tests/        # the suite; the ./ matters, see below
 bun run knip             # unused files, exports, dependencies
 ```
 
@@ -36,8 +36,10 @@ not published to npm.
 
 ## Tests
 
-`bun test tests/`, not bare `bun test`. The root sweep also picks up a
-vendored package's own specs. `tests/_setup.ts` is preloaded through
+`bun test ./tests/`, with the `./`. Without it bun treats the argument as a
+name filter over the whole checkout, so it also runs vendored specs and any
+worktree copies under `sandbox/`, and the file descriptors that sweep holds
+open leave child processes' piped output empty. `tests/_setup.ts` is preloaded through
 `bunfig.toml` and points the sandbox root at a temporary directory, because
 tests once wrote hundreds of fake proactive decisions into live telemetry.
 

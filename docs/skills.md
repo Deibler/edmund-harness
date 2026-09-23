@@ -138,7 +138,7 @@ own setup, and expect the ones that name a location to need a new one.
    to read the skill.
 3. Write the body as steps the model can follow with no other context. Name
    the tools. State the output format. List the failure modes you have seen.
-4. Run `bun test tests/skill-drift.test.ts`.
+4. Run `bun test ./tests/skill-drift.test.ts`.
 5. Ask the assistant to do the thing. Watch the log for `read_skill`. If it did
    not read the skill, the description did not match how the request was
    phrased; fix the description before touching the body.

@@ -360,7 +360,7 @@ More in [docs/troubleshooting.md](docs/troubleshooting.md).
 ```bash
 bun run typecheck    # tsc over src, cli, scripts, integrations
 bun run lint         # biome
-bun test tests/      # not bare `bun test`; the root sweep picks up vendored specs
+bun test ./tests/    # with the ./: a bare path is a filter over the whole checkout
 bun run knip         # unused files, exports, dependencies
 ```
 

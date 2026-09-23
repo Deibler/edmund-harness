@@ -332,6 +332,35 @@ participant_roster = true
 # admin_password = ""        # REQUIRED for /admin login; blank = admin disabled
 # expire_minutes = 120       # default tunnel lifetime for share.sh
 
+# Screen control (src/mcp/computer-use): screenshots, clicks and typing in
+# native apps, from iMessage and SMS conversations (never guests, the mirror
+# or sub-agents). The owner is recognised by handle ([security]
+# operator_handles, else [alerts].operator_handle), not by contact_tier:
+# `apps` applies in the owner's own DM, `contact_apps` in every other DM and
+# group, and only while classifier = "enforce".
+# One conversation drives the screen at a time; another waits up to two
+# minutes. When a turn ends, the apps it launched are quit (never Messages).
+# Nobody is at the screen to approve apps, so the lists are the approval:
+# request_access grants exactly these (display names or bundle ids). Browsers
+# are granted read-only and terminals click-only. Messages and Notes are
+# scoped: a session acts only in the conversation it came from and on its own
+# household's list, and a contact's screenshots black out everything else.
+# Every action is checked by Jev (typesafe/jev-1.13) through OpenRouter with
+# [keys].openrouter before it runs; without that key nobody gets the tools.
+# The process that launches the daemon (for the launchd job, /bin/bash) needs
+# Screen Recording and Accessibility in System Settings > Privacy & Security,
+# and the Mac must be unlocked for input. Building the native helper needs
+# Xcode Command Line Tools (swiftc).
+# [computer_use]
+# enabled = false
+# apps = ["Messages", "Notes", "Freeform", "Keynote", "Pages", "Preview", "Reminders", "Calendar", "Maps", "Finder"]  # the owner's own DM
+# contact_apps = ["Messages", "Notes", "Maps", "Calculator", "Weather", "Clock", "Dictionary"]
+# clipboard = false          # operator only: clipboardRead/clipboardWrite grants
+# system_key_combos = false  # operator only: quit/switch-app chords
+# classifier = "enforce"     # or "shadow": record verdicts, refuse nothing (owner's DM only)
+# classifier_model = "typesafe/jev-1.13"
+# classifier_threshold = 0.5
+
 # Integrations (plugins) live in integrations/<name>/ as standalone packages.
 # The YAML store below says which of the installed ones this machine runs;
 # per-integration tuning stays in that integration's own section here.
