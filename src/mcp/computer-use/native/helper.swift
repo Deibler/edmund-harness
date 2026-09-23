@@ -382,6 +382,12 @@ func capture(_ req: JSON) async throws -> JSON {
   if let r = req["rect"] as? JSON {
     config.sourceRect = CGRect(
       x: try num(r, "x"), y: try num(r, "y"), width: try num(r, "width"), height: try num(r, "height"))
+  } else {
+    // Always the whole display. Left unset, a filter that includes only some
+    // apps captures just the box around their windows, stretched to fill the
+    // image (macOS 26): the windows then sit nowhere near where the
+    // redactions and the click coordinates put them.
+    config.sourceRect = CGRect(x: 0, y: 0, width: CGFloat(display.width), height: CGFloat(display.height))
   }
   // ScreenCaptureKit refuses a filter with nothing on screen in it (only
   // hidden apps, say), so that capture is simply black.
