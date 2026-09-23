@@ -87,7 +87,8 @@ file. The agent log survives under `sandbox/<slug>/agents/<id>/`.
 
 Compare the failing set against the known flaky list in `CLAUDE.md`, not the
 count. The baseline varies between runs with unchanged code. Run `bun test
-tests/`, not bare `bun test`, or you pick up a vendored package's specs.
+./tests/`, with the `./`; without it bun filters the whole checkout and also
+runs vendored specs and worktree copies under `sandbox/`.
 
 ## A code change did not take effect
 

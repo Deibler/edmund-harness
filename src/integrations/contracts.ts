@@ -41,3 +41,14 @@ export type TradingGateFn = (
  * sessions exist to need one.
  */
 export type MirrorEnvelopeBlockFn = (config: Config) => string;
+
+/**
+ * `screenScope` from the kitchen integration: the shared notes a session's
+ * household owns (its grocery list) and every other household's, by title.
+ * Screen control edits only the first and never the second. Absent
+ * integration ⇒ no household lists exist, so both are empty.
+ */
+export type ScreenScopeFn = (
+  sessionKey: string,
+  config: Config,
+) => { own: string[]; others: string[] } | Promise<{ own: string[]; others: string[] }>;

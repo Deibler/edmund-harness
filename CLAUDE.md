@@ -45,8 +45,12 @@ returns empty on rich-text bodies makes a delivered message look unsent; check
 `DataTriggerWatcher`, `runRefreshScriptSource`, `RefreshWatcher`,
 `protectStdout` flap under parallel load and pass in isolation. The baseline
 itself varies run to run with unchanged code. **Compare the failing set, never
-the count.** `bun test` at the repo root also picks up a stray vendored Chrome
-extension's specs; use `bun test tests/`.
+the count.** Run `bun test ./tests/`, with the `./`. Without it bun reads the
+argument as a name filter over the whole checkout: it also runs the stale
+copies in the `sandbox/*/wt/` worktrees and vendored specs, and holds about
+14,000 file descriptors open, which leaves child processes' piped output empty
+(the ffprobe round-trip then fails). Measured 2026-09-23: 30 descriptors by
+path against 14,290 by filter.
 
 ## Never relax the send-resolution guard
 `chat_mismatch` is a **true positive**. Tested by relaxing it: sends went to the

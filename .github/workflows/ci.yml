@@ -43,7 +43,7 @@ jobs:
       - name: Lint and format
         run: bun run lint
       - name: Tests
-        run: bun test tests/ integrations/kitchen/test
+        run: bun test ./tests/ ./integrations/kitchen/test
       # The two front ends have their own package.json and lockfile and are
       # not part of the root install, so nothing typechecked them until a
       # dependency bump broke a build nobody ran. They are built here.

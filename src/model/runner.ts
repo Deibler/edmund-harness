@@ -1,7 +1,9 @@
+import { resolve } from "node:path";
 import { shouldCompact } from "../claude/auto-compact.ts";
 import { type RunInput, type RunResult, evictWarmWorker, runClaude } from "../claude/runner.ts";
 import { runCodex } from "../codex/runner.ts";
 import type { Config } from "../config/config.ts";
+import { endScreenHold, screenLockPath } from "../mcp/computer-use/lock.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { log } from "../util/log.ts";
@@ -57,6 +59,29 @@ export function reanchorCodexIfNeeded(
 }
 
 /**
+ * A turn that used the screen gives it up when it ends, and its computer-use
+ * server quits the apps it opened (mcp/computer-use/lock.ts). Every turn,
+ * whatever started it and whichever backend ran it, ends in runModel.
+ */
+export function releaseScreen(config: Config, sessionKey: string): void {
+  try {
+    const outcome = endScreenHold(screenLockPath(resolve(config.paths.data_dir)), sessionKey);
+    if (outcome === "signalled") {
+      log.info("computer", "turn ended; releasing the screen", { session: sessionKey });
+    } else if (outcome === "cleared") {
+      log.info("computer", "turn ended; cleared a screen lock whose server had exited", {
+        session: sessionKey,
+      });
+    }
+  } catch (err) {
+    log.warn("computer", "could not release the screen", {
+      session: sessionKey,
+      err: (err as Error).message,
+    });
+  }
+}
+
+/**
  * Shared turn entry point. Model selection remains where it always was in
  * config; only the effective model name decides which installed CLI runs it.
  */
@@ -94,10 +119,15 @@ export async function runModel(
     });
   }
 
-  const result =
-    backend === "codex"
-      ? await runCodex(input, config, store)
-      : await runClaude(input, config, store);
+  let result: RunResult;
+  try {
+    result =
+      backend === "codex"
+        ? await runCodex(input, config, store)
+        : await runClaude(input, config, store);
+  } finally {
+    releaseScreen(config, rawInput.sessionKey);
+  }
 
   if (result.claudeSessionId !== undefined) {
     store.setModelSession(rawInput.sessionKey, result.claudeSessionId, backend);

@@ -1,6 +1,6 @@
 import type { z } from "zod";
 
-type ToolResult = {
+export type ToolResult = {
   content: Array<
     { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
   >;
