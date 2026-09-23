@@ -58,8 +58,13 @@ export type Rule = {
  */
 export type Skip = {
   at: string;
-  /** Trips this kitchen had seen when the skip was made. */
-  trips: number;
+  /**
+   * Shopping trips this kitchen had seen when the skip was made. Null for a skip
+   * written before trips were counted by shop rather than by write, whose old
+   * number counted shelf photos and leftovers too and means nothing against
+   * the new count. Those are placed on the new count by their time instead.
+   */
+  shops: number | null;
 };
 
 export type Book = {
@@ -102,9 +107,11 @@ export function readBook(account: string): Book {
       // Anything of another shape is dropped rather than guessed at. Dropping a
       // skip puts the item back on the list, which somebody will see and can
       // correct in one tap; inventing a trip count would hide it silently.
-      if (sk && typeof sk === "object" && typeof (sk as Skip).trips === "number") {
-        skips[id] = { at: String((sk as Skip).at ?? ""), trips: (sk as Skip).trips };
-      }
+      if (!sk || typeof sk !== "object") continue;
+      const { at, shops } = sk as Partial<Skip>;
+      if (typeof shops === "number") skips[id] = { at: String(at ?? ""), shops };
+      else if (typeof at === "string" && Number.isFinite(Date.parse(at)))
+        skips[id] = { at, shops: null };
     }
     return { version: 1, items, skips };
   } catch {
@@ -154,12 +161,12 @@ export function dispositionOf(book: Book, id: string): Disposition | null {
   return book.items[id]?.set ?? null;
 }
 
-export function skip(account: string, ids: string[], trips: number): number {
+export function skip(account: string, ids: string[], shops: number): number {
   const b = readBook(account);
   let n = 0;
   for (const id of ids)
     if (id) {
-      b.skips[id] = { at: nowIso(), trips };
+      b.skips[id] = { at: nowIso(), shops };
       n++;
     }
   if (n) write(account, b);
@@ -184,10 +191,20 @@ export function unskip(account: string, ids: string[]): number {
  * Live until the kitchen has seen a trip it did not see when the skip was made.
  * "Not this trip" therefore survives exactly one trip and no more, whatever the
  * clock did in between.
+ *
+ * `shopsBy` places a skip from before the count changed meaning. It goes by
+ * time, with the tie the counter exists to avoid, but only for skips already
+ * on disk, and the cost of a wrong tie there is one item back on one list.
  */
-export function skipped(book: Book, id: string, trips: number): boolean {
+export function skipped(
+  book: Book,
+  id: string,
+  shops: number,
+  shopsBy: (iso: string) => number,
+): boolean {
   const s = book.skips[id];
-  return s ? trips <= s.trips : false;
+  if (!s) return false;
+  return shops <= (s.shops ?? shopsBy(s.at));
 }
 
 /**

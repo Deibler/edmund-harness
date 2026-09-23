@@ -154,10 +154,36 @@ skip(A, ["chicken-broth"], tripCount(A));
 check("skipping takes it off this list", !names().includes("Chicken broth"));
 check("without claiming they stopped buying it", readBook(A).items["chicken-broth"] === undefined);
 
+// Every one of these adds food and none of them is a shop. Each used to count
+// as a trip, so putting dinner in the fridge spent a "not this trip".
 append(A, [
-  { op: "add" as const, item: "eggs", qty: 12, fields: { name: "Eggs" }, why: "a trip happened" },
+  { op: "add" as const, item: "leftover-soup", qty: 1, fields: { name: "Soup" }, src: "cooked" },
+]);
+append(A, [{ op: "add" as const, item: "salt", qty: 1, fields: { name: "Salt" }, src: "photo" }]);
+append(A, [{ op: "add" as const, item: "salt", qty: 1, fields: { name: "Salt" }, why: "has it" }]);
+check(
+  "a leftover, a shelf photo or a correction is not a trip",
+  !names().includes("Chicken broth"),
+);
+
+append(A, [
+  { op: "add" as const, item: "eggs", qty: 12, fields: { name: "Eggs" }, src: "receipt:giant-1" },
 ]);
 check("and the next trip spends the skip, so it comes back", names().includes("Chicken broth"));
+
+skip(A, ["chicken-broth"], tripCount(A));
+append(A, [{ op: "trip" as const, item: null, fields: { price: 9 }, src: "receipt:giant-1" }]);
+append(A, [
+  { op: "add" as const, item: "eggs", qty: 12, fields: { name: "Eggs" }, src: "receipt:giant-1" },
+]);
+check(
+  "one receipt logged again, or its total logged later, is still the one trip",
+  !names().includes("Chicken broth"),
+);
+append(A, [
+  { op: "add" as const, item: "bread", qty: 1, fields: { name: "Bread" }, src: "trip:aldi" },
+]);
+check("a shop logged without a receipt is a trip", names().includes("Chicken broth"));
 
 /* ── lines a person wrote ─────────────────────────────────────────────────── */
 
@@ -223,4 +249,74 @@ check(
     const listed = new Set(s.lines.map((l) => l.key));
     return !s.suggestions.some((x) => listed.has(x.key));
   })(),
+);
+
+/* ── an answer lands on something real ────────────────────────────────────── */
+
+// The model answers with the name it read on the list. A member's own lines get
+// a prefix, so slugging that name missed the id, the answer was filed under a
+// slug nothing uses, and the reply still said "Recorded".
+section("answers");
+
+const { answerTarget } = await import("../src/shopping.ts");
+stock("guest-s-flour-tortillas", "Flour tortillas", "pantry", 1);
+stock("a-s-corn", "Corn", "produce", 1);
+stock("b-s-sweet-corn", "Sweet corn", "produce", 1);
+stock("c-s-corn", "Corn on the cob", "produce", 1);
+
+const hit = (said: string) => {
+  const t = answerTarget(A, said);
+  return t.ok ? t.id : null;
+};
+check("an exact id is taken as it is", hit("milk") === "milk");
+check(
+  "a slugged name finds the prefixed line",
+  hit("flour-tortillas") === "guest-s-flour-tortillas",
+);
+check(
+  "so does the name as the list shows it",
+  hit("Flour tortillas") === "guest-s-flour-tortillas",
+);
+check("an exact name beats a looser ending", hit("corn") === "a-s-corn");
+check("something nobody tracks is refused", hit("dragonfruit") === null);
+check(
+  "and two equally good matches are a question back, not a pick",
+  (() => {
+    const t = answerTarget(A, "s-corn");
+    return !t.ok && t.why.includes("a-s-corn") && t.why.includes("c-s-corn");
+  })(),
+);
+
+const { kitchenTools } = await import("../tools.ts");
+const shoppingTool = kitchenTools({
+  sessionKey: "imessage:dm:+15550000000",
+  config: { kitchen: { enabled: true }, paths: { data_dir: BASE } },
+} as never).find((t) => t.name === "kitchen_shopping");
+const call = async (args: Record<string, unknown>) => {
+  const r = (await shoppingTool?.handler(args as never)) as {
+    content: Array<{ text: string }>;
+    isError?: boolean;
+  };
+  return { said: r.content.map((c) => c.text).join("\n"), error: r.isError === true };
+};
+
+const bookBefore = JSON.stringify(readBook(A));
+const bad = await call({
+  answer: { item: "dragonfruit", as: "never" },
+  add: [{ name: "Coffee filters" }],
+});
+check("the tool reports an answer it could not place as an error", bad.error);
+check("instead of saying it was recorded", !bad.said.includes("Recorded"));
+check(
+  "and writes nothing, the answer or anything else in the call",
+  (() => {
+    return JSON.stringify(readBook(A)) === bookBefore && !names().includes("Coffee filters");
+  })(),
+);
+
+const good = await call({ answer: { item: "Flour tortillas", as: "never" } });
+check("a name that resolves is recorded against the real id", good.said.includes("Recorded"));
+check(
+  "and the book holds it under that id",
+  readBook(A).items["guest-s-flour-tortillas"]?.set === "never",
 );

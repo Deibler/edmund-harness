@@ -86,7 +86,7 @@ import {
 } from "./src/schedules.ts";
 import { applyKitchenConfig, priceMaxAgeDays } from "./src/settings.ts";
 import { proposeShelves, shelfBrief } from "./src/shelfread.ts";
-import { settleAfterPurchase, shopping, tripCount } from "./src/shopping.ts";
+import { answerTarget, settleAfterPurchase, shopping, tripCount } from "./src/shopping.ts";
 import { writeSite } from "./src/site.ts";
 import {
   amount,
@@ -385,7 +385,14 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
     inputSchema: z.object({
       account: Acct,
       why: z.string().describe("What this was, e.g. 'sushi bake' or 'Giant run 8/15'."),
-      source: z.string().optional().describe("e.g. 'receipt:giant-2026-08-15', 'cooked', 'photo'."),
+      source: z
+        .string()
+        .optional()
+        .describe(
+          "e.g. 'receipt:giant-2026-08-15', 'trip:aldi-2026-01-12' for a shop with no " +
+            "receipt, 'cooked', 'photo'. Only receipt: and trip: sources count as a shopping " +
+            "trip, which is what ends a 'not this trip' skip.",
+        ),
       entries: z.array(Entry).min(1),
     }),
     handler: ({ account, why, source, entries }) =>
@@ -806,7 +813,12 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
         ),
       answer: z
         .object({
-          item: z.string().describe("Ledger slug the decision is about."),
+          item: z
+            .string()
+            .describe(
+              "The item the decision is about: its ledger slug, or its name as the list " +
+                "shows it. Refused, with nothing written, if it matches nothing.",
+            ),
           as: z
             .enum(["always", "never", "skip"])
             .describe(
@@ -851,6 +863,10 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
             : null;
           if (!request) return text(`No shopping request is waiting with key ${key}.`, true);
         }
+        // Resolved before anything is written, so a call whose answer names
+        // nothing real changes nothing at all rather than half of what it asked.
+        const target = answer ? answerTarget(id, answer.item) : null;
+        if (target && !target.ok) return text(`Nothing was recorded. ${target.why}`, true);
         if (add?.length) {
           const { added, merged } = addToList(
             id,
@@ -890,11 +906,11 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
             `The list will be written into the note called "${wanted.trim()}" from now on.`,
           );
         }
-        if (answer) {
-          if (answer.as === "skip") skip(id, [answer.item], tripCount(id));
-          else setDisposition(id, [answer.item], answer.as, "asked in chat");
+        if (answer && target?.ok) {
+          if (answer.as === "skip") skip(id, [target.id], tripCount(id));
+          else setDisposition(id, [target.id], answer.as, "asked in chat");
           said.push(
-            `Recorded: ${answer.item} is ${
+            `Recorded: ${target.name} (${target.id}) is ${
               answer.as === "always"
                 ? "kept stocked from now on"
                 : answer.as === "never"

@@ -145,7 +145,7 @@ try {
       continue;
     }
     console.log(
-      `${stamp()} ${r.account}: note "${r.title}" ${r.wrote ? "rewritten" : "already current"} (${r.lines} lines, via ${r.via})${r.ticked.length ? `, ${r.ticked.length} ticked off` : ""}${r.adopted.length ? `, adopted ${r.adopted.join(", ")}` : ""}${r.invited.length ? `, invited ${r.invited.join(", ")}` : ""}`,
+      `${stamp()} ${r.account}: note "${r.title}" ${r.wrote ? "rewritten" : "already current"} (${r.lines} lines, via ${r.via}${r.how ? `, ${r.how}` : ""})${r.ticked.length ? `, ${r.ticked.length} ticked off` : ""}${r.adopted.length ? `, adopted ${r.adopted.join(", ")}` : ""}${r.invited.length ? `, invited ${r.invited.join(", ")}` : ""}`,
     );
   }
 } catch (e) {
