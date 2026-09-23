@@ -23,6 +23,7 @@
  * uses nothing urgent still appears; it just stops winning by default.
  */
 
+import { isConvenience } from "./foods.ts";
 import { type MadeIndex, lastMade } from "./made.ts";
 import { type ProfileState, notesFor } from "./profile.ts";
 import type { Recipe } from "./recipes.ts";
@@ -69,6 +70,10 @@ export function urgency(r: Recipe, items: Record<string, Item>, now = new Date()
   for (const [id] of r.needs) {
     const it = items[id];
     if (!it || it.gone) continue;
+    // Deli meat, bread and snacks go on their own clock and get eaten as they
+    // are. Letting them make a dinner urgent is how every other suggestion
+    // became "something with the deli ham".
+    if (isConvenience(it)) continue;
     const d = daysLeft(it, now);
     if (d === null) continue;
     const p = clockPoints(d);
@@ -158,7 +163,7 @@ export function fitReason(
   const soon: Array<{ name: string; days: number }> = [];
   for (const [id] of r.needs) {
     const it = items[id];
-    if (!it || it.gone) continue;
+    if (!it || it.gone || isConvenience(it)) continue;
     const d = daysLeft(it, now);
     if (d !== null && d <= 2) soon.push({ name: it.name.toLowerCase(), days: d });
   }
@@ -189,7 +194,7 @@ export function onTheClock(
 ): Array<{ item: Item; days: number }> {
   const out: Array<{ item: Item; days: number }> = [];
   for (const it of Object.values(items)) {
-    if (it.gone) continue;
+    if (it.gone || isConvenience(it)) continue;
     const d = daysLeft(it, now);
     // More than two days past date is a bin decision, not a dinner decision,
     // and offering to cook it would be the one suggestion here nobody should

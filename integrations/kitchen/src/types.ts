@@ -106,6 +106,8 @@ export type Plan = {
   created: string;
   /** Derived at plan time and frozen, so a recap never re-guesses history. */
   kcal?: number | null;
+  /** The member session the meal was planned in, so its follow-up goes back there. */
+  by?: string | null;
 };
 
 export type KitchenEvent = {

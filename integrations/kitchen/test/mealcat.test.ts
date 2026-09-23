@@ -46,8 +46,8 @@ writeFileSync(
         cat: "lunch",
         minutes: 10,
         needs: [
-          ["test-bread", null],
-          ["test-deli", null],
+          ["test-rice", null],
+          ["test-chicken", null],
         ],
       },
       {
@@ -57,8 +57,8 @@ writeFileSync(
         cat: "dinner",
         minutes: 45,
         needs: [
-          ["test-bread", null],
-          ["test-deli", null],
+          ["test-rice", null],
+          ["test-chicken", null],
         ],
       },
     ],
@@ -80,17 +80,17 @@ const acct: Account = {
 append("t", [
   {
     op: "add",
-    item: "test-bread",
+    item: "test-rice",
     qty: 1,
     unit: "ct",
-    fields: { name: "Test bread", cat: "pantry", loc: "pantry" },
+    fields: { name: "Test rice", cat: "pantry", loc: "pantry" },
   },
   {
     op: "add",
-    item: "test-deli",
+    item: "test-chicken",
     qty: 1,
     unit: "pkg",
-    fields: { name: "Test deli", cat: "meat", loc: "fridge" },
+    fields: { name: "Test chicken", cat: "meat", loc: "fridge" },
   },
 ]);
 
@@ -116,3 +116,40 @@ const lunch = pickFor("t", acct, "lunch");
 
 check("lunch still has an answer", lunch !== null);
 check("and a dish written for lunch wins it", lunch?.recipe.id === "test-sandwich");
+
+/* ── lunch food does not anchor a dinner ──────────────────────────────────── */
+
+// 2026-09-23: "it constantly tries to get us to use deli meat for meals". A
+// dish filed as dinner whose main ingredient is deli meat is still lunch.
+section("deli meat is not the centre of a dinner");
+
+const { writeFileSync: write } = await import("node:fs");
+write(
+  join(BASE, "tenants", "t", "recipes.json"),
+  JSON.stringify({
+    recipes: [
+      {
+        id: "ham-melt-dinner",
+        name: "Ham Melt Dinner",
+        desc: "",
+        cat: "dinner",
+        minutes: 15,
+        needs: [["deli-honey-ham", null]],
+      },
+    ],
+  }),
+);
+append("t", [
+  {
+    op: "add",
+    item: "deli-honey-ham",
+    qty: 1,
+    unit: "pkg",
+    fields: { name: "Deli honey ham", cat: "meat", loc: "fridge" },
+  },
+]);
+const deliDinner = pickFor("t", acct, "dinner");
+check(
+  "a dinner built on deli ham is never the dinner text",
+  deliDinner?.recipe.id !== "ham-melt-dinner",
+);

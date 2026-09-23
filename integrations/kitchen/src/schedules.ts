@@ -36,6 +36,7 @@ import { join } from "node:path";
 import { eaters, getAccount, updateAccount } from "./accounts.ts";
 import { loadCookbook } from "./cookbook.ts";
 import { fitScore } from "./fit.ts";
+import { isConvenience } from "./foods.ts";
 import { lastMade, madeIndex } from "./made.ts";
 import { moodFor, moodScore, readWeather } from "./mood.ts";
 import { loadProfiles } from "./profile.ts";
@@ -94,7 +95,14 @@ export type Dinner = {
   sent?: string[];
   /** ISO of the last send, for "last sent" on the page. */
   last?: string | null;
+  /** What this schedule suggested recently, newest last, so it does not repeat itself. */
+  picks?: Array<{ day: string; recipe: string }>;
 };
+
+/** Days a suggested dish is held back from the same schedule. */
+export const REPEAT_DAYS = 7;
+/** How many past picks a schedule remembers. */
+const PICKS_KEPT = 14;
 
 /**
  * How late a fire may be and still be worth sending.
@@ -158,6 +166,7 @@ export function normalize(
     // anything and would otherwise grow in the registry forever.
     sent: (raw.sent ?? []).filter((s) => typeof s === "string" && s.startsWith(dayKeyOf(now))),
     last: raw.last ?? null,
+    picks: (raw.picks ?? []).slice(-PICKS_KEPT),
   };
 }
 
@@ -289,6 +298,8 @@ export function pickFor(
   acct: Account,
   meal: MealKind = "dinner",
   now = new Date(),
+  /** Recipe ids this schedule suggested in the last `REPEAT_DAYS`. */
+  recent: ReadonlySet<string> = new Set(),
 ): Pick | null {
   const items = fold(account);
   const { recipes } = loadRecipes(account);
@@ -310,7 +321,12 @@ export function pickFor(
     }));
 
   const cats = CATS_FOR[meal];
-  const all = [...recipes, ...extra].filter((r) => cats.has(r.cat));
+  // A dinner built around deli meat or bread is lunch, whatever its card says.
+  const anchoredOnLunch = (r: Recipe) => {
+    const main = items[r.needs[0]?.[0] ?? ""];
+    return meal === "dinner" && !!main && isConvenience(main);
+  };
+  const all = [...recipes, ...extra].filter((r) => cats.has(r.cat) && !anchoredOnLunch(r));
   if (!all.length) return null;
 
   const mood = moodFor(acct, readWeather(account), now);
@@ -333,6 +349,8 @@ export function pickFor(
           (c.recipe.cat === meal ? 45 : 0) +
           // One missing item is a stop at the shop; four is a different dinner.
           -12 * c.missing.length +
+          // Suggested by this text in the last week: say something else.
+          (recent.has(c.recipe.id) ? -60 : 0) +
           moodScore(c.recipe, mood, acct) +
           // The fridge and the history, on the same terms the home page uses.
           // Deliberately the SAME function: a 4pm text that names one dinner and
@@ -526,7 +544,9 @@ export function fire(account: string, d: Dinner, now = new Date()): FireResult {
     return res;
   }
 
-  const pick = pickFor(account, acct, d.meal, now);
+  const cutoff = dayKeyOf(new Date(now.getTime() - REPEAT_DAYS * 86_400_000));
+  const recent = new Set((d.picks ?? []).filter((p) => p.day >= cutoff).map((p) => p.recipe));
+  const pick = pickFor(account, acct, d.meal, now, recent);
   const url = pick?.written ? recipeUrl(acct, pick.recipe.id) : null;
   const shopping = live(account).filter((i) => i.level === "out" || i.level === "low").length;
   const body = composeText(pick, d, acct, url, shopping);
@@ -562,6 +582,12 @@ export function fire(account: string, d: Dinner, now = new Date()): FireResult {
               sent: [...receipts].filter((s) => s.startsWith(dayKeyOf(now))),
               fired: everyone ? dayKeyOf(now) : (x.fired ?? null),
               last: now.toISOString(),
+              picks: pick
+                ? [
+                    ...(x.picks ?? []).filter((p) => p.day !== dayKeyOf(now)),
+                    { day: dayKeyOf(now), recipe: pick.recipe.id },
+                  ].slice(-PICKS_KEPT)
+                : (x.picks ?? []),
             }
           : x,
       ),

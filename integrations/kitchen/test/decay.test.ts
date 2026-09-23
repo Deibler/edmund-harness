@@ -1,5 +1,5 @@
 /**
- * The sweep must be reversible. That is the entire licence for guessing.
+ * The leftover sweep must be reversible. That is the entire licence for guessing.
  *
  * Runs against a throwaway KITCHEN_DIR so it never touches a real household.
  */
@@ -74,8 +74,11 @@ append("t", [
 const stale = staleItems("t");
 const ids = stale.map((s) => s.item.id).sort();
 check("6-day-old leftovers are stale", ids.includes("leftover-chili"));
-check("meat long past its date is stale", ids.includes("chicken"));
-check("onions on the counter are NOT stale at 20 days", !ids.includes("yellow-onions"));
+check(
+  "raw meat past its date is not swept; it is reviewed, since it is usually frozen",
+  !ids.includes("chicken"),
+);
+check("onions on the counter are not swept", !ids.includes("yellow-onions"));
 check("a level-tracked spice is never stale", !ids.includes("paprika"));
 check("frozen is never stale", !ids.includes("frozen-peas"));
 

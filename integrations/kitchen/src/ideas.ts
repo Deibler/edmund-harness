@@ -1,25 +1,22 @@
 /**
- * The household's own ideas: dinners built from what is on the shelves today.
+ * The household's own ideas: dishes written for what is in this kitchen now.
  *
- * The shared catalog goes stale by construction, so the site carries a second
- * layer of dishes written for THIS kitchen this week and retired when the food
- * they were built on is gone. The morning pass prunes that layer; writing the
- * replacements is judgement about food and about these people, and it is mine.
- * Until 2026-09-19 a narrow model on OpenRouter wrote them from a slug list,
- * which is how a house that hates tomato paste got tomato-paste dinners.
- *
- * So the pass wakes me (see `wake.ts`) and I answer through `kitchen_ideas`:
- * `ideasBrief` is the exact material to write from and `saveIdeas` is the
- * validation, which is the part that does not trust me either. A dish naming
- * an ingredient the ledger does not hold would render as cookable and is not,
- * which is worse than proposing nothing, so it is rejected at the write.
+ * The shared catalog goes stale, so the site carries a second layer of dishes
+ * written for this house and retired when the food they need is gone or they
+ * sit unmade for three weeks. Ideas are written in conversation through
+ * `kitchen_ideas`: `ideasBrief` is the material to write from and `saveIdeas`
+ * validates each dish against the ledger, the household's avoid list and the
+ * rule that a dinner is not built around lunch food.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { eaters } from "./accounts.ts";
+import { eaters, getAccount } from "./accounts.ts";
+import { type Evidence, evidence } from "./evidence.ts";
+import { avoidedBy, isConvenience } from "./foods.ts";
+import { meals } from "./insights.ts";
 import { METHOD_LABEL, type Recipe, loadRecipes, overlayPath } from "./recipes.ts";
-import { daysLeft, live } from "./store.ts";
+import { live } from "./store.ts";
 import type { Account, Item } from "./types.ts";
 
 export const IDEAS_TARGET = 10;
@@ -78,22 +75,52 @@ export function pruneIdeas(
 }
 
 /**
- * Everything I need in front of me to write this house's ideas.
+ * Pantry basics a recipe may name without the ledger tracking them. Nobody logs
+ * salt, and rejecting a dish for seasoning it would push recipes to leave the
+ * seasoning out.
+ */
+export const BASICS = new Set([
+  "salt",
+  "black-pepper",
+  "pepper",
+  "water",
+  "cooking-oil",
+  "olive-oil",
+  "vegetable-oil",
+  "all-purpose-flour",
+  "flour",
+  "sugar",
+  "granulated-sugar",
+]);
+
+/** How many recent meals the brief lists, so new ideas vary from them. */
+const RECENT_MEALS = 10;
+
+/**
+ * Everything needed to write this house's ideas well.
  *
- * The slug list is the contract, not a courtesy: `saveIdeas` rejects any dish
- * naming a slug that is not on it. What expires soonest goes first because
- * that is the whole reason these exist. The names to avoid are the shared
- * catalog plus what is already on the overlay, so a new idea is new.
+ * Ingredients come with the kitchen's confidence in them, because a dinner
+ * built on grapes bought two weeks ago is a dinner nobody can cook. Recent
+ * meals are listed so the new ones differ in shape, not only in name. Lunch
+ * and snack food is listed separately so it never anchors a dinner.
  */
 export function ideasBrief(account: string, acct: Account, want: number): string {
-  const items = live(account);
-  const soon = items
-    .filter((i) => {
-      const d = daysLeft(i);
-      return d !== null && d <= 6;
-    })
-    .sort((a, b) => (daysLeft(a) ?? 99) - (daysLeft(b) ?? 99))
-    .map((i) => `${i.id} (${daysLeft(i)}d)`);
+  const ev = evidence(account).filter((e) => e.estimate !== "doubtful");
+  const mains = ev.filter((e) => !isConvenience(e.item));
+  const convenience = ev.filter((e) => isConvenience(e.item));
+  const slugList = (xs: Evidence[]) =>
+    xs
+      .map((e) => `${e.item.id}${e.estimate === "unsure" ? " (unsure)" : ""}`)
+      .sort()
+      .join(", ") || "(none)";
+
+  const perishable = mains
+    .filter((e) => e.shelf && e.estimate !== "unsure" && e.age >= e.shelf.life.low * 0.6)
+    .map((e) => e.item.id);
+  const recent = meals(account)
+    .slice(-RECENT_MEALS)
+    .map((m) => m.name)
+    .reverse();
   const shared = loadRecipes().recipes.map((r) => r.name);
   const own = readOverlay(account).recipes.map((r) => r.name);
   const who = eaters(acct)
@@ -102,32 +129,38 @@ export function ideasBrief(account: string, acct: Account, want: number): string
   const avoidMethods = (acct.prefs?.avoid_methods ?? []).map(
     (m) => METHOD_LABEL[m as keyof typeof METHOD_LABEL] ?? m,
   );
+
   return [
-    `Write ${want} new dinner or lunch idea${want === 1 ? "" : "s"} for ${who || "this house"}, built strictly from what is on the shelves right now.`,
+    `Write ${want} new dinner or lunch idea${want === 1 ? "" : "s"} for ${who || "this house"}, from what is in the kitchen now.`,
     "",
-    "Use ONLY these ingredient slugs, exactly as written. Do not invent slugs, do not",
-    "pluralise, do not substitute a similar word. Anything else is rejected on save:",
-    items
-      .map((i) => `${i.id}${i.qty !== null ? ` (${i.qty}${i.unit ? ` ${i.unit}` : ""})` : ""}`)
-      .sort()
-      .join(", ") || "(nothing tracked)",
+    "Ingredients, by ledger slug. Use these slugs exactly. Items marked (unsure) may be",
+    "gone: build around them only if nothing else works, and never as the main.",
+    slugList(mains),
     "",
-    soon.length ? `Use these first, they expire soonest: ${soon.join(", ")}` : "",
-    acct.diet?.avoid?.length ? `This house avoids: ${acct.diet.avoid.join(", ")}.` : "",
+    `Lunch and snack food. Never the centre of a dinner: ${slugList(convenience)}`,
+    `Always available without tracking: ${[...BASICS].join(", ")}.`,
+    "",
+    perishable.length ? `Worth using soon: ${perishable.join(", ")}.` : "",
+    recent.length
+      ? `Cooked recently (vary the shape, not just the name): ${recent.join("; ")}.`
+      : "",
+    acct.diet?.avoid?.length
+      ? `Never use (dishes with these are rejected): ${acct.diet.avoid.join(", ")}.`
+      : "",
     acct.diet?.style ? `How they eat: ${acct.diet.style}.` : "",
     acct.prefs?.vibe ? `Current vibe setting: ${acct.prefs.vibe}.` : "",
     acct.prefs?.mode && acct.prefs.mode !== "normal" ? `Mode: ${acct.prefs.mode}.` : "",
     avoidMethods.length ? `Not cooking with: ${avoidMethods.join(", ")}.` : "",
     "",
-    `Do NOT repeat or lightly rename any of these: ${[...shared, ...own].join(", ")}`,
+    `Do not repeat or lightly rename: ${[...shared, ...own].join(", ")}`,
     "",
-    "Real cooking, no garnish-only dishes, nothing that needs equipment this house",
-    "has not shown it owns. You know these people; write for them, not for a catalog.",
+    "Write the dinners a person would actually cook for this house: a real main, sides",
+    "that belong with it, a sauce or seasoning that makes it worth eating. List the main",
+    "ingredient first in needs. Use what you know about these people from this chat.",
     "",
     `Then kitchen_ideas action:"save" with recipes:[{id: kebab-case, name, desc (one`,
-    `plain sentence, no marketing), minutes, cat: dinner|lunch|side|dessert|snack,`,
-    `health: 1-5, needs: [[slug, qty-or-null]], effort?, method?}]. A null qty means`,
-    `"some", which is right for spices, oils and condiments.`,
+    `plain sentence), minutes, cat: dinner|lunch|side|dessert|snack, health: 1-5,`,
+    `needs: [[slug, qty-or-null]], effort?, method?}]. A null qty means "some".`,
   ]
     .filter((l) => l !== "")
     .join("\n");
@@ -146,7 +179,10 @@ export function saveIdeas(
   raw: unknown[],
   now = new Date(),
 ): { saved: Idea[]; rejected: Array<{ id: string; why: string }> } {
-  const have = new Set(live(account).map((i) => i.id));
+  const stock = live(account);
+  const have = new Set(stock.map((i) => i.id));
+  const items = new Map(stock.map((i) => [i.id, i]));
+  const avoid = getAccount(account)?.diet?.avoid;
   const shared = new Set(loadRecipes().recipes.map((r) => r.id));
   const overlay = readOverlay(account);
   const today = now.toISOString().slice(0, 10);
@@ -168,10 +204,23 @@ export function saveIdeas(
       continue;
     }
     const unknown = r.needs
-      .filter(([s]) => !(typeof s === "string" && (have.has(s) || s.startsWith("leftover-"))))
+      .filter(
+        ([s]) =>
+          !(typeof s === "string" && (have.has(s) || BASICS.has(s) || s.startsWith("leftover-"))),
+      )
       .map(([s]) => String(s));
     if (unknown.length) {
       rejected.push({ id, why: `unknown ingredient ${unknown.join(", ")}` });
+      continue;
+    }
+    const avoided = avoidedBy(avoid, { name: r.name, needs: r.needs });
+    if (avoided) {
+      rejected.push({ id, why: `uses ${avoided}, which this house avoids` });
+      continue;
+    }
+    const main = items.get(String(r.needs[0]?.[0]));
+    if ((r.cat ?? "dinner") === "dinner" && main && isConvenience(main)) {
+      rejected.push({ id, why: `a dinner is not built around ${main.name.toLowerCase()}` });
       continue;
     }
     if (typeof r.minutes !== "number" || !(r.minutes > 0)) {

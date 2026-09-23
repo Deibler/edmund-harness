@@ -14,7 +14,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { accountDir } from "./accounts.ts";
+import { accountDir, getAccount } from "./accounts.ts";
+import { avoidedBy } from "./foods.ts";
 import type { Item } from "./types.ts";
 
 export type Recipe = {
@@ -222,17 +223,25 @@ export function loadRecipes(account?: string): { recipes: Recipe[]; seed: Cooked
   }
   if (!account) return { recipes, seed };
 
+  // The household's avoid list is a filter, not a suggestion: a dish built on
+  // something they said they do not eat is never offered, on any path.
+  const avoid = getAccount(account)?.diet?.avoid;
+  const allowed = (r: Recipe) => !avoidedBy(avoid, r);
+
   const op = overlayPath(account);
-  if (!existsSync(op)) return { recipes, seed };
+  if (!existsSync(op)) return { recipes: recipes.filter(allowed), seed };
   try {
     const raw = JSON.parse(readFileSync(op, "utf8")) as { recipes?: Recipe[] };
     const own = raw.recipes ?? [];
     // Household wins on a collision: an idea generated from this fridge is more
     // current than the shared entry it shadows.
     const mine = new Set(own.map((r) => r.id));
-    return { recipes: [...recipes.filter((r) => !mine.has(r.id)), ...own], seed };
+    return {
+      recipes: [...recipes.filter((r) => !mine.has(r.id)), ...own].filter(allowed),
+      seed,
+    };
   } catch {
-    return { recipes, seed };
+    return { recipes: recipes.filter(allowed), seed };
   }
 }
 

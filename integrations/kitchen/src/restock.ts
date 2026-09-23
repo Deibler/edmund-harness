@@ -15,11 +15,9 @@
  * fitted to that is a coin flip wearing a lab coat, and its errors land in the
  * one place that has to stay trustworthy.
  *
- * So this does not infer. It asks, once, at the only moment the answer is
- * obvious to a person and unknowable to software: when the thing runs out.
- * Until it is answered the item sits in a tray, never on the list, so an
- * unanswered question costs nothing. After it is answered it is never asked
- * again. Two shopping cycles and the tray is empty.
+ * So the list only restocks what the house has shown it keeps, by buying it on
+ * more than one trip (`onRunOut`). Anything else that runs out is offered once,
+ * in the follow-up after a meal, or dropped when it was never cooked with.
  *
  * Kept out of the event log deliberately, on the same reasoning as `list.ts`:
  * the log records what happened to food, and "we always keep this" is a
@@ -207,15 +205,40 @@ export function skipped(
   return shops <= (s.shops ?? shopsBy(s.at));
 }
 
+/** Trips an item must have been bought on before it counts as something this house keeps. */
+export const STAPLE_TRIPS = 2;
+
+/** What happens when an item runs out. */
+export type RunOut =
+  /** Straight onto the list: the house keeps this. */
+  | "list"
+  /** Offered in the next follow-up ("running low on X, add it?"). */
+  | "offer"
+  /** Dropped quietly: bought once and never cooked with. */
+  | "drop";
+
 /**
- * Does running out of this put it on the list without anyone being asked?
+ * Decide what running out of an item means for the list.
  *
- * An explicit answer always wins, including over the category rule — somebody
- * who says they always want chicken thighs in the freezer gets that, and the
- * default exists for the people who have not said anything.
+ * Repeat purchase is the evidence that a house keeps something. An item bought
+ * on two or more separate trips goes back on the list by itself; one bought
+ * once does not, however many times it was eaten, because once is not a habit.
+ * Proteins are offered rather than listed even when they are kept: which meat
+ * to buy is a fresh choice every week. An explicit answer beats all of this.
+ *
+ * Something bought once and never cooked with is dropped. It was an experiment
+ * or a one-off, and asking about it would be noise.
  */
-export function autoRestocks(book: Book, id: string, cat: Category | null): boolean {
+export function onRunOut(
+  book: Book,
+  id: string,
+  cat: Category | null,
+  seen: { trips: number; mealUses: number },
+): RunOut {
   const own = dispositionOf(book, id);
-  if (own) return own === "always";
-  return !ASK_CATEGORIES.includes(cat as Category);
+  if (own === "always") return "list";
+  if (own === "never") return "drop";
+  const kept = seen.trips >= STAPLE_TRIPS;
+  if (kept && !ASK_CATEGORIES.includes(cat as Category)) return "list";
+  return kept || seen.mealUses > 0 ? "offer" : "drop";
 }
