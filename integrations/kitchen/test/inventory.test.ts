@@ -49,7 +49,7 @@ const { applyVerdicts } = await import("../src/assess.ts");
 const followups = await import("../src/followups.ts");
 const { morningReview } = await import("../src/review.ts");
 const { shopping } = await import("../src/shopping.ts");
-const { buildDoc } = await import("../src/notedoc.ts");
+const { noteLines } = await import("../src/notelist.ts");
 const { loadRecipes } = await import("../src/recipes.ts");
 const { saveIdeas } = await import("../src/ideas.ts");
 const { followupText } = await import("../src/wake.ts");
@@ -287,9 +287,8 @@ describe("follow-ups", () => {
     expect(group?.lines.map((l) => l.item)).toEqual(["cilantro"]);
   });
   test("the note carries the assumed section", () => {
-    const doc = buildDoc(A);
     expect(
-      doc.blocks.some((b) => b.kind === "heading" && b.text === "Assumed to be low/out:"),
+      noteLines(A).some((l) => l.kind === "heading" && l.text === "Assumed to be low/out:"),
     ).toBe(true);
   });
   test("a suspicion never asked about is assumed after four days", () => {

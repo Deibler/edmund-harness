@@ -124,7 +124,7 @@ rest come from ignoring these:
 | a recipe already written out | `kitchen_recipe_get` |
 | save one you just wrote | `kitchen_recipe_save` |
 | everything written for this house | `kitchen_cookbook` |
-| what to buy; list answers; Apple Notes | `kitchen_shopping` |
+| what to buy; list answers; the note is up to date | `kitchen_shopping` |
 | reconcile against the shelves, including photos | `kitchen_check` |
 | "text us dinner at 4 every day" | `kitchen_schedule` |
 | site taps waiting for a person | `kitchen_requests` |
@@ -367,43 +367,46 @@ the receipt knows amounts).
 
 ### Apple Notes
 
-The household's note is kept equal to the list automatically: the watch pass
-checks whether the generated block changed (a pure fold that opens nothing) and
-only then drives a browser. `kitchen_shopping notes:true` forces a sync; you
-rarely need it.
+Each household's list also lives in a shared Apple Note, the one people shop
+from on their phones. **Only you write it, on screen, with the computer tools**
+in the Notes app on this Mac. No tool and no background job touches a note.
 
-- **Lines are real checkboxes.** Every sync reads the note first and puts each
-  tick back. A tick means "in the cart", never "owned"; the receipt decides.
-- **Writes change only the lines that differ** (`src/notepatch.ts`). A
-  whole-body paste deletes every line, and a member's phone can bring deleted
-  lines back as stacked copies.
-- **Sharing.** `kitchen_shopping share:true` invites every member;
-  `shareWith:[...]` adds others, each an Apple Account. **The first share of a
-  household is always explicit, never on a schedule**, because an invite
-  reaches another person. After that, members are kept in step automatically.
-  A link does not replace an invite; access is gated on the invite list.
-- **Everything goes through icloud.com** over the DevTools protocol, against the
-  signed-in Chrome profile at `data/kitchen/chrome-profile`. AppleScript cannot
-  invite and strips checklists. If the session lapses, the tool asks a human to
-  sign in. There is no password in the repo and there must never be one.
-- **The body is a canvas**: no DOM, only keyboard and clipboard. Apple's
-  clipboard HTML carries styling as JSON in `data-tt`, ticks included.
-  `src/notedoc.ts` owns that format and is unit tested.
-- **The page must believe it has focus** (`Emulation.setFocusEmulationEnabled`),
-  or the editor ignores every key.
-- **A failed read never looks like an empty note.** `readBody` proves the caret
-  is in the editor and the copy carries Apple's styling, or returns null; a null
-  read never writes.
-- **Never write through both transports.** The local Notes app is a lagging
-  replica; writing through it while the browser owns the note duplicates the
-  list. A failed sync leaves the note alone and says so. Never launch Notes.app
-  on this Mac.
-- `note_url` and `note_link` are recorded on the account so every run navigates
-  straight to the note; searching by title in a virtualised list can select the
-  wrong note. `note_link` is what to text somebody.
-- **Who is on the note is remembered by the handle invited**
-  (`invitedHandles` in `notes.json`), not the display label, which changes to a
-  contact name on accept.
+- **When.** After you change a household's list in a turn, bring its note up
+  to date in the same turn if you can, then `kitchen_shopping noteWritten:true`.
+  If you don't, the watch pass wakes that household's session once the list
+  has held still for two minutes, with the lines the note should have, and you
+  do it then, quietly. The site's Apple Notes button asks for that wake at
+  once. A chat with no screen tools for Notes is never woken (while computer
+  use only shadows, that is every chat but the owner's), so those notes wait.
+- **Which note.** The one named in `note_list` (set once with
+  `kitchen_shopping noteTitle`), else "<household> list". Open it from the
+  note list by that title. The screen tools refuse another household's list;
+  never open one.
+- **What it says.** Above the line "Add anything below this line and I will
+  move it onto the list above.": the title as the first line, then each group
+  as a heading followed by its lines as checklist items, exactly as
+  `kitchen_shopping` prints them when the note is behind. Below that line is
+  the household's own. Never rewrite it, but anything new there is an item
+  somebody wants: put it on the list with `kitchen_shopping add` (`by` whoever
+  wrote it, when you can tell), then delete it from below the line.
+- **Change only the lines that differ.** Delete lines that left the list, add
+  new ones as unticked checklist lines (Format > Checklist), and leave the
+  rest alone. Never select all and paste the list: a phone that has edited
+  the note can bring deleted lines back, so a whole-note paste leaves stacked
+  copies of the list on somebody's phone.
+- **Ticks are theirs.** A ticked line means "in the cart". Leave it ticked
+  while it stays on the list. A tick never means the food is owned; the
+  receipt decides that.
+- **Check before you say so.** Take a screenshot after editing, and call
+  `noteWritten:true` only once the note reads right. If Notes will not
+  cooperate, leave it: the note stays marked as behind.
+- **Sharing.** To put somebody on the note, use Share > Collaborate in Notes,
+  which sends the invite through Messages. The screen tools only act in the
+  conversation you are in, so you can invite the person you are talking to
+  and nobody else from there. The first share of a household is always
+  something a person asked for, because an invite reaches another person.
+- **Trust iCloud.** An edit made in Notes on this Mac reaches phones on its
+  own. Do not go and check icloud.com.
 
 ## The site
 

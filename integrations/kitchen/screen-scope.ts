@@ -10,7 +10,7 @@
 
 import type { Config } from "../../src/config/config.ts";
 import { listAccounts } from "./src/accounts.ts";
-import { noteTitle } from "./src/notedoc.ts";
+import { noteTitle } from "./src/notelist.ts";
 import { applyKitchenConfig } from "./src/settings.ts";
 
 export function screenScope(

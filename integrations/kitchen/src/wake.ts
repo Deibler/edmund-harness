@@ -31,6 +31,7 @@ import type { JobInput } from "../../../src/cron/types.ts";
 import { accountDir, eaters, householdTitle } from "./accounts.ts";
 import { type Evidence, describeEvidence } from "./evidence.ts";
 import type { Due } from "./followups.ts";
+import { type NoteLine, SENTINEL, noteText, noteTitle } from "./notelist.ts";
 import type { MakeRequest } from "./requests.ts";
 import { requestKey } from "./requests.ts";
 import { dataDir } from "./settings.ts";
@@ -371,4 +372,45 @@ export function wakeForFollowup(
     [{ key: `followup:${due.plan.id}`, requester: due.plan.by ?? null, line: "", talk: true }],
     { ...opts, text: (_, session) => followupText(acct, due, offers, session) },
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * The shared note
+ * ------------------------------------------------------------------ */
+
+export function noteEventText(account: string, acct: Account, lines: NoteLine[]): string {
+  const title = noteTitle(account);
+  return [
+    `[Kitchen · ${householdTitle(acct)}] The shopping list changed, so the shared Apple Note "${title}" is behind. Bring it up to date on screen with the computer tools. Nobody asked for this in chat.`,
+    "",
+    `Above the line "${SENTINEL}" the note should read, in this order:`,
+    "",
+    noteText(lines),
+    "",
+    `1. request_access for Notes, open_application Notes, and open "${title}" from the note list. Touch no other note.`,
+    "2. Screenshot and read it. Below the sentinel line is the household's own: anything new there is an item somebody wants. Put it on the list with kitchen_shopping add (by: whoever wrote it, when you can tell) and then delete it from below the line. If you added anything, use the lines from that kitchen_shopping reply instead of the ones above.",
+    "3. Change only the lines that differ: delete lines no longer on the list, add new ones as unticked checklist lines (Format > Checklist), and leave every tick where it is. Never select all and paste; a whole-note paste lets a phone bring old lines back as copies.",
+    "4. Screenshot to check, then kitchen_shopping noteWritten:true.",
+    "If this chat has no computer tools, or Notes will not cooperate, stop without calling noteWritten.",
+    "",
+    QUIET,
+  ].join("\n");
+}
+
+/**
+ * Wake the household's session to bring its note up to date with the list.
+ * Keyed on the list's signature, so one list state wakes at most
+ * MAX_ATTEMPTS times; a newer list is a new key.
+ */
+export function wakeForNote(
+  account: string,
+  acct: Account,
+  signature: string,
+  lines: NoteLine[],
+  opts: WakeOpts = {},
+): WakeResult {
+  return wake(account, acct, [{ key: `note:${signature}`, line: "" }], {
+    ...opts,
+    text: () => noteEventText(account, acct, lines),
+  });
 }
