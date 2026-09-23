@@ -1,32 +1,17 @@
 /**
- * The daily pass. One per household, unattended.
+ * The daily pass, one run per household, unattended.
  *
- * This exists because of how tracking tools actually die. People use them hard
- * for a week or two and then stop, not because the tool got worse but because
- * keeping it current became a chore, and the moment it falls behind reality it
- * stops being worth opening — which makes it fall further behind. The research
- * calls that lapsing, and it is the normal shape of the curve rather than a
- * defect in the user: a 12-week MyFitnessPal trial saw consistent logging go
- * from 68% in week one to 21% by week twelve.
+ * Tracking tools die when keeping them current becomes a chore, so this pass
+ * keeps the kitchen true without asking anyone for anything:
  *
- * So the design rule is that this kitchen must never need attention to stay
- * true, and must never punish a gap. Three things happen here, all silent:
+ *   1. Leftovers nobody logged eating are retired.
+ *   2. The inventory is reviewed: suspicions that waited long enough are
+ *      settled, and what the kitchen is unsure of goes to the household's main
+ *      session to be reasoned about (`review.ts`).
+ *   3. Ideas built on food that is gone are retired.
+ *   4. The site is re-rendered, so it shows today.
  *
- *   1. Food that has obviously left the house is retired, so the stock list
- *      keeps describing the fridge even when nobody logs anything for a week.
- *
- *   2. Meal ideas built on food that is gone are dropped, and I am woken to
- *      write ideas built on what is actually in the kitchen this morning in
- *      their place. Without this the site spends month two recommending
- *      dinners from week one's shopping, which is the single most obvious way
- *      it would go stale. The writing is mine and not a sub-model's, which is
- *      why it is a wake-up rather than a call: see `wake.ts`.
- *
- *   3. The site is re-rendered, so opening the link after two weeks away shows
- *      today rather than the day you stopped.
- *
- * Nothing here messages anyone. A daily "here is what I cleaned up" notification
- * would recreate the exact burden it is meant to remove.
+ * Nothing here messages anyone.
  */
 
 import { existsSync } from "node:fs";
@@ -36,17 +21,17 @@ import { checkAccount } from "../src/doctor.ts";
 import { pruneIdeas } from "../src/ideas.ts";
 import { photographMissing } from "../src/photos.ts";
 import { cookable, loadRecipes } from "../src/recipes.ts";
+import { morningReview } from "../src/review.ts";
 import { loadKitchenSettings } from "../src/settings.ts";
 import { writeSite } from "../src/site.ts";
 import { live } from "../src/store.ts";
-import { wakeForIdeas } from "../src/wake.ts";
 
 async function runAccount(id: string): Promise<void> {
   const acct = getAccount(id);
   if (!acct) return;
   console.log(`\n=== ${id} (${householdTitle(acct)})`);
 
-  // 1. Retire what has obviously gone.
+  // 1. Retire leftovers nobody logged eating.
   const swept = sweepStale(id);
   if (swept.removed.length) {
     console.log(`  swept ${swept.removed.length} in batch ${swept.batch}:`);
@@ -55,23 +40,21 @@ async function runAccount(id: string): Promise<void> {
     console.log("  swept nothing");
   }
 
-  // 2. Retire the household's own ideas that the kitchen has moved past, and
-  //    ask for replacements. The asking is a wake-up in a member's chat with
-  //    the exact brief, not a model call from here: which ten dinners suit
-  //    this house this week is the one question in this pass that needs to
-  //    know the people, and the pass does not.
-  const items = live(id);
-  const have = new Set(items.map((i) => i.id));
-  const pruned = pruneIdeas(id, items);
-  for (const d of pruned.dropped) console.log(`  drop ${d.id}: ${d.why}`);
-  if (pruned.want > 0 && have.size > 8) {
-    const w = wakeForIdeas(id, acct, pruned.want);
-    for (const x of w.woke)
-      console.log(`  woke ${x.session} for ${pruned.want} idea(s), job ${x.job}`);
-    for (const h of w.held) console.log(`  ideas not asked for: ${h.why}`);
-  }
+  // 2. Review the inventory.
+  const review = morningReview(id, acct);
+  for (const a of review.settled.assumed) console.log(`  assumed ${a.verdict}: ${a.id}`);
+  if (review.settled.dropped.length)
+    console.log(`  suspicions withdrawn: ${review.settled.dropped.join(", ")}`);
+  if (review.held.length) console.log(`  held for follow-up: ${review.held.join(", ")}`);
+  for (const x of review.wake?.woke ?? [])
+    console.log(`  woke ${x.session} to review ${review.reviewed.length} item(s), job ${x.job}`);
+  for (const h of review.wake?.held ?? []) console.log(`  review not asked for: ${h.why}`);
 
-  // 3. Re-render, so the link shows today.
+  // 3. Retire ideas built on food that is gone.
+  const items = live(id);
+  for (const d of pruneIdeas(id, items).dropped) console.log(`  drop ${d.id}: ${d.why}`);
+
+  // 4. Re-render, so the link shows today.
   const dir = acct.site?.artifact;
   if (dir && existsSync(dir)) {
     // Photograph anything on the site that has no picture, before the render.
@@ -109,7 +92,7 @@ async function runAccount(id: string): Promise<void> {
     console.log("  no site artifact, skipped render");
   }
 
-  // 4. Say out loud what is wired up and what is not.
+  // 5. Say out loud what is wired up and what is not.
   //
   // The rest of this pass is deliberately silent, and that silence is exactly
   // what let a household sit for a week with a perfect site nobody could open.

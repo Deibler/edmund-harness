@@ -29,23 +29,28 @@ writeFileSync(
 
 const { append } = await import("../src/store.ts");
 const { shopping, settleAfterPurchase, isBuyable } = await import("../src/shopping.ts");
-const { setDisposition, skip, autoRestocks, readBook } = await import("../src/restock.ts");
+const { setDisposition, skip, onRunOut, readBook } = await import("../src/restock.ts");
 const { tripCount } = await import("../src/shopping.ts");
 const { addToList, setAmount, readList } = await import("../src/list.ts");
 import { check, section } from "./harness.ts";
 
 const A = "hh";
-const stock = (id: string, name: string, cat: string, qty: number | null) =>
-  append(A, [
-    {
-      op: "add" as const,
-      item: id,
-      qty,
-      unit: "ct",
-      fields: { name, cat: cat as never },
-      why: "seed",
-    },
-  ]);
+/** Bought on `trips` separate shops, which is what makes something a staple. */
+const stock = (id: string, name: string, cat: string, qty: number | null, trips = 2) => {
+  for (let t = 1; t <= trips; t++) {
+    append(A, [
+      {
+        op: "add" as const,
+        item: id,
+        qty,
+        unit: "ct",
+        fields: { name, cat: cat as never },
+        why: "seed",
+        src: `receipt:seed-2026-01-0${t}`,
+      },
+    ]);
+  }
+};
 const useUp = (id: string) =>
   append(A, [{ op: "use" as const, item: id, qty: null, why: "ate it" }]);
 const names = () => shopping(A).lines.map((l) => l.name);
@@ -101,11 +106,23 @@ append(A, [{ op: "add" as const, item: "milk", qty: 2, why: "restocked properly"
 
 section("who decides about protein");
 
+const bought = (trips: number, mealUses: number) => ({ trips, mealUses });
 check(
-  "meat does not auto-restock by default",
-  !autoRestocks(readBook(A), "chicken-thighs", "meat"),
+  "meat is offered, never listed by default, however often it is bought",
+  onRunOut(readBook(A), "chicken-thighs", "meat", bought(5, 5)) === "offer",
 );
-check("pantry staples do", autoRestocks(readBook(A), "chicken-broth", "pantry"));
+check(
+  "something bought on two trips is a staple",
+  onRunOut(readBook(A), "chicken-broth", "pantry", bought(2, 0)) === "list",
+);
+check(
+  "something bought once and cooked with is offered",
+  onRunOut(readBook(A), "tahini", "pantry", bought(1, 1)) === "offer",
+);
+check(
+  "something bought once and never cooked with is dropped",
+  onRunOut(readBook(A), "tahini", "pantry", bought(1, 0)) === "drop",
+);
 
 useUp("chicken-thighs");
 check("so running out of thighs stays off the list", !names().includes("Chicken thighs"));

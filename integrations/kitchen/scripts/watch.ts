@@ -23,11 +23,13 @@
 import { existsSync } from "node:fs";
 import { getAccount, listAccounts } from "../src/accounts.ts";
 import { drain, needsPerson, publishQueue } from "../src/drain.ts";
+import { followupDue, markAsked, mayOffer, readFollowups } from "../src/followups.ts";
 import { syncDueNotes } from "../src/notesync.ts";
 import { describe, due, fire } from "../src/schedules.ts";
 import { loadKitchenSettings } from "../src/settings.ts";
+import { shopping } from "../src/shopping.ts";
 import { writeSite } from "../src/site.ts";
-import { wakeForRequests } from "../src/wake.ts";
+import { wakeForFollowup, wakeForRequests } from "../src/wake.ts";
 
 const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 
@@ -116,6 +118,42 @@ for (const { id } of listAccounts()) {
       } catch (e) {
         trouble = [trouble, `wake: ${(e as Error).message}`].filter(Boolean).join("; ");
         console.error(`${stamp()} ${id}: FAILED wake ${(e as Error).message}`);
+      }
+    }
+
+    // A meal sent yesterday gets one short follow-up in the chat it was planned
+    // in: did you make it, and anything worth adding to the list. Suspicions
+    // about stock and recent run-outs ride along, so the household hears from
+    // the kitchen once instead of every time it has a question.
+    if (acct) {
+      try {
+        const due = followupDue(id);
+        if (due) {
+          const state = readFollowups(id);
+          const offers = shopping(id)
+            .suggestions.filter((x) => x.kind === "restock" && mayOffer(state, x.item))
+            .slice(0, 4);
+          const w = wakeForFollowup(
+            id,
+            acct,
+            due,
+            offers.map((o) => o.name),
+          );
+          if (w.woke.length || w.held.some((h) => h.why !== "recent")) {
+            markAsked(id, {
+              plan: due.plan.id,
+              suspects: due.suspects.map((x) => x.id),
+              offered: offers.map((o) => o.item),
+            });
+          }
+          for (const x of w.woke)
+            console.log(
+              `${stamp()} ${id}: follow-up on "${due.plan.meal}" to ${x.session}, job ${x.job}`,
+            );
+        }
+      } catch (e) {
+        trouble = [trouble, `follow-up: ${(e as Error).message}`].filter(Boolean).join("; ");
+        console.error(`${stamp()} ${id}: FAILED follow-up ${(e as Error).message}`);
       }
     }
 

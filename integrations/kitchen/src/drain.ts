@@ -618,6 +618,7 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
           created: was?.created,
           fired: was?.fired ?? null,
           last: was?.last ?? null,
+          picks: was?.picks ?? [],
         },
         acct,
       );

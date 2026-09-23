@@ -1,29 +1,27 @@
 /**
- * Waking me for the things only I should answer.
+ * Bringing kitchen work to the household's main Edmund session.
  *
- * The drain settles every tap that is arithmetic. What is left is judgement:
- * which ten dinners suit this house this week, what "chicken parm" actually
- * needs from a supermarket, whether milk can stand in for cream on step three.
- * Those used to go to a narrow model on OpenRouter that had never met the
- * household, or sat in the queue behind an alarm that had been dead for weeks.
- * Now they wake me, in a chat I already know these people from, with the
- * exact tool to answer through.
+ * Nothing in the kitchen thinks on its own. Work that needs judgement (writing
+ * a recipe, answering a question asked at the stove, reviewing the inventory,
+ * following up on a meal) is queued as a one-shot event in the main session of
+ * the person it concerns, which already carries their tastes and history. The
+ * event names the exact tools that write the answer.
  *
- * WHICH CHAT. The person who tapped, when they are a member with a chat of
- * their own: it is their question and that session already knows them. When
- * nobody in particular asked (the morning pass), the household's `wake`
- * member, else the first one listed. Never a group, because everything I
- * write in a group turn lands on every phone in it.
+ * Which session:
+ *   - a site tap goes to the member who tapped;
+ *   - a follow-up goes to whoever the meal was planned for;
+ *   - unattended work (the morning review) goes to the household's `wake`
+ *     member, else the first member listed. Never a group.
  *
- * HOW OFTEN. Once per request per twenty minutes, three times at most. A
- * request I have not answered after three wakes is one I have decided not to
- * answer, and a fourth wake would only cost the household another turn. The
- * ledger of attempts lives next to the household's other state, and a corrupt
- * one costs at most three more wakes rather than an unanswered site.
+ * Whether it talks:
+ *   - Make and similar requests are conversations: the reply is a text to the
+ *     person, who may be asked a short question before the recipe is written.
+ *   - A follow-up is a text by definition.
+ *   - Site answers (chat, voice, explore) and the morning review are silent:
+ *     the answer lands on the site or in the ledger, and the turn ends quietly.
  *
- * WHAT THE WAKE SAYS. One event per chat per pass, listing every request due,
- * each with the tool that writes its answer. The answers go on the site, so
- * the event ends by telling me to say nothing in the chat itself.
+ * Retries: once per item per twenty minutes, three times at most, tracked in
+ * the household's `wakes.json`.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -31,6 +29,8 @@ import { join } from "node:path";
 import { CronStore } from "../../../src/cron/store.ts";
 import type { JobInput } from "../../../src/cron/types.ts";
 import { accountDir, eaters, householdTitle } from "./accounts.ts";
+import { type Evidence, describeEvidence } from "./evidence.ts";
+import type { Due } from "./followups.ts";
 import type { MakeRequest } from "./requests.ts";
 import { requestKey } from "./requests.ts";
 import { dataDir } from "./settings.ts";
@@ -41,13 +41,17 @@ export const RETRY_MS = 20 * 60_000;
 /** Entries older than this are forgotten; the request they name is long gone. */
 const FORGET_MS = 7 * 86_400_000;
 
+export const QUIET = "When it is done, reply with exactly KEEP_QUIET.";
+
 export type WakeItem = {
-  /** Dedup identity. A request key, or `ideas:<day>` for the morning pass. */
+  /** Dedup identity: a request key, `review:<day>` or `followup:<plan>`. */
   key: string;
   /** Whose question this is, when it is somebody's. */
   requester?: string | null;
-  /** What to do, as a line in the event. */
+  /** What to do, as a numbered line in the event. */
   line: string;
+  /** True when the answer is a text to the person rather than a silent write. */
+  talk?: boolean;
 };
 
 export type WakeResult = {
@@ -58,9 +62,7 @@ export type WakeResult = {
 
 type Ledger = Record<string, { attempts: number; last: number }>;
 
-function ledgerPath(account: string): string {
-  return join(accountDir(), account, "wakes.json");
-}
+const ledgerPath = (account: string) => join(accountDir(), account, "wakes.json");
 
 function readLedger(account: string): Ledger {
   const p = ledgerPath(account);
@@ -81,7 +83,7 @@ function writeLedger(account: string, l: Ledger): void {
   renameSync(tmp, p);
 }
 
-/** The chat a question wakes me in. Null only for a household with no members. */
+/** The session a piece of work goes to. Null only for a household with no members. */
 export function sessionFor(acct: Account, requester?: string | null): string | null {
   const people = eaters(acct).map((e) => e.principal);
   if (requester && people.includes(requester)) return requester;
@@ -89,7 +91,7 @@ export function sessionFor(acct: Account, requester?: string | null): string | n
   return people[0] ?? null;
 }
 
-/** What to call the person who tapped, for the event. */
+/** What to call a member in an event. */
 export function nameOf(acct: Account, principal?: string | null): string {
   if (!principal) return "Somebody";
   return eaters(acct).find((e) => e.principal === principal)?.label ?? "Somebody";
@@ -98,84 +100,106 @@ export function nameOf(acct: Account, principal?: string | null): string {
 /** Text that survives being pasted into an event. */
 const q = (s: string | undefined | null, n = 160) => JSON.stringify((s ?? "").slice(0, n));
 
+/** Request kinds whose answer is a conversation with the person who tapped. */
+const TALKS = new Set(["make", "variant", "compose", "idearecipe"]);
+
+/**
+ * How to write a dish somebody asked for from the site: in conversation, asking
+ * only what the ledger cannot answer.
+ */
+const WRITE_IN_CHAT =
+  "Text them in this chat. Check the ingredients with kitchen_status first. If the dish " +
+  'depends on something the kitchen is unsure of, ask them one short line first ("Do you ' +
+  'still have the mushrooms?") and write it once they answer; otherwise write it now';
+
 /**
  * One request as a line of the event, with the tool that answers it.
  *
- * Every kind that can wake me is named here, and the fallback is a pointer at
- * `kitchen_requests`, which prints the full body. Detail goes in the line only
- * when it saves a lookup: the question somebody asked out loud, the items they
- * picked, the theme they typed.
+ * Every kind that can wake is named here; anything else points at
+ * `kitchen_requests`, which prints the full body.
  */
 export function describeRequest(acct: Account, r: MakeRequest): string {
   const who = nameOf(acct, r.profile);
   const dish = r.name ?? r.recipe ?? "";
   const key = requestKey(r);
+  const done = `kitchen_requests handled:[${q(key)}]`;
   switch (r.kind) {
     case "voice":
       return `${who} asked out loud from ${r.recipe ? `step ${r.step ?? "?"} of ${q(dish)}` : "the site"}: ${q(r.text)}\n   kitchen_voice profile:${q(r.profile)} rid:${q(r.rid)} say:"<the answer, under 70 words, spoken English, built on what kitchen_status says is actually in the house>"`;
     case "addlist": {
       const picked = [...(r.items ?? []), ...(r.missing ?? [])].filter(Boolean);
-      return `${who} wants what ${q(dish)} needs on the shopping list; picked: ${picked.join(", ") || "(nothing named)"}\n   kitchen_status first, then kitchen_shopping add:[{name, amount, cat}] key:${q(key)} — real supermarket products, nothing the house already owns, staples assumed unless status says otherwise`;
+      return `${who} wants what ${q(dish)} needs on the shopping list; picked: ${picked.join(", ") || "(nothing named)"}\n   kitchen_status first, then kitchen_shopping add:[{name, amount, cat}] key:${q(key)}: real supermarket products, nothing the house already owns, basics assumed unless status says otherwise`;
     }
     case "explore":
       return (
         `${who} asked for dishes unlike anything this house cooks${r.text?.trim() ? `, theme: ${q(r.text.trim())}` : ""}\n` +
         `   kitchen_explore action:"brief"${r.text?.trim() ? ` theme:${q(r.text.trim())}` : ""}, write eight, then kitchen_explore action:"save" key:${q(key)}`
       );
-    case "idearecipe":
-      return (
-        `${who} wants the explore idea ${q(dish)} written out as a real recipe page\n` +
-        `   kitchen_recipe_save (its shopping is the buy list on the explore page), text them the page, then kitchen_requests handled:[${q(key)}]`
-      );
     case "chat":
       return (
         `${who} asked on the site (${r.page ?? "?"}${r.subject ? `, looking at ${q(r.subject)}` : ""}): ${q(r.text)}\n` +
-        `   kitchen_chat profile:${q(r.profile)} reply:"<the answer>" then kitchen_requests handled:[${q(key)}]`
+        `   kitchen_chat profile:${q(r.profile)} reply:"<the answer>" then ${done}`
       );
     case "make":
       return (
-        `${who} pressed Make on ${q(dish)}, which has never been written out\n` +
-        `   kitchen_plan, kitchen_recipe_save, text the page to whoever kitchen_requests lists, then kitchen_requests handled:[${q(key)}]`
+        `${who} pressed Make on ${q(dish)}, which has never been written out.\n` +
+        `   ${WRITE_IN_CHAT}: kitchen_plan, kitchen_recipe_save, then send the page with one line. Then ${done}.`
       );
     case "variant":
       return (
-        `${who} wants ${q(dish)} built around what the house actually has${r.missing?.length ? ` (missing: ${r.missing.join(", ")})` : ""}\n` +
-        `   kitchen_recipe_save with base:${q(r.recipe)}, text the page, then kitchen_requests handled:[${q(key)}]`
+        `${who} wants ${q(dish)} built around what the house actually has${r.missing?.length ? ` (missing: ${r.missing.join(", ")})` : ""}.\n` +
+        `   ${WRITE_IN_CHAT}: kitchen_recipe_save with base:${q(r.recipe)}, then send the page. Then ${done}.`
       );
     case "compose":
       return (
-        `${who} says nothing in the catalog is tonight's dinner${r.text?.trim() ? `; steer: ${q(r.text.trim())}` : ""}\n` +
-        `   kitchen_status for what is on a clock, write a dish around it, kitchen_plan, kitchen_recipe_save, text the page, then kitchen_requests handled:[${q(key)}]`
+        `${who} says nothing in the catalog is tonight's dinner${r.text?.trim() ? `; steer: ${q(r.text.trim())}` : ""}.\n` +
+        `   ${WRITE_IN_CHAT}: a real dinner around what is on a clock, kitchen_plan, kitchen_recipe_save, then send the page. Then ${done}.`
+      );
+    case "idearecipe":
+      return (
+        `${who} wants the explore idea ${q(dish)} written out as a real recipe page.\n` +
+        `   ${WRITE_IN_CHAT}: kitchen_recipe_save (its shopping is the buy list on the explore page), then send the page. Then ${done}.`
       );
     default:
-      return `${who}: ${r.kind}${dish ? ` ${q(dish)}` : ""}\n   kitchen_requests has the body; kitchen_requests handled:[${q(key)}] once served`;
+      return `${who}: ${r.kind}${dish ? ` ${q(dish)}` : ""}\n   kitchen_requests has the body; ${done} once served`;
   }
 }
 
-/** The event text, for one chat. */
-export function eventText(acct: Account, items: WakeItem[]): string {
+/** The event for one session. */
+export function eventText(acct: Account, items: WakeItem[], session?: string | null): string {
   const n = items.length;
+  const talking = items.filter((it) => it.talk);
+  const who = nameOf(acct, session);
+  const closing = talking.length
+    ? talking.length === n
+      ? `Your reply goes to ${who} as a text, so keep it short and friendly.`
+      : `Answer the site items through the tools first. Your reply goes to ${who} as a text about the rest, so keep it short and friendly.`
+    : QUIET;
   return [
-    `[Kitchen · ${householdTitle(acct)}] ${n === 1 ? "One thing" : `${n} things`} on the household site ${n === 1 ? "needs" : "need"} you, and this is yours to do, not a sub-agent's. The answers go on the site through the kitchen tools, not into this chat. Anything about food starts with kitchen_status.`,
+    `[Kitchen · ${householdTitle(acct)}] ${n === 1 ? "One thing" : `${n} things`} from the household site. Anything about food starts with kitchen_status.`,
     "",
     ...items.map((it, i) => `${i + 1}. ${it.line}`),
     "",
-    "When it is done, reply with exactly KEEP_QUIET.",
+    closing,
   ].join("\n");
 }
 
 /**
- * Wake me for whatever is due, one event per chat.
+ * Queue one event per session for whatever is due.
  *
  * `create` is the cron insert, injectable so the policy can be tested without
- * a database and so a test can hand in a store of its own. The default opens
- * the harness cron store lazily: a pass with nothing due never touches it.
+ * a database. The default opens the harness cron store lazily.
  */
 export function wake(
   account: string,
   acct: Account,
   items: WakeItem[],
-  opts: { create?: (input: JobInput) => { id: string }; now?: number } = {},
+  opts: {
+    create?: (input: JobInput) => { id: string };
+    now?: number;
+    /** Build the event for a session; defaults to `eventText`. */
+    text?: (items: WakeItem[], session: string) => string;
+  } = {},
 ): WakeResult {
   const out: WakeResult = { woke: [], held: [] };
   if (!items.length) return out;
@@ -206,10 +230,11 @@ export function wake(
   if (!bySession.size) return out;
 
   const create = opts.create ?? defaultCreate();
+  const render = opts.text ?? ((due, session) => eventText(acct, due, session));
   for (const [session, due] of bySession) {
     const job = create({
       sessionKey: session,
-      systemEvent: eventText(acct, due),
+      systemEvent: render(due, session),
       schedule: { kind: "once", atMs: now },
     });
     for (const it of due) {
@@ -222,22 +247,19 @@ export function wake(
   return out;
 }
 
-/**
- * The real thing: a one-shot row in the daemon's cron store, polled within
- * seconds. Built here, not at import, so a pass with nothing due never opens
- * the database.
- */
 function defaultCreate(): (input: JobInput) => { id: string } {
   const store = new CronStore(dataDir());
   return (input) => store.create(input);
 }
 
-/** Wake me for the requests a pass left for a person. */
+export type WakeOpts = NonNullable<Parameters<typeof wake>[3]>;
+
+/** Wake the right session for each site request a person has to answer. */
 export function wakeForRequests(
   account: string,
   acct: Account,
   reqs: MakeRequest[],
-  opts: Parameters<typeof wake>[3] = {},
+  opts: WakeOpts = {},
 ): WakeResult {
   return wake(
     account,
@@ -246,28 +268,100 @@ export function wakeForRequests(
       key: requestKey(r),
       requester: r.profile ?? null,
       line: describeRequest(acct, r),
+      talk: TALKS.has(r.kind),
     })),
     opts,
   );
 }
 
-/** Wake me to write the morning's ideas. Keyed by day, so one wake per morning. */
-export function wakeForIdeas(
+/* ------------------------------------------------------------------ *
+ * The morning review
+ * ------------------------------------------------------------------ */
+
+/** The most items one review asks about. More than this and none get real thought. */
+export const REVIEW_MAX = 15;
+
+export function reviewText(acct: Account, items: Evidence[]): string {
+  return [
+    `[Kitchen · ${householdTitle(acct)}] Morning inventory review. Nobody asked for this and nobody sees it.`,
+    "",
+    "The ledger only hears about groceries, so it drifts from the real kitchen. Reason about",
+    "each item below the way a person would: when it was bought, what you have cooked or",
+    "suggested with it since, how long it keeps where it is stored, and anything you know",
+    "from this chat about how they eat. Decide one verdict per item:",
+    "  here   still in the house as far as you can tell (thin evidence means here)",
+    "  frozen raw meat or fish past fridge life that was most likely frozen",
+    "  low    probably running low",
+    "  gone   probably used up, eaten or thrown out",
+    "",
+    ...items.map((e, i) => `${i + 1}. ${describeEvidence(e)}`),
+    "",
+    'Then kitchen_inventory action:"assess" verdicts:[{item, verdict, reason}], with the reason',
+    "in a few plain words. Nothing is removed yet: low and gone are raised in the next",
+    '"did you make it?" follow-up and assumed only if nobody answers.',
+    "",
+    QUIET,
+  ].join("\n");
+}
+
+/** Wake the household's session to review what the kitchen is unsure of. Once per day. */
+export function wakeForReview(
   account: string,
   acct: Account,
-  want: number,
-  opts: Parameters<typeof wake>[3] = {},
+  items: Evidence[],
+  opts: WakeOpts = {},
 ): WakeResult {
+  if (!items.length) return { woke: [], held: [] };
   const day = new Date(opts.now ?? Date.now()).toISOString().slice(0, 10);
+  const shown = items.slice(0, REVIEW_MAX);
+  return wake(account, acct, [{ key: `review:${day}`, line: "" }], {
+    ...opts,
+    text: () => reviewText(acct, shown),
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * The follow-up after a meal
+ * ------------------------------------------------------------------ */
+
+export function followupText(acct: Account, due: Due, offers: string[], session: string): string {
+  const { plan, suspects } = due;
+  const who = nameOf(acct, session);
+  const raise = suspects.map((s) => `  - ${s.name} [${s.id}]: ${s.reason} (${s.verdict})`);
+  return [
+    `[Kitchen · ${householdTitle(acct)}] Follow up with ${who} about ${q(plan.meal)} (plan ${plan.id}), sent ${plan.created.slice(0, 10)}.`,
+    "",
+    "Send one short text they can answer in a word or two, shaped like:",
+    `  "Did you end up making the ${plan.meal.toLowerCase()}? Also, I think you might be low on X and Y. Want me to add them to the list, or anything else?"`,
+    "",
+    raise.length ? "Things you suspect (leave out any you now know are fine):" : "",
+    ...raise,
+    offers.length ? `Ran out of, and they cook with (offer to add): ${offers.join(", ")}` : "",
+    "",
+    "No paragraphs, no explaining how you know, nothing that needs a long answer. When they reply:",
+    `  - made it or not: kitchen_plan_resolve plan:"${plan.id}" made:true|false`,
+    "  - yes, add it: kitchen_shopping add:[...]",
+    '  - still have it, or it is gone: kitchen_inventory action:"assess" told:true verdicts:[...]',
+    "Anything they do not mention is assumed in two days.",
+    "",
+    `Your reply goes to ${who} as a text.`,
+  ]
+    .filter((l) => l !== "")
+    .join("\n");
+}
+
+/** Wake the person a meal was planned for, to ask whether they made it. */
+export function wakeForFollowup(
+  account: string,
+  acct: Account,
+  due: Due,
+  offers: string[],
+  opts: WakeOpts = {},
+): WakeResult {
   return wake(
     account,
     acct,
-    [
-      {
-        key: `ideas:${day}`,
-        line: `The morning pass wants ${want} new dinner or lunch idea${want === 1 ? "" : "s"} for this house, built strictly from what is on the shelves.\n   kitchen_ideas action:"brief" gives the exact ingredient slugs, what expires soonest and the names to stay away from. Write them for these people, then kitchen_ideas action:"save".`,
-      },
-    ],
-    opts,
+    [{ key: `followup:${due.plan.id}`, requester: due.plan.by ?? null, line: "", talk: true }],
+    { ...opts, text: (_, session) => followupText(acct, due, offers, session) },
   );
 }

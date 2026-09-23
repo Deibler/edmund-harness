@@ -20,6 +20,7 @@ chat session, and give you the derived features for free:
 |---|---|
 | whose kitchen, what is expiring, what ran out | `kitchen_status` |
 | inventory, or "do we have X" | `kitchen_list` |
+| what is REALLY there: evidence, verdicts | `kitchen_inventory` |
 | groceries arrived / a meal got cooked / a correction | `kitchen_record` |
 | retract a bad write | `kitchen_undo` |
 | check a recipe against real stock before writing it | `kitchen_plan` |
@@ -51,8 +52,10 @@ This kitchen has three ways of doing work and they are not interchangeable:
 2. **A launchd pass every minute** (`scripts/watch.ts`), which settles every
    button on the website that does not need a person, refreshes the weather, and
    fires the standing dinner texts. Nobody waits on you for any of it.
-3. **You**, for the things that are actually writing: a recipe, a variant, an
-   answer to a question.
+3. **You**, for the things that need judgement: a recipe, a variant, an answer
+   to a question, the morning inventory review, and the follow-up after a meal.
+   All of it arrives as a one-shot event in the main session of the person it
+   concerns. There is no kitchen sub-agent and no second model.
 
 Most of what looks like work here is already category 1 or 2. Doing it by hand
 duplicates it — and the failure mode is not a wasted turn, it is a person's
@@ -162,6 +165,46 @@ so it cannot tell you something is done when it is not.
    spoils, a photo shows something new: log it in the same turn. An unlogged
    change silently rots the ledger for every future turn.
 
+## Knowing what is really in the kitchen
+
+Households send receipts and little else. Nobody logs finishing the onions,
+freezing the chicken or binning the grapes, so the ledger drifts from the real
+kitchen within a week. Keeping the picture true is your job, and it is done by
+reasoning, not by asking people to maintain an inventory.
+
+**Evidence, not clocks.** `kitchen_inventory action:"review"` lists what the
+kitchen is unsure of, each with its evidence: when it was bought, the meals
+cooked or suggested with it since, when anyone last saw it, and the range it
+usually keeps for where it is stored. Reason the way a person would: "the
+onions were bought three weeks ago and two dinners since used them, so they are
+used up, going soft, or they bought more." Raw meat past its fridge life was
+most likely frozen or cooked, not left to rot.
+
+**Four verdicts.** `kitchen_inventory action:"assess" verdicts:[{item, verdict,
+reason}]` with `here`, `frozen`, `low` or `gone`.
+
+- **From your own reasoning** (`told` omitted): `frozen` is written; `low` and
+  `gone` are held as suspicions and raised in the next follow-up. Nothing leaves
+  a shelf on an inference alone.
+- **From a person** (`told:true`): written at once, whatever it is.
+
+**Silence settles it.** A suspicion raised in a follow-up and not answered for
+two days, or never raised within four (no meal was sent), is assumed: the item
+is marked out or low in one undoable batch and shows on the list and the note
+under **Assumed to be low/out:**, where one tick corrects it.
+
+**The morning review** is a daily event in the household's `wake` session
+listing the items worth a look. Assess them and end quietly. Items past any
+reasonable doubt are held as suspicions even if you never answer.
+
+**`expires` is the printed date only.** Never estimate one when recording
+groceries. A guessed date reads as a fact to everything downstream; shelf life
+is the kitchen's job, from where the item is stored.
+
+**Before a dish depends on something unsure, ask.** `kitchen_status` lists what
+might be gone. One short line ("Do you still have the mushrooms?") beats a
+recipe built on food that is not there.
+
 ## Reading the raw log
 
 `kitchen_insights view:"log"` prints the ledger newest first, with the batch id,
@@ -189,8 +232,9 @@ forever, and rewriting one spends a model call on an answer already sitting on
 disk — and produces a second, slightly different version of the same dish.
 
 **1. Read the shelves.** `kitchen_status`, then `kitchen_list` for anything
-specific. The meal is chosen from what is actually there and what has a clock on
-it, never from what would be nice.
+specific. Choose a dinner a person would actually want to cook for these
+people, from what is probably in the house (see *What makes a good meal here*).
+If it depends on something the kitchen is unsure of, ask first.
 
 **2. Plan it against the ledger, before writing a single line.**
 
@@ -210,20 +254,42 @@ and the ledger say the same thing. Then `kitchen_site` to render it. The page
 carries its own "We made it" button, which the launchd drain settles — no
 trigger, no reminder, no plan id to thread through a template.
 
-**4. Ask, once, later.** Sending a recipe is not evidence anybody cooked it.
-`schedule_reminder` a couple of hours after the meal, and check
-`kitchen_status` first so you never ask about something already confirmed:
+**4. The follow-up is automatic.** Sending a recipe is not evidence anybody
+cooked it. The plan remembers whose chat it was made in, and the next afternoon
+the watch pass wakes that chat to ask. Send one short text they can answer in a
+word or two:
 
-> Confirm the "baked tortellini" plan (id 5797a4). Ask whether it got made.
-> Yes: `kitchen_plan_resolve` made. No: resolve it as not made, consume nothing.
-> Made with changes: confirm, then correct the changed items.
+> Did you end up making the chicken parm? Also, I think you might be low on
+> rice and limes. Want me to add them, or anything else?
 
-Ask in one line and act on the answer. An open plan more than a day old means
-nobody asked. The site shows open plans on the home page so an unanswered one is
-visible rather than quietly rotting.
+Act on the answer: `kitchen_plan_resolve` made or not, `kitchen_shopping add`
+for a yes, `kitchen_inventory action:"assess" told:true` for "still have it" or
+"we're out". Never schedule your own reminder for this; it would be a second
+follow-up for the same meal.
 
 `templates/made_button.html` still exists for one-off pages served outside the
 site. Inside the site it is redundant; use the recipe page.
+
+## What makes a good meal here
+
+The meals come out of the inventory, so most bad suggestions are really bad
+inventory. The rest are these:
+
+- **A dinner has a real main.** Chicken, pork, beef, fish, eggs, beans, pasta.
+  Deli meat, sliced cheese, bread, chips and snacks are lunch food. They can
+  appear in a dinner, but a dinner is never built around them, and the code
+  refuses to rank or save one that is.
+- **Vary the shape, not just the name.** Seared protein, starch, vegetable,
+  butter-garlic sauce five nights running is one dinner. Look at what was
+  cooked recently (the ideas brief lists it) and change the method, the
+  cuisine or the starch.
+- **The avoid list is a hard filter.** Dishes with anything in
+  `diet.avoid` are never offered, on any path. Record new dislikes with
+  `kitchen_accounts` as soon as somebody says one.
+- **A "no" is information.** If somebody turns a dish down, say so in the
+  person file and do not offer it again soon.
+- **Ask about unsure food, never assume it.** See *Knowing what is really in
+  the kitchen*.
 
 ## Receipts
 
@@ -284,18 +350,20 @@ Three groups, and a line only ever gets on the list by belonging to one:
 - **For a meal you planned.** An open plan's gaps. Leaves on its own when the
   meal is cooked or called off.
 - **Out of something you keep.** Ran out or a shelf check said low, AND the
-  household has confirmed it is worth rebuying.
+  house keeps it: bought on two or more separate trips, or marked `always`.
+- **Assumed to be low/out:** suspicions nobody answered (see *Knowing what is
+  really in the kitchen*). Kept apart because nobody confirmed them.
 - **You added these.** Somebody typed it. Never second-guessed, never dropped
   for being redundant.
 
 Everything else is a **suggestion** and lives in a tray that is visibly not the
 list. Two things land there:
 
-- Something ran out that has never been confirmed as worth rebuying. Ask once,
-  record the answer with `answer:{item, as:"always"|"never"}`, and it is never
-  asked again. This is the whole reason the list stays clean: the system does
-  not guess whether the imitation crab legs bought once for one sushi bake
-  should come back forever, it asks at the moment the answer is obvious.
+- Something ran out that was bought once and cooked with. It is offered in the
+  next meal follow-up ("want me to add it?"), at most once a fortnight. Record
+  a lasting answer with `answer:{item, as:"always"|"never"}`. Something bought
+  once and never cooked with is dropped without asking: one purchase is not a
+  habit, and the list must never become everything ever bought.
 - Something that would open up dinners. Capped at six and re-decided every time,
   because "buy this and three meals open up" is a fresh call each trip, not a
   standing preference.
@@ -358,8 +426,9 @@ the repo and there must never be one.
 **The note body is a canvas.** There is no DOM to read or set — the editor
 paints text — so the only ways in are the keyboard and the clipboard. Apple's
 own clipboard flavour carries paragraph styling as JSON in `data-tt`, checklists
-and their `todo.done` included, so one copy reads the whole note with its ticks
-and one paste rewrites it. `src/notedoc.ts` owns that format and is pure, which
+and their `todo.done` included, so one copy reads the whole note with its ticks.
+Writes change only the lines that differ (`src/notepatch.ts`): a whole-body
+paste deletes every line, and a member's phone can bring deleted lines back. `src/notedoc.ts` owns that format and is pure, which
 is why the parts that can lose somebody's list are unit tested.
 
 Three rules in that path exist because breaking them did real damage:
@@ -441,25 +510,27 @@ cleanup, every confirmed swipe of a shelf check, correcting the ledger from a
 card, saving preferences and the vibe, filing an uploaded photo, and creating or
 pausing a standing text.
 
-**Left for you, in the household's main chat session** — writing a recipe
-(`make`), building a variant around what the house has (`variant`), writing the
-household's current meal ideas (`kitchen_ideas`), generating the explore shelf
-(`kitchen_explore`), deciding what a dish really needs from the store
-(`kitchen_shopping add`), answering a question asked aloud mid-recipe
-(`kitchen_voice`), writing an explore idea out properly (`idearecipe`), and
-questions asked in the page's chat (`chat`). The watch and daily passes queue a
-one-shot event in your existing session. They never spawn a kitchen sub-agent or
-call a second text model directly.
+**Left for you, in the main session of the person it concerns.** Each arrives
+as a one-shot event naming the tool that answers it:
 
-Two consequences worth stating plainly:
+- **Conversations** (your reply is a text to the person who tapped): writing a
+  recipe (`make`), a variant around what the house has (`variant`), a dinner
+  when nothing fits (`compose`), writing an explore idea out (`idearecipe`).
+  If the dish depends on something unsure, ask one short question first.
+- **Site answers** (the answer lands on the page, end with `KEEP_QUIET`):
+  questions in the page's chat (`chat`), a question asked aloud mid-recipe
+  (`kitchen_voice`), the explore shelf (`kitchen_explore`), and what a dish
+  needs from the store (`kitchen_shopping add`).
+- **The morning review** (silent, `KEEP_QUIET`): `kitchen_inventory assess`.
+- **The follow-up after a meal** (a short text): see *Writing a recipe*, step 4.
+
+Worth stating plainly:
 
 - **Never hand-apply something in the first list.** It has already been done or
   is about to be, within the minute. Re-applying a `plan` confirmation consumes
   a dinner's ingredients twice.
 - **Never delegate anything in the second list.** The point of waking your main
   session is that it carries the household's taste, history and current context.
-  Answer through the named kitchen tool, then end the scheduled turn with
-  `KEEP_QUIET` so working notes do not become a chat message.
 - **Every button that spends a model call says so on screen** and tells the
   person where the answer will appear: "I will text you when it is ready" for
   anything you write, "this lands on the page itself" for anything the site
@@ -490,6 +561,9 @@ text members of its own household** — that is enforced in `normalize`, on ever
 write path, because `to` arrives from a public endpoint and ends in a message to
 a real phone.
 
+The pick skips dinners built around lunch food, anything on the avoid list, and
+any dish the same schedule suggested in the last week.
+
 Four behaviours to know before explaining it to anyone:
 
 1. **Once a day, inside a 75-minute grace window.** The pass runs every minute;
@@ -509,21 +583,16 @@ live and needs nothing else from them.
 
 ## Requests waiting on you
 
-A tap that needs writing sits in the artifact's `_callbacks.jsonl` until served.
-Two things have to be true for it to reach you, and both are checkable:
+A tap that needs a person sits in the artifact's `_callbacks.jsonl` until
+served. The watch pass wakes the right session for it (see *What settles
+itself*), at most three times, twenty minutes apart. `kitchen_requests` lists
+what is still waiting.
 
-1. The household's site is served and its URL is recorded on the account.
-2. A trigger is armed on `<tunnel>/callbacks?key=<key>&cb=<callback_token>`,
-   where `callback_token` is the second secret in the artifact's `artifact.json`
-   and is deliberately not in the page. Dedupe in `state` on
-   `ts|kind|recipe|client_ts`; fire only on the kinds in the "left for you" list
-   above, or you will wake for every shelf swipe.
-
-On firing: `kitchen_requests` to read them, `kitchen_recipe_get` BEFORE writing
-anything (a recipe written once is kept forever), then `kitchen_recipe_save`,
-then `kitchen_site` to re-render, then text whoever is in `users`. Mark served
-with `kitchen_requests handled:[...]` **only after it has actually gone out** —
-a request served twice is the same recipe texted to a person twice.
+On a Make-style request: `kitchen_recipe_get` BEFORE writing anything (a recipe
+written once is kept forever), then `kitchen_plan`, `kitchen_recipe_save`,
+`kitchen_site` to re-render, then text the person. Mark served with
+`kitchen_requests handled:[...]` **only after it has actually gone out**; a
+request served twice is the same recipe texted to a person twice.
 
 Answer `chat` requests with `kitchen_chat`, which publishes to a file the page
 polls. That is a reply on the website, not a text message; do not send both.

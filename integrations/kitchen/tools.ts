@@ -31,6 +31,7 @@ import {
   updateAccount,
 } from "./src/accounts.ts";
 import { eaters, householdTitle } from "./src/accounts.ts";
+import { VERDICTS, applyVerdicts } from "./src/assess.ts";
 import { scanAssets } from "./src/assets.ts";
 import { appendTurn, openQuestions, publishThreads, readThread } from "./src/chat.ts";
 import {
@@ -43,7 +44,9 @@ import {
 } from "./src/cookbook.ts";
 import { STORES, bestBasket, bestDeals, importPrices, loadPrices } from "./src/deals.ts";
 import { checkAccount, checkAll, format, summarise } from "./src/doctor.ts";
+import { describeEvidence, evidence } from "./src/evidence.ts";
 import { exploreBrief, saveExplore } from "./src/explore.ts";
+import { readFollowups } from "./src/followups.ts";
 import { IDEAS_TARGET, ideasBrief, readOverlay, saveIdeas } from "./src/ideas.ts";
 import {
   expiring,
@@ -264,6 +267,17 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
           "For what to actually BUY, call kitchen_shopping — some of the above is " +
             "deliberately not on the list, and the list has things this line does not.",
         ];
+        const doubtful = evidence(id).filter(
+          (e) => e.estimate === "unsure" || e.estimate === "doubtful",
+        );
+        if (doubtful.length) {
+          const names = doubtful.slice(0, 12).map((e) => e.item.name);
+          const more = doubtful.length > 12 ? ` and ${doubtful.length - 12} more` : "";
+          lines.push(
+            "",
+            `Might be gone or low, so ask before a dish depends on them: ${names.join(", ")}${more}. kitchen_inventory action:"review" has the evidence.`,
+          );
+        }
         if (plans.length) {
           lines.push("", "Planned, awaiting confirmation:");
           for (const p of plans) lines.push(`  ${p.id}  ${p.meal}${p.when ? ` (${p.when})` : ""}`);
@@ -335,6 +349,67 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
       }),
   });
 
+  tools.push({
+    name: "kitchen_inventory",
+    description:
+      "Reason about what is really in the kitchen. The ledger only hears about groceries, " +
+      "so it drifts. `review` lists the items the kitchen is unsure of, each with its " +
+      "evidence: when it was bought, meals cooked or suggested with it since, when anyone " +
+      "last looked, and how long it keeps where it is stored. `assess` records a verdict " +
+      "per item (here, frozen, low, gone). From your own reasoning, low and gone are held " +
+      "and raised in the next meal follow-up; with told:true (a person said so) they are " +
+      "written at once.",
+    inputSchema: z.object({
+      account: Acct,
+      action: z.enum(["review", "assess"]),
+      told: z
+        .boolean()
+        .optional()
+        .describe("assess: true when a person told you, false when you reasoned it."),
+      verdicts: z
+        .array(
+          z.object({
+            item: z.string().describe("The item's id or exact name."),
+            verdict: z.enum(VERDICTS),
+            reason: z.string().optional().describe("A few plain words."),
+          }),
+        )
+        .optional(),
+    }),
+    handler: (a) =>
+      withAccount(ctx, a.account, (id) => {
+        if (a.action === "review") {
+          const ev = evidence(id).filter(
+            (e) => e.estimate === "unsure" || e.estimate === "doubtful",
+          );
+          const held = Object.entries(readFollowups(id).suspects);
+          const lines = [
+            ev.length
+              ? `Unsure about ${ev.length} item(s), most doubtful first:`
+              : "Nothing in the kitchen looks doubtful.",
+            ...ev.map((e) => `  ${e.estimate.padEnd(8)} ${describeEvidence(e)}`),
+          ];
+          if (held.length) {
+            lines.push(
+              "",
+              "Waiting to ask about in the next follow-up:",
+              ...held.map(([k, x]) => `  ${x.name} [${k}]: ${x.verdict}, ${x.reason}`),
+            );
+          }
+          return text(lines.join("\n"));
+        }
+        if (!a.verdicts?.length) return text("No verdicts to record.", true);
+        const res = applyVerdicts(id, a.verdicts, { told: a.told === true });
+        const render = res.batch ? rerender(id) : null;
+        return text(
+          [...res.said, ...res.refused.map((r) => `Not recorded: ${r}.`), render ?? ""]
+            .filter(Boolean)
+            .join("\n"),
+          !res.said.length,
+        );
+      }),
+  });
+
   // ─── write ───────────────────────────────────────────────────────────────
 
   const Entry = z.object({
@@ -360,7 +435,14 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
       .describe(
         "For things nobody counts (spices, oils, flour). Use INSTEAD of qty, never a fake number.",
       ),
-    expires: z.string().nullable().optional().describe("YYYY-MM-DD. Only where the clock is real."),
+    expires: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "YYYY-MM-DD printed on the package, and only that. Never estimate one: the kitchen " +
+          "reasons about shelf life itself, and a guessed date reads as a fact.",
+      ),
     aliases: z.array(z.string()).optional(),
     price: z
       .number()
@@ -588,6 +670,7 @@ export function kitchenTools(ctx: ToolContext): ToolDef[] {
           lines,
           created: nowIso(),
           kcal: Math.round(totals.kcal),
+          by: ctx.sessionKey ?? null,
         };
         append(id, [{ op: "plan", item: null, plan, why: meal, src: "plan" }]);
         const people = eaterCount(getAccount(id)!);

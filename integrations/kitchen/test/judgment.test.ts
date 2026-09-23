@@ -59,7 +59,9 @@ const { getAccount } = await import("../src/accounts.ts");
 const { saveExplore } = await import("../src/explore.ts");
 const { readOverlay, saveIdeas } = await import("../src/ideas.ts");
 const { append } = await import("../src/store.ts");
-const { describeRequest, eventText, sessionFor, wake } = await import("../src/wake.ts");
+const { describeRequest, eventText, sessionFor, wake, wakeForRequests } = await import(
+  "../src/wake.ts"
+);
 
 append("t", [
   {
@@ -94,7 +96,6 @@ test("wake batches one turn per session and bounds retries", () => {
   expect(wake("t", account, items, { create, now: at }).woke).toHaveLength(1);
   expect(jobs).toHaveLength(1);
   expect(jobs[0]!.sessionKey).toBe(ALEX);
-  expect(jobs[0]!.systemEvent).toContain("not a sub-agent's");
   expect(jobs[0]!.systemEvent).toContain("KEEP_QUIET");
 
   expect(wake("t", account, items, { create, now: at + 60_000 }).held).toEqual([
@@ -110,10 +111,39 @@ test("wake batches one turn per session and bounds retries", () => {
   expect(jobs).toHaveLength(3);
 });
 
-test("the wake event keeps its answer on the site rather than texting working notes", () => {
-  const body = eventText(getAccount("t")!, [{ key: "x", line: "Use kitchen_ideas." }]);
-  expect(body).toContain("answers go on the site");
+test("a site answer ends quietly; its reply is not a text", () => {
+  const body = eventText(getAccount("t")!, [{ key: "x", line: "Use kitchen_chat." }], ALEX);
   expect(body.endsWith("reply with exactly KEEP_QUIET.")).toBe(true);
+});
+
+test("Make is a conversation with the person who tapped, not a silent write", () => {
+  const account = getAccount("t")!;
+  const jobs: JobInput[] = [];
+  const create = (input: JobInput) => {
+    jobs.push(input);
+    return { id: `job-${jobs.length}` };
+  };
+  wakeForRequests(
+    "t",
+    account,
+    [
+      {
+        kind: "make",
+        ts: "2026-09-23T17:00:00.000Z",
+        client_ts: "c-make",
+        profile: ALEX,
+        recipe: "chicken-parm",
+        name: "Chicken parm",
+      },
+    ],
+    { create, now: Date.UTC(2026, 8, 23, 17, 0, 0) },
+  );
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0]!.sessionKey).toBe(ALEX);
+  const body = jobs[0]!.systemEvent;
+  expect(body).not.toContain("KEEP_QUIET");
+  expect(body).toContain("Text them in this chat");
+  expect(body).toContain("ask them one short line first");
 });
 
 test("an explore wake carries the exact tap key through to the save", () => {

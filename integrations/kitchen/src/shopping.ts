@@ -27,14 +27,18 @@
  * regenerated or cleaned up.
  */
 
+import { isConvenience } from "./foods.ts";
+import { ASSUMED_SRC, history } from "./history.ts";
 import { type ListEntry, readList, removeFromList } from "./list.ts";
 import { cookable, loadRecipes } from "./recipes.ts";
-import { autoRestocks, dispositionOf, readBook, skipped, unskip } from "./restock.ts";
+import { dispositionOf, onRunOut, readBook, skipped, unskip } from "./restock.ts";
 import { fold, openPlans, readLog, slug } from "./store.ts";
-import type { Category, Item, KitchenEvent } from "./types.ts";
+import type { Category, Item } from "./types.ts";
+
+export { ASSUMED_SRC, purchaseHistory, tripKey } from "./history.ts";
 
 /** Why a line is on the list. The page renders these as its section headings. */
-export type Reason = "asked" | "staple" | "meal";
+export type Reason = "asked" | "staple" | "meal" | "assumed";
 
 export type Line = {
   /** Stable handle for ticking, editing and removal. */
@@ -90,65 +94,24 @@ export type Shopping = {
 
 const DAY = 86400000;
 
+/** How long an item assumed to be out stays in its own section of the list. */
+export const ASSUMED_SHOWN_DAYS = 10;
+
 /** How many "buy this and dinners open up" ideas the tray will ever show. */
 const UNLOCK_CAP = 6;
 
 /** Leftovers are food, not groceries. Nobody can buy last night's rice. */
-export const isBuyable = (id: string): boolean => !id.startsWith("leftover-");
+export const isBuyable = (id: string, name = ""): boolean =>
+  !id.startsWith("leftover-") && !/\bleftovers?\b/i.test(name);
+
+/** A run-out older than this is history, not something to offer buying again. */
+export const OFFER_WITHIN_DAYS = 21;
 
 function daysSince(iso: string | undefined): number | null {
   if (!iso) return null;
   const t = new Date(iso).getTime();
   if (!Number.isFinite(t)) return null;
   return Math.max(0, Math.floor((Date.now() - t) / DAY));
-}
-
-/**
- * The shopping trip an event is evidence of, or null when it is not one.
- *
- * A trip is what spends a "not this trip", so it has to mean somebody went to a
- * store. Counting every write that added something did not: a shelf photo, a
- * leftover put away and a "we have eggs after all" each counted as a trip, so a
- * skip could be spent without anybody leaving the house. The ledger's `src` is
- * free text, so only three shapes are taken as a shop: a receipt
- * (`receipt:giant-2026-01-10`), a shop logged without one
- * (`trip:aldi-2026-01-12`), and lines ticked off the list in the store.
- *
- * Keyed by the receipt rather than the write, because one receipt arrives more
- * than once: loaded twice by mistake, or its printed total logged a week after
- * its lines. Counted per write, each of those was another trip.
- */
-export function tripKey(e: KitchenEvent): string | null {
-  if (e.op === "trip") return e.src ?? e.batch;
-  if (e.op !== "add") return null;
-  if (e.src === "shopped") return e.batch;
-  return e.src && /^(receipt|trip):/.test(e.src) ? e.src : null;
-}
-
-/**
- * When each item was last bought, and how many trips there have been.
- *
- * Both keep the list honest about time: a line for something bought yesterday
- * should say so rather than look like news, and a "not this trip" dismissal has
- * to know which trip it meant. `shopsBy` answers the second for a moment in the
- * past, which is only needed to place skips recorded before trips were counted
- * this way.
- */
-export function purchaseHistory(events: KitchenEvent[]) {
-  const lastBought = new Map<string, string>();
-  const firstSeen = new Map<string, number>();
-  for (const e of events) {
-    const key = tripKey(e);
-    if (key === null) continue;
-    if (!firstSeen.has(key)) firstSeen.set(key, Date.parse(e.ts));
-    if (e.op === "add" && e.item) lastBought.set(e.item, e.ts);
-  }
-  const starts = [...firstSeen.values()];
-  const shopsBy = (iso: string): number => {
-    const t = Date.parse(iso);
-    return starts.filter((s) => s <= t).length;
-  };
-  return { lastBought, trips: firstSeen.size, shopsBy };
 }
 
 /** Out, or a human looked and said it was running low. */
@@ -160,7 +123,14 @@ export function shopping(account: string): Shopping {
   const book = readBook(account);
   const written = readList(account).entries;
   const plans = openPlans(account, events);
-  const { lastBought, trips, shopsBy } = purchaseHistory(events);
+  const hist = history(events);
+  const { trips, shopsBy } = hist;
+  const lastBought = new Map<string, string>();
+  for (const [id, x] of hist.items) if (x.lastBought) lastBought.set(id, x.lastBought);
+  // The newest write per item, to find the ones that are out only because the
+  // kitchen assumed so.
+  const lastWrite = new Map<string, { src: string | null | undefined; ts: string }>();
+  for (const e of events) if (e.item) lastWrite.set(e.item, { src: e.src, ts: e.ts });
   const { recipes } = loadRecipes(account);
 
   const held: Array<{ name: string; why: string }> = [];
@@ -191,7 +161,7 @@ export function shopping(account: string): Shopping {
   const meal: Line[] = [];
   for (const p of Object.values(plans)) {
     for (const l of p.lines) {
-      if (!l.short || !isBuyable(l.item) || claimed.has(l.item)) continue;
+      if (!l.short || !isBuyable(l.item, l.name) || claimed.has(l.item)) continue;
       claimed.add(l.item);
       meal.push({
         key: l.item,
@@ -208,24 +178,18 @@ export function shopping(account: string): Shopping {
 
   /* ── 3. out of something this house keeps ──────────────────────────────── */
   //
-  // The only derived lines allowed onto the list, and only because the house
-  // has answered the question for that item: either explicitly, or by it being
-  // in a category where running out is unambiguous. Everything else falls
-  // through to the tray below.
+  // Only proven staples reach the list by themselves (see `onRunOut`). A run-out
+  // the house might want again is offered in the tray and in the next
+  // follow-up; one it bought once and never cooked with is dropped. Items that
+  // are out only because the kitchen assumed so get their own section, since
+  // nobody has confirmed them.
   const staple: Line[] = [];
+  const assumed: Line[] = [];
   const restockAsks: Suggestion[] = [];
 
   for (const it of Object.values(items)) {
     if (!needsBuying(it) || claimed.has(it.id)) continue;
-    if (!isBuyable(it.id)) continue;
-    if (dispositionOf(book, it.id) === "never") {
-      held.push({ name: it.name, why: "you said this was a one-off" });
-      continue;
-    }
-    if (skipped(book, it.id, trips, shopsBy)) {
-      held.push({ name: it.name, why: "not this trip" });
-      continue;
-    }
+    if (!isBuyable(it.id, it.name)) continue;
     const line = {
       key: it.id,
       name: it.name,
@@ -234,26 +198,58 @@ export function shopping(account: string): Shopping {
       cat: it.cat,
       bought: age(it.id),
     };
-    if (autoRestocks(book, it.id, it.cat)) {
-      // Claimed as well as pushed: something already on the list must not also
-      // appear in the tray underneath it as a thing to consider buying. Salsa
-      // showed up in both, which reads as two different opinions about one
-      // item and is precisely the confusion this split exists to remove.
+    const last = lastWrite.get(it.id);
+    if (last?.src === ASSUMED_SRC) {
+      if (daysSince(last.ts)! <= ASSUMED_SHOWN_DAYS) {
+        claimed.add(it.id);
+        assumed.push({
+          ...line,
+          reason: "assumed",
+          why: it.gone ? "probably out" : "probably low",
+        });
+      }
+      continue;
+    }
+    if (skipped(book, it.id, trips, shopsBy)) {
+      held.push({ name: it.name, why: "not this trip" });
+      continue;
+    }
+    const seen = hist.items.get(it.id) ?? { trips: 0, mealUses: 0 };
+    const fate = onRunOut(book, it.id, it.cat, seen);
+    if (fate === "drop") {
+      held.push({
+        name: it.name,
+        why:
+          dispositionOf(book, it.id) === "never"
+            ? "you said this was a one-off"
+            : "bought once and never cooked with",
+      });
+      continue;
+    }
+    if (fate === "list") {
+      // Claimed so the same item cannot also appear in the tray below.
       claimed.add(it.id);
       staple.push({ ...line, reason: "staple", why: it.gone ? "out" : "running low" });
-    } else {
-      restockAsks.push({
-        key: it.id,
-        name: it.name,
-        item: it.id,
-        cat: it.cat,
-        kind: "restock",
-        unlocks: [],
-        why: it.gone ? "ran out" : "running low",
-        bought: age(it.id),
-      });
+      continue;
     }
+    if ((daysSince(last?.ts) ?? 0) > OFFER_WITHIN_DAYS) {
+      held.push({ name: it.name, why: "ran out a while ago" });
+      continue;
+    }
+    restockAsks.push({
+      key: it.id,
+      name: it.name,
+      item: it.id,
+      cat: it.cat,
+      kind: "restock",
+      unlocks: [],
+      why: it.gone ? "ran out" : "running low",
+      bought: age(it.id),
+    });
   }
+  // What they cook with most is what they most likely want back.
+  const uses = (id: string) => hist.items.get(id)?.mealUses ?? 0;
+  restockAsks.sort((a, b) => uses(b.item) - uses(a.item));
 
   /* ── 4. suggestions, which are not the list ────────────────────────────── */
   //
@@ -264,7 +260,12 @@ export function shopping(account: string): Shopping {
   for (const c of cookable(items, recipes)) {
     if (c.ready || c.missing.length > 2) continue;
     for (const m of c.missing) {
-      if (!isBuyable(m.id) || claimed.has(m.id)) continue;
+      if (!isBuyable(m.id, m.name) || claimed.has(m.id)) continue;
+      // Only food this house has bought before: the catalog is shared, and a
+      // suggestion built from somebody else's pantry is noise. Nor snacks:
+      // buying chips so a dish "opens up" is not a suggestion anyone wants.
+      const owned = items[m.id];
+      if (!owned || isConvenience(owned)) continue;
       if (dispositionOf(book, m.id) === "never") continue;
       if (skipped(book, m.id, trips, shopsBy)) continue;
       const e = unlocks.get(m.id) ?? { name: m.name, recipes: [] };
@@ -294,16 +295,8 @@ export function shopping(account: string): Shopping {
       unlocks: u.recipes,
       why: `${u.recipes.length} dish${u.recipes.length === 1 ? "" : "es"} away`,
       bought: age(id),
-      /** Owned before ranks above never-owned: a repeat buy is a safer bet. */
-      known: Boolean(items[id]),
     }))
-    .sort(
-      (a, b) =>
-        b.unlocks.length - a.unlocks.length ||
-        Number(b.known) - Number(a.known) ||
-        a.name.localeCompare(b.name),
-    )
-    .map(({ known: _known, ...s }) => s);
+    .sort((a, b) => b.unlocks.length - a.unlocks.length || a.name.localeCompare(b.name));
   const trimmed = Math.max(0, unlockSuggestions.length - UNLOCK_CAP);
   if (trimmed) {
     held.push({
@@ -327,6 +320,12 @@ export function shopping(account: string): Shopping {
         note: "Ran out or a shelf check said running low.",
       },
       {
+        id: "assumed",
+        title: "Assumed to be low/out:",
+        lines: assumed,
+        note: "Nobody confirmed these. Tick or delete any you still have.",
+      },
+      {
         id: "asked",
         title: "You added these",
         lines: asked,
@@ -336,9 +335,13 @@ export function shopping(account: string): Shopping {
   ).filter((g) => g.lines.length > 0);
 
   const order = (s: Suggestion) => (s.kind === "restock" ? 0 : 1);
+  // Restocks keep their most-cooked-first order; unlock ideas follow, by reach.
   const suggestions = [...restockAsks, ...unlockSuggestions.slice(0, UNLOCK_CAP)].sort(
     (a, b) =>
-      order(a) - order(b) || b.unlocks.length - a.unlocks.length || a.name.localeCompare(b.name),
+      order(a) - order(b) ||
+      (a.kind === "unlock"
+        ? b.unlocks.length - a.unlocks.length || a.name.localeCompare(b.name)
+        : 0),
   );
 
   return { groups, lines: groups.flatMap((g) => g.lines), suggestions, held };
@@ -364,7 +367,7 @@ export function shopping(account: string): Shopping {
  * Returns what was still outstanding, so a caller can say "eleven of the
  * fourteen things showed up" rather than silently deleting the difference.
  */
-export const tripCount = (account: string): number => purchaseHistory(readLog(account)).trips;
+export const tripCount = (account: string): number => history(readLog(account)).trips;
 
 export type AnswerTarget = { ok: true; id: string; name: string } | { ok: false; why: string };
 
