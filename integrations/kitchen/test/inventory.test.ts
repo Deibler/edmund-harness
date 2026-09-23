@@ -27,7 +27,7 @@ writeFileSync(
   JSON.stringify({
     version: 1,
     tenants: Object.fromEntries(
-      ["ev", "as", "fu", "rv", "st", "av"].map((id) => [
+      ["ev", "as", "fu", "rv", "st", "av", "sc"].map((id) => [
         id,
         {
           name: id,
@@ -440,5 +440,75 @@ describe("the avoid list is a filter", () => {
     ]);
     expect(res.saved.map((r) => r.id)).toEqual(["thighs"]);
     expect(res.rejected.map((r) => r.id).sort()).toEqual(["ham-dinner", "paste-pasta"]);
+  });
+});
+
+/* ── fixes found in review ────────────────────────────────────────────────── */
+
+describe("edge cases", () => {
+  test("editing a schedule from chat keeps what it recently suggested", async () => {
+    const { updateAccount } = await import("../src/accounts.ts");
+    const { kitchenTools } = await import("../tools.ts");
+    updateAccount("sc", {
+      dinners: [
+        {
+          id: "d1",
+          at: "16:00",
+          days: [],
+          to: [],
+          meal: "dinner",
+          on: true,
+          created: ago(10),
+          picks: [{ day: "2026-09-22", recipe: "tilapia-lemon-pepper" }],
+        },
+      ],
+    });
+    const tool = kitchenTools({
+      sessionKey: SAM,
+      config: { kitchen: { enabled: true, dir: BASE }, paths: { data_dir: BASE } },
+    } as never).find((t) => t.name === "kitchen_schedule")!;
+    await tool.handler({ account: "sc", action: "set", id: "d1", at: "17:00" } as never);
+    const d = getAccount("sc")!.dinners![0]!;
+    expect(d.at).toBe("17:00");
+    expect(d.picks).toEqual([{ day: "2026-09-22", recipe: "tilapia-lemon-pepper" }]);
+  });
+
+  test("the page a dinner text asks for is written quietly, not a second text", async () => {
+    const { wakeForRequests } = await import("../src/wake.ts");
+    const jobs: JobInput[] = [];
+    const create = (i: JobInput) => {
+      jobs.push(i);
+      return { id: `j${jobs.length}` };
+    };
+    wakeForRequests(
+      "sc",
+      getAccount("sc")!,
+      [
+        {
+          kind: "make",
+          recipe: "tilapia-lemon-pepper",
+          name: "Tilapia",
+          note: "scheduled",
+          profile: null,
+          users: [SAM],
+          ts: ago(0),
+          client_ts: ago(0),
+        },
+      ],
+      { create, now: NOW },
+    );
+    expect(jobs[0]!.systemEvent).toContain("KEEP_QUIET");
+    expect(jobs[0]!.systemEvent).toContain("text the page link");
+  });
+
+  test("an undo that was itself undone does not hide a cooked meal", async () => {
+    const { cookedRecently } = await import("../src/plans.ts");
+    const meal = append("sc", [
+      { op: "use", item: "rice", qty: null, some: true, why: "Fried rice", src: "cooked" },
+    ]);
+    const undo = append("sc", [{ op: "undo", batch_target: meal }]);
+    expect(cookedRecently("sc", "Fried rice")).toBeNull();
+    append("sc", [{ op: "undo", batch_target: undo }]);
+    expect(cookedRecently("sc", "Fried rice")).not.toBeNull();
   });
 });

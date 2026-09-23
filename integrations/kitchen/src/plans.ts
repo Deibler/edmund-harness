@@ -7,7 +7,7 @@
  */
 
 import { loadRecipes } from "./recipes.ts";
-import { append, live, openPlans, readLog, slug } from "./store.ts";
+import { append, droppedBatches, live, openPlans, readLog, slug } from "./store.ts";
 import type { KitchenEvent } from "./types.ts";
 
 /** A plan line, or a recipe `needs` pair once it has been named. */
@@ -138,9 +138,8 @@ export function cookedRecently(
 ): { at: string } | null {
   const key = slug(meal);
   const evs = readLog(account);
-  const undone = new Set(
-    evs.filter((e) => e.op === "undo" && e.batch_target).map((e) => e.batch_target!),
-  );
+  // Shared with the fold, so an undo that was itself undone is not a retraction.
+  const undone = droppedBatches(evs);
   for (let i = evs.length - 1; i >= 0; i--) {
     const e = evs[i]!;
     if (e.op !== "use" || e.src !== "cooked" || !e.why) continue;
