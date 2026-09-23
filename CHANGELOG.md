@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0
+
+### Minor Changes
+
+- 338ad51: Add a computer-use MCP server (`src/mcp/computer-use`) that lets Edmund see and drive native Mac apps. It has the same 24 tools and parameters as Claude Code's built-in computer-use server, which only runs in interactive sessions, plus a required `explanation` of at least 100 characters on every tool.
+  
+  Only iMessage and SMS conversations get it, each with its own app list in the new `[computer_use]` section. The owner is recognised by handle (`[security] operator_handles`, else `[alerts] operator_handle`), never by `contact_tier`, which grants host access and would otherwise hand every contact the owner's screen. Every other DM and group gets `contact_apps`, and only while the safety check enforces. Guests, the mirror and sub-agents get nothing.
+  
+  Before any action runs, the harness checks it in its own code first and then asks Jev (`typesafe/jev-1.13`, through OpenRouter). Jev receives the action in words, who asked and from which conversation, their latest messages from chat.db, and the model's explanation. The action is refused if the check cannot run. In `shadow` mode verdicts are only recorded, without holding up the action; each verdict records its request attempts.
+  
+  Some things are always refused, without asking Jev: shortcuts that end the session, quitting Messages, and typing into password fields. Messages actions are limited to the conversation the request came from, and Notes edits to the requester's household list, which the kitchen integration supplies through `screenScope`. Contacts' screenshots show only granted apps, with every other conversation and list blacked out.
+  
+  One conversation drives the screen at a time: another waits up to two minutes, then is told the screen is busy. When a turn ends the daemon signals that conversation's server, which quits the apps its turn launched (by process, never Messages, never an app that was already running) and releases the screen. The feature is off by default.
+- 2e655fd: The kitchen now reasons about what is really in the house instead of trusting fixed shelf-life clocks. Each item carries evidence (purchases, meals cooked or suggested with it, the last time anyone saw it, and how long it keeps where it is stored), a morning review hands the uncertain items to the household's main session for a verdict, and suspected run-outs wait for a short yes/no follow-up the day after a meal. Unanswered suspicions are assumed and listed under "Assumed to be low/out:". The shopping list only restocks items bought on two or more trips, Make requests from the site become a conversation in the tapper's own chat, and meal picks honour the household's avoid list and no longer build dinners around deli meat or other lunch food.
+- 58d3e06: The kitchen no longer writes Apple Notes itself. The background sync that drove a signed-in Chrome on icloud.com to rewrite each household's note, and the invites it sent the same way, are gone. Edmund now keeps each household's shared note up to date on screen, in the Notes app, with the computer-use tools: changing only the lines that differ and leaving ticks alone. When a household's list changes and then holds still for two minutes, the watch pass wakes that household's session to do it, with the lines the note should have. It only wakes a chat that the computer-use policy gives Notes, and each list wakes at most three times. `kitchen_shopping` loses `notes`, `share` and `shareWith`, and gains `noteWritten`, which Edmund sets once the note matches.
+
+### Patch Changes
+
+- a0d643a: Fix contacts' screenshots showing other people's conversations. On macOS 26 a capture that includes only some apps covered just the box around their windows, stretched to fill the image, so the black-outs (placed at the windows' real positions) missed: a test capture as a contact showed every other conversation in the Messages sidebar. The capture now always covers the whole display. A live test (`EDMUND_LIVE_SCREEN=1`) compares a contact's capture with the owner's and fails if the window moves.
+- 4fbbd43: `KEEP_QUIET` on the first or last line of a reply now vetoes the whole reply, so narration beside the sentinel is dropped instead of shipped. `edit_message` and `unsend_message` confirm the outcome against chat.db and report a request Messages accepted but never applied as an error instead of success.
+- 2e71565: Kitchen meal ideas, explore suggestions, shopping decisions, shelf-photo reads, onboarding reads, and spoken cooking answers now run in the household's main session instead of direct OpenRouter text calls. Deterministic inventory work remains local, and generated card photography and speech synthesis remain presentation-only media calls.
+
 ## 0.2.0
 
 ### Minor Changes
