@@ -38,7 +38,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { type Config, loadConfig } from "../../config/config.ts";
 import { initRegistryFromConfig } from "../../integrations/registry.ts";
-import { isGuestTier, isOperatorHandle, parseSessionTier } from "../../security/policy.ts";
 import { installLogSinkFromEnv } from "../../util/log-sink.ts";
 import { humanMs, log } from "../../util/log.ts";
 import { protectStdout } from "../stdio-safety.ts";
@@ -47,51 +46,13 @@ import { zodToJsonSchema } from "../zod-to-json.ts";
 import { type AuditEntry, JevGuard } from "./guard.ts";
 import { END_HOLD_SIGNAL, HOLD_IDLE_MS, ScreenLock, screenLockPath } from "./lock.ts";
 import { NativeHelper } from "./native.ts";
-import type { Policy } from "./policy.ts";
+import { type Policy, sessionPolicy } from "./policy.ts";
 import { requestReader } from "./request.ts";
 import { type Scope, describeConversation, loadScope } from "./scope.ts";
 import { ComputerSession } from "./session.ts";
 import { INSTRUCTIONS, computerTools } from "./tools.ts";
 
-/** iMessage and SMS conversations: the only sessions that act on the screen. */
-const CHAT_SESSION = /^(?:imessage|sms):(dm|group):(.+)$/;
-
-/**
- * The [computer_use] policy for this session, or null when it gets no tools.
- *
- * The owner is judged by handle: the session is a DM with one of the
- * operator's own handles ([security] operator_handles, else
- * [alerts] operator_handle). The session tier cannot answer this, because
- * `[security] contact_tier = "operator"` gives every allowlisted contact and
- * group the operator's host access, and the screen is not host access.
- *
- * Everyone else in a DM or a group gets the contact policy, and only while
- * the safety check enforces. Nothing gets tools when the section is
- * disabled, there is no key for the check, the session is a guest's, or it
- * is not a conversation at all (the mirror, a sub-agent, a cron job with no
- * chat).
- */
-export function sessionPolicy(
-  config: Config | null,
-  tierEnv: string | undefined,
-  sessionKey: string,
-): Policy | null {
-  const section = config?.computer_use;
-  if (!config || !section?.enabled || !config.keys.openrouter) return null;
-  if (isGuestTier(parseSessionTier(tierEnv))) return null;
-  const chat = CHAT_SESSION.exec(sessionKey);
-  if (!chat) return null;
-  if (chat[1] === "dm" && isOperatorHandle(config, chat[2])) {
-    return {
-      tier: "operator",
-      apps: section.apps,
-      clipboard: section.clipboard,
-      systemKeyCombos: section.system_key_combos,
-    };
-  }
-  if (section.classifier !== "enforce") return null;
-  return { tier: "contact", apps: section.contact_apps, clipboard: false, systemKeyCombos: false };
-}
+export { sessionPolicy };
 
 /**
  * The apps this session may be granted, read from config.toml when asked, so
