@@ -30,7 +30,7 @@
 import { type ListEntry, readList, removeFromList } from "./list.ts";
 import { cookable, loadRecipes } from "./recipes.ts";
 import { autoRestocks, dispositionOf, readBook, skipped, unskip } from "./restock.ts";
-import { fold, openPlans, readLog } from "./store.ts";
+import { fold, openPlans, readLog, slug } from "./store.ts";
 import type { Category, Item, KitchenEvent } from "./types.ts";
 
 /** Why a line is on the list. The page renders these as its section headings. */
@@ -104,25 +104,51 @@ function daysSince(iso: string | undefined): number | null {
 }
 
 /**
- * When each item last came through the door, and how many trips there have been.
+ * The shopping trip an event is evidence of, or null when it is not one.
+ *
+ * A trip is what spends a "not this trip", so it has to mean somebody went to a
+ * store. Counting every write that added something did not: a shelf photo, a
+ * leftover put away and a "we have eggs after all" each counted as a trip, so a
+ * skip could be spent without anybody leaving the house. The ledger's `src` is
+ * free text, so only three shapes are taken as a shop: a receipt
+ * (`receipt:giant-2026-01-10`), a shop logged without one
+ * (`trip:aldi-2026-01-12`), and lines ticked off the list in the store.
+ *
+ * Keyed by the receipt rather than the write, because one receipt arrives more
+ * than once: loaded twice by mistake, or its printed total logged a week after
+ * its lines. Counted per write, each of those was another trip.
+ */
+export function tripKey(e: KitchenEvent): string | null {
+  if (e.op === "trip") return e.src ?? e.batch;
+  if (e.op !== "add") return null;
+  if (e.src === "shopped") return e.batch;
+  return e.src && /^(receipt|trip):/.test(e.src) ? e.src : null;
+}
+
+/**
+ * When each item was last bought, and how many trips there have been.
  *
  * Both keep the list honest about time: a line for something bought yesterday
  * should say so rather than look like news, and a "not this trip" dismissal has
- * to know which trip it meant.
+ * to know which trip it meant. `shopsBy` answers the second for a moment in the
+ * past, which is only needed to place skips recorded before trips were counted
+ * this way.
  */
 export function purchaseHistory(events: KitchenEvent[]) {
   const lastBought = new Map<string, string>();
-  // Counted by BATCH, because a batch is one write and a receipt is loaded as
-  // one write. Counting events instead would make a forty line receipt look
-  // like forty shopping trips, which would expire every skip forty times over.
-  const tripBatches = new Set<string>();
+  const firstSeen = new Map<string, number>();
   for (const e of events) {
-    if (e.op === "trip") tripBatches.add(e.batch);
-    if (e.op !== "add" || !e.item) continue;
-    lastBought.set(e.item, e.ts);
-    tripBatches.add(e.batch);
+    const key = tripKey(e);
+    if (key === null) continue;
+    if (!firstSeen.has(key)) firstSeen.set(key, Date.parse(e.ts));
+    if (e.op === "add" && e.item) lastBought.set(e.item, e.ts);
   }
-  return { lastBought, trips: tripBatches.size };
+  const starts = [...firstSeen.values()];
+  const shopsBy = (iso: string): number => {
+    const t = Date.parse(iso);
+    return starts.filter((s) => s <= t).length;
+  };
+  return { lastBought, trips: firstSeen.size, shopsBy };
 }
 
 /** Out, or a human looked and said it was running low. */
@@ -134,7 +160,7 @@ export function shopping(account: string): Shopping {
   const book = readBook(account);
   const written = readList(account).entries;
   const plans = openPlans(account, events);
-  const { lastBought, trips } = purchaseHistory(events);
+  const { lastBought, trips, shopsBy } = purchaseHistory(events);
   const { recipes } = loadRecipes(account);
 
   const held: Array<{ name: string; why: string }> = [];
@@ -196,7 +222,7 @@ export function shopping(account: string): Shopping {
       held.push({ name: it.name, why: "you said this was a one-off" });
       continue;
     }
-    if (skipped(book, it.id, trips)) {
+    if (skipped(book, it.id, trips, shopsBy)) {
       held.push({ name: it.name, why: "not this trip" });
       continue;
     }
@@ -240,7 +266,7 @@ export function shopping(account: string): Shopping {
     for (const m of c.missing) {
       if (!isBuyable(m.id) || claimed.has(m.id)) continue;
       if (dispositionOf(book, m.id) === "never") continue;
-      if (skipped(book, m.id, trips)) continue;
+      if (skipped(book, m.id, trips, shopsBy)) continue;
       const e = unlocks.get(m.id) ?? { name: m.name, recipes: [] };
       e.recipes.push(c.recipe.name);
       unlocks.set(m.id, e);
@@ -339,6 +365,58 @@ export function shopping(account: string): Shopping {
  * fourteen things showed up" rather than silently deleting the difference.
  */
 export const tripCount = (account: string): number => purchaseHistory(readLog(account)).trips;
+
+export type AnswerTarget = { ok: true; id: string; name: string } | { ok: false; why: string };
+
+/**
+ * The item a shopping answer ("always", "never", "not this trip") is about.
+ *
+ * The answer arrives as whatever the model had to hand, which is usually the
+ * name it read on the list rather than the id behind it, and slugging a name
+ * does not rebuild an id another member's list gave a prefix to: "flour
+ * tortillas" is `flour-tortillas`, the line was `sam-s-flour-tortillas`. The
+ * answer was then filed under an id nothing uses, the line stayed on the list,
+ * and the reply said it had gone.
+ *
+ * So an answer lands on something that exists or is refused. Candidates are what
+ * the list and the tray are showing plus everything the ledger tracks; the first
+ * rule that matches anything decides, and more than one match is a question back
+ * rather than a pick.
+ */
+export function answerTarget(account: string, said: string): AnswerTarget {
+  const names = new Map<string, string>();
+  for (const [id, it] of Object.entries(fold(account))) names.set(id, it.name);
+  const s = shopping(account);
+  for (const l of s.lines) if (l.item) names.set(l.item, l.name);
+  for (const x of s.suggestions) names.set(x.item, x.name);
+
+  const raw = said.trim();
+  if (!raw) return { ok: false, why: "The answer did not name an item." };
+  const want = slug(raw);
+  const lower = raw.toLowerCase();
+  const rules: Array<(id: string, name: string) => boolean> = [
+    (id) => id === raw,
+    (id) => id === want,
+    (_, name) => name.trim().toLowerCase() === lower,
+    (id) => want.length > 0 && id.endsWith(`-${want}`),
+  ];
+  for (const rule of rules) {
+    const hits = [...names].filter(([id, name]) => rule(id, name));
+    if (hits.length === 1) return { ok: true, id: hits[0]![0], name: hits[0]![1] };
+    if (hits.length > 1)
+      return {
+        ok: false,
+        why: `"${raw}" could be ${hits.map(([id]) => id).join(", ")}. Answer with one of those.`,
+      };
+  }
+  const words = want.split("-").filter((w) => w.length > 2);
+  const near = [...names.keys()].filter((id) => words.some((w) => id.includes(w))).slice(0, 6);
+  const close = near.length ? ` Close: ${near.join(", ")}.` : "";
+  return {
+    ok: false,
+    why: `Nothing on the list, in the tray or in the ledger is "${raw}".${close}`,
+  };
+}
 
 export function settleAfterPurchase(
   account: string,
