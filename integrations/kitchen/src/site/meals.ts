@@ -1,19 +1,10 @@
 /**
- * The home page: what to cook tonight.
- *
- * A meal card, the band above it that says what kind of day the site thinks it
- * is, and the automatic-cleanup receipt that sits under both. Grouped because
- * they are one screen and they share the rules about what a card is allowed to
- * claim: the buttons on a card follow from whether the dish is written out and
- * whether the kitchen can actually make it, and nothing here may show an action
- * that would fail.
- *
- * Moved out of `site.ts` on 2026-08-17 unedited.
+ * The home page: the mood band, the meal grid, meals in progress and the
+ * automatic-cleanup card. A card only offers actions that can succeed from its
+ * state: whether the dish is written out and whether the kitchen can make it.
  */
 
-import { join } from "node:path";
 import { fitReason, fitScore, onTheClock } from "../fit.ts";
-import { meals, spend } from "../insights.ts";
 import { lastMade } from "../made.ts";
 import { type Mood, moodScore } from "../mood.ts";
 import {
@@ -26,22 +17,17 @@ import {
   feedsAllWeek,
   inSeason,
 } from "../recipes.ts";
-import { live, openPlans } from "../store.ts";
+import { openPlans } from "../store.ts";
 import { escapeHtml } from "../util.ts";
 import { type Ctx, mealPhoto } from "./ctx.ts";
 import { ago, fmtDate, shot } from "./format.ts";
 import { I } from "./icons.ts";
 
 /**
- * The facts about a dish that only matter on a particular kind of day.
- *
- * Written as words rather than icons. An icon works for a category everybody
- * already has a picture for (a cloche means "you have made this"), and fails
- * for a claim like "one batch feeds you for four days", which is the whole
- * reason somebody would pick it on a Sunday. Capped at three so the row still
- * reads as facts about food rather than a wall of labels.
+ * Word pills for facts that matter on a particular kind of day (effort, method,
+ * feeds several days, season, occasion). At most three.
  */
-export function dayPills(r: Recipe, mood: Mood): string {
+function dayPills(r: Recipe, mood: Mood): string {
   const out: string[] = [];
   const effort = effortOf(r);
   if (effort === "allday" || effort === "project") {
@@ -54,8 +40,7 @@ export function dayPills(r: Recipe, mood: Mood): string {
     out.push(`<span class="pill">Feeds ${r.feeds_days} days</span>`);
   }
   if (inSeason(r, mood.month)) out.push(`<span class="pill season">In season</span>`);
-  // An occasion pill is only true near the occasion. Off-season it is noise,
-  // and worse, it is noise that claims today is something it isn't.
+  // An occasion pill only shows near the occasion itself.
   const occTags = mood.occasion?.tags ?? [];
   const hit = (r.occasions ?? []).find((o) => occTags.includes(o));
   if (hit && mood.occasion)
@@ -67,19 +52,14 @@ export function dayPills(r: Recipe, mood: Mood): string {
 }
 
 /**
- * How good a dinner this is TONIGHT, as one number.
- *
- * Two halves that had to be added together rather than chained as a tiebreak:
- * `moodScore` reads the calendar and the weather, `fitScore` reads the fridge
- * and what this house has actually eaten. Sorting on the mood alone and falling
- * through to fewest-ingredients is what made the page recommend the blandest
- * pantry dinner in the catalog every night, correctly and uselessly.
+ * How well a dish fits tonight: the day (`moodScore`) plus the fridge and the
+ * household's history (`fitScore`), summed rather than used as tiebreaks.
  */
-export function dinnerScore(r: Recipe, ctx: Ctx): number {
+function dinnerScore(r: Recipe, ctx: Ctx): number {
   return moodScore(r, ctx.mood, ctx.acct) + fitScore(r, ctx.items, ctx.made, ctx.prof);
 }
 
-export function mealCard(c: Cookable, ctx: Ctx, built: Set<string>): string {
+function mealCard(c: Cookable, ctx: Ctx, built: Set<string>): string {
   const r = c.recipe;
   const fav = (ctx.prof.favorites[r.id] ?? []).length > 0;
   const compound = r.cat === "compound";
@@ -93,15 +73,9 @@ export function mealCard(c: Cookable, ctx: Ctx, built: Set<string>): string {
   const needsFirst = ctx.needsFirst.get(r.id) ?? [];
   const variants = ctx.variantsOf.get(r.id) ?? [];
 
-  // Badges. Every one is a button: an icon that says "this dish is special" and
-  // cannot be acted on is decoration, and decoration is what people stop seeing.
-  // The cloche is the important one — a dish you have made and cannot make
-  // tonight still has a page worth opening, and this is the route back to it.
+  // Every badge is a button. The cloche marks a written-out dish (whether or
+  // not it has been cooked yet) and is the route back to its page.
   const badges: string[] = [];
-  // The cloche means "this one is written out", which is true the moment the
-  // page exists. Gating it on `made` as well meant a dish whose recipe had just
-  // been written carried no mark at all until somebody cooked it, so the newest
-  // and most useful pages were the only ones with nothing pointing at them.
   if (page) {
     badges.push(`<button class="bg-cloche" data-act="recipe" data-id="${escapeHtml(r.id)}"
       title="${made ? `Made ${escapeHtml(fmtDate(made))}. Open the recipe.` : "Written out. Open the recipe."}"
@@ -123,40 +97,28 @@ export function mealCard(c: Cookable, ctx: Ctx, built: Set<string>): string {
       ${I.leaf}<b>${r.health}</b></button>`);
   }
 
-  // Two buttons is the ceiling on a phone. The third action always lives one tap
-  // deeper in the sheet rather than being dropped, so nothing is unreachable
-  // from any state a card can be in.
+  // At most two buttons on a phone; any further action lives in the card's sheet.
+  // A written dish offers its recipe and a variant rather than "Make", which
+  // would only ask for a page that already exists.
   const acts: string[] = [];
   if (page) {
     acts.push(
       `<button class="btn sm alt" data-act="recipe" data-id="${escapeHtml(r.id)}">Recipe</button>`,
     );
-  }
-  if (page) {
-    // Once a dish is written out there is nothing left to make. "Make" here used
-    // to post a request that woke a model to write the recipe that already
-    // existed, which is the most expensive possible way to open a link. The
-    // remaining useful ask is a different version of it, so that is the button,
-    // and it takes the reason in words because "a variant" on its own is a
-    // question, not an instruction.
     acts.push(`<button class="btn sm" data-act="variant" data-id="${escapeHtml(r.id)}"
       data-name="${escapeHtml(r.name)}">Variant</button>`);
   } else if (c.ready) {
     acts.push(`<button class="btn sm" data-act="make" data-id="${escapeHtml(r.id)}">Make</button>`);
   } else {
-    // "Short" before "Variant": the most common cause of a dish looking
-    // un-makeable is a stale shelf, and building a variant around an ingredient
-    // somebody actually owns is solving a problem that is not there.
+    // A dish that looks short is most often a stale shelf, so "Short" (correct
+    // the ledger) is offered rather than a variant.
     acts.push(`<button class="btn sm alt" data-act="addlist" data-id="${escapeHtml(r.id)}"
       data-name="${escapeHtml(r.name)}">Add to list</button>`);
     acts.push(`<button class="btn sm" data-act="short" data-id="${escapeHtml(r.id)}"
       data-name="${escapeHtml(r.name)}">Short ${c.missing.length}</button>`);
   }
 
-  // Said in words as well as an icon, because "needs the pork roast first" is a
-  // fact about tonight and an icon is only ever a hint that one exists. A leg
-  // somebody has declined says so rather than disappearing, so the pairing is
-  // still visible and the decision is still reversible.
+  // The pairing in words. A declined leg stays visible so the choice can be undone.
   const skipped = (x: { id: string }, leg: "parent" | "child") =>
     ctx.skips.has(`${leg === "child" ? r.id : x.id}>${leg === "child" ? x.id : r.id}|${leg}`);
   const pairLine = needsFirst.length
@@ -187,10 +149,7 @@ export function mealCard(c: Cookable, ctx: Ctx, built: Set<string>): string {
       <h3>${escapeHtml(r.name)}</h3>
       <p class="desc">${escapeHtml(r.desc)}</p>
       ${(() => {
-        // A ranking nobody can see is a ranking nobody trusts, and the first
-        // question about a reordered list is why. This is also the honest test
-        // of the score: a card at the top with no sentence for it means a term
-        // moved it for a reason the household would not agree with.
+        // Why the ranking put this card here, when there is a reason worth saying.
         const why = fitReason(r, ctx.items, ctx.made, ctx.prof);
         return why ? `<p class="why">${escapeHtml(why)}</p>` : "";
       })()}
@@ -208,20 +167,10 @@ export function mealCard(c: Cookable, ctx: Ctx, built: Set<string>): string {
 }
 
 /**
- * The top of the home page: what day it is and what that means for dinner.
- *
- * This is the answer to the page feeling like an archive. The heading is the
- * date read as a human reads it, the sentence under it says what the page has
- * noticed, and the vibe is a dial rather than a decision made for you. When
- * nothing is special about today it says so plainly instead of manufacturing
- * an occasion, because a page that insists every Tuesday is exciting is the
- * same page that stops being read.
- *
- * The shelf chips underneath are filters, not rows: nothing on this site
- * scrolls sideways, and a horizontal rail of dish cards is the standard way
- * that rule gets broken.
+ * The top of the home page: the day, what the page noticed about it, the vibe
+ * dial, and shelf chips that act as filters (never a sideways-scrolling rail).
  */
-export function moodBand(ctx: Ctx, ready: number, order: Cookable[]): string {
+function moodBand(ctx: Ctx, ready: number, order: Cookable[]): string {
   const m = ctx.mood;
   const cnt = (f: (r: Recipe) => boolean) => ctx.cook.filter((c) => f(c.recipe)).length;
   const seasonN = cnt((r) => inSeason(r, m.month));
@@ -230,10 +179,7 @@ export function moodBand(ctx: Ctx, ready: number, order: Cookable[]): string {
   const occTags = m.occasion?.tags ?? [];
   const occN = cnt((r) => (r.occasions ?? []).some((o) => occTags.includes(o)));
   const gameN = cnt((r) => (r.occasions ?? []).includes("gameday"));
-  // Deliberately not gated on being cookable tonight. "Made before AND ready"
-  // is a different, narrower question that already has a filter; this is the
-  // shelf of dishes this house knows, which is what somebody means when they
-  // ask to see what they have made.
+  // Every dish made before, cookable tonight or not.
   const madeN = cnt((r) => !!lastMade(ctx.made, r));
 
   const chip = (key: string, label: string, n: number) =>
@@ -255,22 +201,13 @@ export function moodBand(ctx: Ctx, ready: number, order: Cookable[]): string {
     <p class="note">${ready} of ${ctx.cook.length} dishes are fully stocked, ordered for
     today rather than alphabetically.</p>
     ${(() => {
-      // The escape hatch from a fixed catalog, offered only when the catalog is
-      // visibly failing: something is about to be thrown out and the dish this
-      // page just put at the top does not spend it. A catalog ranked against
-      // stock can only ever return the least-bad card it already holds, so
-      // without this the page recommends pasta at a fridge full of expiring
-      // beef, confidently and forever.
+      // Offer to write a dish for expiring food only when the lead card does
+      // not already use it.
       const clock = onTheClock(ctx.items, 1);
       if (!clock.length) return "";
-      // The card the grid will actually LEAD with, which is `order[0]` and not
-      // the first entry of `ctx.cook`: those two are sorted differently, and
-      // reading the wrong one made this claim "nothing above uses the prepped
-      // veg" directly above a card whose own reason line said it used it.
+      // The grid's actual lead, from `order`, not `ctx.cook`: they sort differently.
       const lead = order.find((c) => c.ready);
       const spent = new Set((lead?.recipe.needs ?? []).map(([id]) => id));
-      // Only what the lead is ignoring. Listing food the top card already
-      // spends is the same false claim in a quieter form.
       const missed = clock.filter((c) => !spent.has(c.item.id));
       if (!missed.length) return "";
       const names = missed.slice(0, 3).map((c) => c.item.name.toLowerCase());
@@ -298,26 +235,15 @@ export function homePanel(ctx: Ctx): string {
   const built = new Set(ctx.book.map((r) => r.id));
   const ready = ctx.cook.filter((c) => c.ready).length;
 
-  // Second-night dishes come OUT of the grid entirely.
-  //
-  // A dish built from last night's leftovers is not a dinner you can decide to
-  // cook; it is what a different dinner becomes. Listing it as its own card put
-  // a run of meals nobody could make into the middle of the page that answers
-  // "what can we make", and made the whole list read as mostly leftovers. It now
-  // lives on its parent's card, where the decision it belongs to actually gets
-  // made, and stays reachable from there.
-  //
-  // The exception is a second-night dish whose leftover is genuinely in the
-  // fridge right now, because at that point it IS tonight's dinner.
+  // Second-night dishes live on their parent's card, not in the grid, unless
+  // the leftover they need is already in the fridge.
   const order = [...ctx.cook]
     .filter((c) => {
       const parents = ctx.needsFirst.get(c.recipe.id);
       if (!parents?.length) return true;
       return c.ready;
     })
-    // Cookable first, then how well it fits today. The two are in that order on
-    // purpose: the day's mood reorders dinners you could already have made, and
-    // is never allowed to lift a dish you cannot cook above one you can.
+    // Cookable first; the day's fit only reorders within each group.
     .sort(
       (a, b) =>
         Number(b.ready) - Number(a.ready) ||
@@ -357,14 +283,8 @@ export function homePanel(ctx: Ctx): string {
   </section>`;
 }
 
-/**
- * What the kitchen decided had gone, and the one tap that says otherwise.
- *
- * The sweep runs silently, which is the only way it can run without becoming a
- * chore. Silence is only acceptable because being wrong is cheap: this card is
- * the whole cost of a bad guess, and it retracts the entire batch at once.
- */
-export function sweepCard(ctx: Ctx): string {
+/** The last automatic cleanup, with one tap to undo the whole batch. */
+function sweepCard(ctx: Ctx): string {
   const s = ctx.sweep;
   if (!s || !s.items.length) return "";
   const names = s.items.map((i) => ctx.items[i.id]?.name ?? i.id);

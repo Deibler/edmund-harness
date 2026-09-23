@@ -1,18 +1,10 @@
 /**
- * One sync of a note at a time, across every process that can start one.
+ * One note sync at a time, across processes.
  *
- * This is a regression file with a date on it. The lock existed from the first
- * version and its own comment named all three callers that could collide — and
- * it was then taken on one of them. On the evening of 2026-08-20 an MCP tool
- * and the ten-second watch pass drove the same browser tab into the same note
- * within seconds of each other. Neither failed cleanly: they selected-all over
- * each other, took each other's clipboard, and navigated the page out from
- * under a script that was still running. What reached a person was "the note
- * could not be read back after writing", then "Inspected target navigated or
- * closed", and a shared shopping list holding a heading twice.
- *
- * So what is pinned here is not "the lock works". It is that holding it is not
- * something a caller can forget.
+ * Two syncs driving the same browser tab corrupt each other's selection and
+ * clipboard. Every entry point goes through `syncNote`, which takes the lock,
+ * so no caller can forget it. The lock is a file with a timestamp so it
+ * survives a killed process and can be declared abandoned.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -58,8 +50,7 @@ describe("only one thing at a time may hold the note", () => {
     });
     await first;
     expect(second).toBe("ran");
-    // The point of the wait: the tool did not merely survive the collision, it
-    // never overlapped at all.
+    // Waiting means the two syncs never overlapped at all.
     expect(order).toEqual(["background in", "background out", "tool in"]);
   });
 
@@ -74,8 +65,7 @@ describe("only one thing at a time may hold the note", () => {
   });
 
   test("a lock left behind by a killed process does not wedge the note forever", async () => {
-    // No in-memory guard survives a kill -9, which is the whole reason this is
-    // a file with a timestamp in it rather than a promise.
+    // A file lock with a timestamp is what survives a kill -9.
     writeFileSync(join(BASE, "notes.lock"), `${Date.now() - 60 * 60 * 1000}|99999`);
     expect(syncRunning()).toBe(false);
     expect(await withNoteLock(0, async () => "recovered")).toBe("recovered");
@@ -99,8 +89,7 @@ describe("only one thing at a time may hold the note", () => {
   });
 
   test("the wait a person-facing caller uses is shorter than the lock's own life", () => {
-    // Otherwise a caller could still be waiting after the lock it is waiting on
-    // has been declared abandoned, which is a queue that never drains.
+    // Otherwise a waiter could outlive the lock it waits on.
     expect(WAIT_MS).toBeLessThan(4 * 60 * 1000);
   });
 });

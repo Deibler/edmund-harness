@@ -1,11 +1,8 @@
 /**
- * Which pictures actually exist on disk next to the rendered page.
+ * Which pictures exist on disk next to the rendered page.
  *
- * The site never emits an `<img>` for a file it has not seen. A broken image
- * icon in a product grid reads as a broken site, and a grid where three tiles
- * out of a hundred silently fail looks worse than one that draws a deliberate
- * typographic placeholder for the ones it does not have. Same principle as the
- * rest of this integration: show what is known, say so when something isn't.
+ * The site never emits an `<img>` for a file it has not seen: a missing photo
+ * gets a deliberate typographic placeholder instead of a broken image.
  */
 
 import { existsSync, readdirSync } from "node:fs";

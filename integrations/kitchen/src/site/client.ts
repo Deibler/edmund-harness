@@ -1,19 +1,8 @@
 /**
- * Everything the page runs in the browser.
- *
- * Split out of `site.ts` on 2026-08-17 by moving text, unedited. It was 1,200
- * lines of JavaScript living inside a template literal inside the renderer,
- * which meant the server-side markup functions and the client-side event
- * handling were the same file and neither could be read on its own.
- *
- * It stays a string rather than becoming a real module because the page is a
- * single static file served from a token-guarded directory: there is no build
- * step and a second request for a .js file would need the key appended to it
- * the same way every image does. One file, one request, no key plumbing.
- *
- * The one thing it does not own is the nav labels, which live beside the nav
- * itself in `site.ts`. They arrive already serialised so this module needs no
- * imports at all.
+ * The hub page's browser script, inlined as a string: the page is one static
+ * file behind a share key, and a separate .js request would need the key
+ * appended. Nav labels arrive pre-serialised from `site.ts`, so this module
+ * has no imports.
  */
 
 export function clientScript(labelsJson: string): string {

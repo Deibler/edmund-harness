@@ -1,12 +1,9 @@
 /**
- * The note as a document, which is where this feature can actually lose data.
+ * The note as a document: the pure part of the Notes sync.
  *
- * The browser driving cannot be unit tested — it is a real UI on somebody
- * else's site — but everything that DECIDES what a note should say is pure, and
- * it is pure precisely so this file can exist. The failures worth pinning are
- * the quiet ones: dropping a line somebody typed, un-ticking something they
- * ticked in a shop, or rewriting the note on every pass because the fingerprint
- * includes a clock.
+ * The failures pinned here are quiet ones: dropping a line somebody typed, un-ticking
+ * something ticked in a shop, and rewriting the note on every pass because the
+ * fingerprint includes a clock.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -60,23 +57,20 @@ describe("Apple's clipboard format", () => {
   });
 
   test("tick state is what round-trips, not just the words", () => {
-    // The entire point. A checklist that comes back un-ticked would un-tick
-    // somebody's shopping mid-aisle on the next sync.
+    // Ticks must survive the round trip, or a sync un-ticks items mid-shop.
     const parsed = parseAppleHtml(APPLE_HTML);
     expect(ticksIn(parsed).get(tickKey("Avocados"))).toBe(true);
     expect(ticksIn(parsed).get(tickKey("Chicken broth"))).toBe(false);
   });
 
   test("apostrophes and ampersands come back as themselves", () => {
-    // These go out HTML-escaped and are read back off a clipboard, so a missing
-    // decode step shows up as "Alex&#39;s" on somebody's phone.
+    // Escaped on the way out, decoded on the way back.
     const blocks: Block[] = [{ kind: "todo", text: "Alex's M&M's <big>", done: false }];
     expect(parseAppleHtml(toAppleHtml(blocks))).toEqual(blocks);
   });
 
   test("every line ends in a newline inside its span", () => {
-    // Without it the editor runs consecutive paragraphs into one line, which
-    // turns a fifteen item list into a single unreadable sentence.
+    // Without it the editor merges consecutive paragraphs into one line.
     const html = toAppleHtml([{ kind: "todo", text: "milk", done: false }]);
     expect(html).toContain("milk\n</span>");
   });
@@ -92,8 +86,8 @@ describe("Apple's clipboard format", () => {
   });
 
   test("blank paragraphs are dropped rather than accumulated", () => {
-    // The editor inserts spacing paragraphs of its own. Keeping them would grow
-    // the note by a blank line on every single rewrite.
+    // The editor inserts blank spacing paragraphs; keeping them would add a line on
+    // every rewrite.
     const withBlank =
       '<meta charset="utf-8">' +
       '<p><span data-tt="{&quot;paragraphStyle&quot;:{}}" style="white-space: pre-wrap;">\n</span></p>' +
@@ -102,8 +96,8 @@ describe("Apple's clipboard format", () => {
   });
 
   test("an unreadable style becomes text instead of vanishing", () => {
-    // Below the sentinel this is somebody's own writing. Losing a line because
-    // Apple shipped a paragraph style we do not recognise would be unforgivable.
+    // Below the sentinel is the household's own writing; an unknown paragraph style
+    // must not drop a line.
     const odd =
       '<meta charset="utf-8">' +
       '<p><span data-tt="{not json at all}" style="white-space: pre-wrap;">keep me\n</span></p>';
@@ -127,8 +121,8 @@ describe("whose lines are whose", () => {
   });
 
   test("a note we have never written is entirely theirs", () => {
-    // Adopting a note somebody already made and shared. Their list must end up
-    // BELOW the generated block, never replaced by it.
+    // Adopting an existing shared note: their list goes below the generated block,
+    // never replaced by it.
     const { ours, theirs } = splitOwned([
       { kind: "title", text: "Groceries" },
       { kind: "todo", text: "eggs", done: false },
@@ -146,10 +140,8 @@ describe("whose lines are whose", () => {
   });
 
   test("rewriting the same note over and over is stable", () => {
-    // The regression this replaces: the delimiter used to be an HTML comment,
-    // Notes strips those, so the second push could not find the first and
-    // appended a whole second copy of the list. Three rounds, because a bug of
-    // that shape usually survives one.
+    // Notes strips HTML comments, so the sentinel is visible text. Three rounds,
+    // since a duplication bug often survives one.
     const ours: Block[] = [
       { kind: "title", text: "Kitchen" },
       { kind: "heading", text: "Out of something you keep" },
@@ -174,27 +166,24 @@ describe("whose lines are whose", () => {
 
 describe("deciding whether anything changed", () => {
   test("the timestamp does not count as a change", () => {
-    // This is what stops the watch pass rewriting the note every ten seconds,
-    // and a rewrite while somebody is standing in an aisle is the worst thing
-    // this feature can do.
+    // An unchanged list must produce an unchanged fingerprint, or the watch pass
+    // rewrites the note every ten seconds.
     const a: Block[] = [{ kind: "text", text: "Updated Aug 17, 2026 at 1:23 PM." }];
     const b: Block[] = [{ kind: "text", text: "Updated Aug 17, 2026 at 9:99 PM." }];
     expect(signatureOf(a)).toBe(signatureOf(b));
   });
 
   test("neither does ticking something off", () => {
-    // A tick is somebody shopping, not the list changing. Treating it as a
-    // change would make the act of ticking trigger the rewrite that erases it.
+    // A tick is somebody shopping, not a list change; treating it as one would
+    // trigger a rewrite that erases it.
     const before: Block[] = [{ kind: "todo", text: "milk", done: false }];
     const after: Block[] = [{ kind: "todo", text: "milk", done: true }];
     expect(signatureOf(before)).toBe(signatureOf(after));
   });
 
   test("a note read back from what we wrote reports no change", () => {
-    // The bug this pins: the note as READ carries the sentinel and the
-    // timestamp, the block as BUILT does not, so comparing the two could never
-    // match and every single pass rewrote the note — including, eventually, one
-    // in the middle of somebody's shop.
+    // The note as read carries the sentinel and timestamp and the built block does
+    // not, so the fingerprint must compare like with like.
     const ours: Block[] = [
       { kind: "title", text: "Kitchen" },
       { kind: "heading", text: "Out of something you keep" },
@@ -238,28 +227,22 @@ describe("matching a tick to a line", () => {
 });
 
 describe("a note that has already been corrupted", () => {
-  // Every case here is the same real failure: a paste that added a copy of the
-  // note instead of replacing it. The write path now proves it replaced, so
-  // this should stop happening — but ten copies were already sitting in a
-  // household's note by the time anybody noticed, and a note that cannot repair
-  // itself stays wrong until a person edits it by hand.
+  // A paste that added a copy instead of replacing leaves stacked copies; the note
+  // must be able to repair itself on the next write.
 
   test("a second copy of our own block is reclaimed, not preserved forever", () => {
-    // The hole this closes: splitting at the FIRST sentinel made the second
-    // copy part of "theirs", and "theirs" is copied through verbatim on every
-    // single write. The note could never come back from it.
+    // Splitting at the first sentinel would make the second copy part of "theirs",
+    // which every write copies through, so the note could never recover.
     const note = [...generated("milk"), ...generated("milk", "eggs")];
     const { ours, theirs } = splitOwned(note);
     expect(theirs).toEqual([]);
     expect(ours.filter((b) => b.text === "Kitchen")).toHaveLength(2);
-    // Which is the point: `ours` is what the next write replaces outright.
+    // `ours` is what the next write replaces outright.
   });
 
   test("a line of theirs stranded above the last sentinel is put back below it", () => {
-    // The cost of reading the last sentinel instead of the first, and the
-    // reason it is paid rather than ignored. A bad paste can land in the middle
-    // of somebody's own lines, and losing one of those is the worst thing this
-    // whole feature can do.
+    // The cost of splitting at the last sentinel: a bad paste can strand the
+    // household's own lines inside our block, and those must be rescued.
     const note: Block[] = [
       ...generated("milk"),
       { kind: "todo", text: "beer", done: true },
@@ -274,9 +257,8 @@ describe("a note that has already been corrupted", () => {
   });
 
   test("but a stranded line already sitting below is not put back twice", () => {
-    // Every write copies "theirs" through, so a stranded line usually has a
-    // living twin underneath. Keeping both would grow the note by a line on
-    // every pass, which is the shape of the bug this file exists for.
+    // A stranded line usually has a twin below the sentinel; keeping both would grow
+    // the note on every pass.
     const note: Block[] = [
       ...generated("milk"),
       { kind: "todo", text: "beer", done: false },
@@ -287,10 +269,9 @@ describe("a note that has already been corrupted", () => {
   });
 
   test("the sentinel is still found after its wording changed", () => {
-    // A sentinel that stops matching is indistinguishable from one that is
-    // missing: the next sync decides the whole note is somebody else's and
-    // prepends a second list above it. Every note on every sleeping phone still
-    // carries whatever wording it was last written with.
+    // Old sentinel wordings must keep matching: a note on a sleeping phone still
+    // carries whatever it was last written with, and an unmatched sentinel makes the
+    // sync prepend a second list.
     const note: Block[] = [
       { kind: "title", text: "Kitchen" },
       { kind: "todo", text: "milk", done: false },
@@ -309,10 +290,8 @@ describe("a note that has already been corrupted", () => {
 
 describe("lines they typed on a phone", () => {
   test("a line is adopted whatever the editor styled it as", () => {
-    // The rule this replaces was "checklist items only", which would have fixed
-    // nothing: the line above the sentinel is plain text, so that is what Notes
-    // continues when somebody types under it, and all three lines that started
-    // this were plain text.
+    // Typing under a plain-text line produces plain text, so adoption cannot be
+    // limited to checklist items.
     expect(
       adoptable([
         { kind: "todo", text: "Sliced mushrooms, 8 oz", done: false },
@@ -327,9 +306,8 @@ describe("lines they typed on a phone", () => {
   });
 
   test("a heading is structure, and a sentence is a note to the household", () => {
-    // Nothing you buy is eighty characters long, and "remember to ask Jordan
-    // whether he wants to do the grill on Saturday" belongs where it was
-    // written rather than between the salsa and the avocados.
+    // A long sentence is a note to somebody, not a shopping line, and stays where it
+    // was written.
     expect(
       adoptable([
         { kind: "heading", text: "party" },
@@ -348,8 +326,8 @@ describe("lines they typed on a phone", () => {
   });
 
   test("two things on one line stay one thing, rather than becoming an amount", () => {
-    // The expensive direction to guess wrong in: "Bread, milk" split as a
-    // quantity puts bread on the list and silently loses the milk.
+    // Guessing a quantity wrongly here would lose an item: "Bread, milk" is two
+    // lines, not bread with an amount.
     expect(adoptable([{ kind: "todo", text: "Bread, milk", done: false }])).toEqual([
       { name: "Bread, milk", amount: null, text: "Bread, milk" },
     ]);
@@ -373,8 +351,8 @@ describe("proving the write actually landed", () => {
   });
 
   test("a paste that appended instead of replacing is caught", () => {
-    // The whole reason this function exists. From every angle the browser can
-    // see, this write succeeded.
+    // The write reported success; only comparing the read-back reveals the extra
+    // copy.
     expect(sameDoc(want, [...want, ...want])).toBe(false);
   });
 
@@ -383,27 +361,22 @@ describe("proving the write actually landed", () => {
   });
 
   test("a curly apostrophe is not a failed write", () => {
-    // Editors are entitled to substitute these, and retrying forever over one
-    // would be its own outage.
+    // Typographic substitutions by the editor must not fail the comparison forever.
     const mine: Block[] = [{ kind: "title", text: "Alex's list" }];
     expect(sameDoc(mine, [{ kind: "title", text: "Alex\u2019s list" }])).toBe(true);
   });
 
   test("but losing the checkboxes is", () => {
-    // Word for word identical and completely useless: a list nobody can tick.
+    // Identical words as plain text instead of checkboxes is still a failed write.
     const flat = want.map((b): Block => ({ kind: "text", text: b.text }));
     expect(sameDoc(want, flat)).toBe(false);
   });
 });
 
 /**
- * The complaint that started this: a line typed INTO the list, not below it.
- *
- * The sentinel asks people to add at the bottom, and people add at the top,
- * because that is where the list is. Everything above the sentinel used to be
- * classified as ours wholesale, so her line was neither adopted nor carried
- * through — the next write simply rebuilt the block from the ledger and it was
- * gone, leaving no trace in the note, the list or the log.
+ * A line typed inside the generated block, not below the sentinel, must be rescued.
+ * Everything above the sentinel used to be treated as ours, so such a line vanished
+ * on the next write.
  */
 describe("a line typed inside our own block", () => {
   const ourLines = new Set(["chicken broth", "avocados"].map(tickKey));

@@ -1,32 +1,14 @@
 /**
- * Taps that answer themselves.
+ * Settles site taps that need no judgement.
  *
- * Every button on the site POSTs to a callback file and, until now, every one
- * of them waited for me. That is fine for "write this recipe out and text it
- * over", which genuinely needs somebody to write a recipe. It is absurd for
- * "we made it": the plan already knows what comes off the shelves, the answer
- * is arithmetic, and making a person wait on a round trip through a model to
- * hear that their dinner was logged is exactly the friction that ends with
- * nobody pressing the button again.
+ * The watch pass runs this every few seconds. Taps that are arithmetic over
+ * existing state (confirming or calling off a meal, stars, notes, undoing a
+ * cleanup, ticking off the list, preferences, schedules, shelf-check verdicts)
+ * are applied here. Anything that needs writing or judgement (a recipe, a
+ * variant, a question, what a dish needs from the store) is left in the queue
+ * for `wake.ts` to bring to the right session.
  *
- * The split this module draws is by whether an answer needs judgement:
- *
- *   DECIDED HERE — confirming or dropping an in-progress meal, starring,
- *   noting, undoing an automatic cleanup, ticking things off the shopping
- *   list. All deterministic folds over state that already exists.
- *
- *   LEFT FOR ME — writing a recipe, building a variant, answering a question,
- *   deciding what "chicken parm" actually needs from a supermarket, finding
- *   dishes unlike anything this house cooks, answering something asked out
- *   loud at the stove. Those are judgement about food and about these people,
- *   and until 2026-09-19 three of them went to a narrow model on OpenRouter
- *   that had never met the household, because the answer was "only a list".
- *   A worse version of my own work under my name is the wrong trade for ten
- *   seconds of latency, so the drain now leaves every one of them alone and
- *   `wake.ts` brings them to me in a chat I already know the household from.
- *
- * Nothing here messages anybody. A confirmation text for a button somebody just
- * pressed is a notification about their own action.
+ * Nothing here messages anybody about their own tap.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
@@ -41,7 +23,7 @@ import { confirmPlan, cookedRecently, planFor, useLines } from "./plans.ts";
 import { addNote, skipPair, toggleFavorite, unskipPair } from "./profile.ts";
 import { METHOD_LABEL, loadRecipes } from "./recipes.ts";
 import { type Verdict, answer as answerSession, applySession, ensureSession } from "./reconcile.ts";
-import { type MakeRequest, handled, markHandled, pending, requestKey } from "./requests.ts";
+import { type MakeRequest, markHandled, pending, requestKey } from "./requests.ts";
 import { setDisposition, skip, unskip } from "./restock.ts";
 import {
   type Dinner,
@@ -56,15 +38,14 @@ import { settleAfterPurchase, tripCount } from "./shopping.ts";
 import { append, fold, live, openPlans, readLog, slug } from "./store.ts";
 import { contained, positive, safeId } from "./util.ts";
 
-/** Kinds this module is willing to answer on its own. */
+/** Kinds this module may settle. Some settle only for certain inputs; see `needsPerson`. */
 const AUTO = new Set([
   "plan",
   "favorite",
   "note",
   "unsweep",
   "shopped",
-  // "addlist" only for the empty picker; a real pick is a shopping decision
-  // and falls through to a person, like an unwritten "make".
+  // Only an empty pick; a real pick is a shopping decision for a person.
   "addlist",
   "pairskip",
   "photo",
@@ -76,8 +57,7 @@ const AUTO = new Set([
   "sched",
   "keep",
   "notes",
-  // "make" only when the dish is already written out; otherwise it falls
-  // through to a person, which is what `handleOne` returning null means.
+  // Only when the dish is already written out; otherwise it needs a person.
   "make",
 ]);
 
@@ -90,26 +70,19 @@ export type DrainResult = {
 };
 
 /**
- * Resolve one request.
- *
- * Returns a log line, an EMPTY STRING for "handled, not worth a log line", or
- * null for "not ours, leave it for a person". The empty-string case is not a
- * nicety: returning null for a silently-handled request meant every swipe of a
- * shelf check was left in the queue unmarked, re-processed on every pass
- * forever, and reported to me as work waiting for a human.
+ * Resolve one request. Returns a log line, an empty string for "handled, not
+ * worth logging", or null for "leave it for a person". Returning null for a
+ * silently handled request would leave it queued and re-processed forever.
  */
 async function handleOne(account: string, r: MakeRequest): Promise<string | null> {
   switch (r.kind) {
     case "plan": {
       if (!r.plan) return null;
       const p = openPlans(account)[r.plan];
-      // Already resolved, most likely a double tap or a retry. Reporting it as
-      // done is right: the world is in the state the person asked for.
+      // Already resolved (a double tap or a retry): the state is what was asked.
       if (!p) return `plan ${r.plan}: already settled`;
-      // "made" is the affirmative; anything else is the meal not happening.
-      // Defaulting the unknown case to "did not happen" is the safe direction:
-      // wrongly consuming food invents a meal in the history and empties shelves
-      // that are still full, and only one of those two errors is visible.
+      // Only "made" consumes. Anything else calls the meal off, the safe default:
+      // wrongly consuming food empties shelves that are still full.
       if (r.note === "made") {
         return `plan ${r.plan} "${p.meal}": confirmed, ${confirmPlan(account, r.plan, p).summary}`;
       }
@@ -128,14 +101,11 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     case "favorite": {
       if (!r.recipe || !r.profile) return null;
       let on = toggleFavorite(account, r.recipe, r.profile);
-      // The page sends the state it wants, not a toggle. If a stale tab and the
-      // stored state disagree, one more flip lands on what was actually asked
-      // for rather than inverting it.
+      // The page sends the wanted state; flip again if a stale tab disagreed.
       if (typeof r.on === "boolean" && on !== r.on) {
         on = toggleFavorite(account, r.recipe, r.profile);
       }
-      // Report what the file now says, not what was requested. Reading back the
-      // request meant a star that failed to take still logged as "starred".
+      // Report the stored state, not the requested one.
       return `favorite ${r.recipe}: ${on ? "starred" : "unstarred"}`;
     }
 
@@ -162,14 +132,9 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       return `unsweep ${r.batch}: retracted`;
     }
 
-    /**
-     * Answering the tray, or taking a line off the list.
-     *
-     * Every branch here is a preference rather than a fact about food, which is
-     * why none of them touch the event log — see `restock.ts`. The one option
-     * on that sheet that IS a fact about food ("I already have this") is posted
-     * as a `restock` and never reaches this handler.
-     */
+    // An answer about a list line or tray suggestion. These are preferences, not
+    // facts about food, so none touch the event log ("I already have this" is
+    // posted as a `restock` instead).
     case "keep": {
       const id = r.id ?? "";
       const name = r.name ?? id;
@@ -187,8 +152,7 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
           skip(account, [id], tripCount(account));
           return `keep ${name}: skipped for this trip`;
         case "once":
-          // A one-time yes. No disposition is written, because saying "buy
-          // this once" is not saying anything about next month.
+          // A one-time yes: listed now, no standing disposition.
           addToList(account, [
             {
               name,
@@ -215,29 +179,19 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     }
 
     case "notes": {
-      // Somebody tapped for this, so it queues behind a sync in flight
-      // instead of colliding with one.
+      // A person is waiting, so queue behind any sync in flight.
       const res = await syncNote(account, { wait: WAIT_MS });
       if (!res.ok) return `apple notes: ${res.error}`;
       return `apple notes: ${res.wrote ? "wrote" : "confirmed"} ${res.lines} line${res.lines === 1 ? "" : "s"} in "${res.title}" via ${res.via}${res.adopted.length ? `, took ${res.adopted.join(", ")} off the note` : ""}${res.invited.length ? `, invited ${res.invited.join(", ")}` : ""}`;
     }
 
     case "shopped": {
-      // A tick is somebody saying "this is in the trolley". That is real
-      // evidence of PRESENCE and no evidence at all of quantity or price, which
-      // is exactly what an add carrying a null qty means: back in the house,
-      // nobody counted it. A receipt refines it later with the real numbers.
-      //
-      // This used to clear the written lines and stop, on the grounds that only
-      // a receipt could say what came home. True, and it left every derived
-      // line sitting there after the trip — the staples are folded from stock,
-      // so if nothing asserts they are back, the list still shows them as out.
-      // Somebody ticked seven boxes, pressed finished, and watched nothing
-      // happen. Refusing to guess a quantity is right; refusing to believe the
-      // person in front of you is not.
+      // A tick is evidence of presence, not of quantity or price: each known
+      // item is added back with a null qty, and the receipt refines it later.
+      // Without the add, derived staple lines would stay on the list.
       const ticked = (r.items ?? []).filter(Boolean);
       const n = removeFromList(account, ticked);
-      const stock = Object.fromEntries(Object.entries(fold(account)));
+      const stock = fold(account);
       const known = ticked.filter((id) => stock[id]);
       if (known.length) {
         append(
@@ -260,8 +214,7 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     }
 
     case "pairskip": {
-      // "We are not doing the second night." Recorded rather than acted on:
-      // nothing is consumed, nothing is bought, the suggestion simply stops.
+      // Declining one half of a cook-once-eat-twice pair: the suggestion stops.
       if (!r.recipe || !r.note) return null;
       if (r.note === "undo") {
         unskipPair(account, r.recipe);
@@ -272,15 +225,8 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       return `pair ${r.recipe}: skipping the ${leg === "parent" ? "first" : "second"} half`;
     }
 
-    // "Make this" for a dish that has already been written out.
-    //
-    // The original brief was "write the recipe page, or if it exists send it",
-    // and only the first half was built: every tap posted a request that woke a
-    // session, which then discovered the page already existed. That is the most
-    // expensive possible way to open a link, and it is what somebody pressing a
-    // button twice in a week would always hit. Serving the existing page is a
-    // lookup, so it happens here. A dish with no page still falls through to a
-    // person, because writing one is real writing.
+    // "Make this" for a dish already written out: send the existing page. A dish
+    // with no page falls through to a person.
     case "make": {
       if (!r.recipe) return null;
       const acct = getAccount(account);
@@ -290,10 +236,8 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       const dir = acct.site?.artifact;
       if (!dir || !existsSync(join(dir, "recipe", `${r.recipe}.html`))) return null;
 
-      // Marked served BEFORE the sends, unlike everything else here. The two
-      // failure modes are not symmetric: losing this costs somebody a link they
-      // can still reach from the card they just tapped, while replaying it
-      // texts a real person the same thing twice.
+      // Marked served before sending, unlike other kinds: a lost send costs a
+      // link they can still reach, while a replay texts a person twice.
       markHandled(account, [requestKey(r)]);
       const who = (r.users?.length ? r.users : eaters(acct).map((e) => e.principal)).filter(
         (p) => acct.members.includes(p) && !p.startsWith("imessage:group:"),
@@ -312,27 +256,16 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     }
 
     case "cooked": {
-      // Finishing a recipe on its own page is the same fact as confirming a
-      // plan on the meals page, so it consumes the same way and leaves the same
-      // leftovers. Without this the last card could only say "go and tell the
-      // other page", which is the sort of errand nobody runs.
+      // "We made it" from a recipe page: the same fact as confirming a plan.
       if (!r.recipe) return null;
-      // This is the one auto-handled kind with no natural guard. Confirming a
-      // plan consumes the plan, so a replay finds nothing to do; ticking a
-      // shopping line off a list it has already left is a no-op; asserting a
-      // count twice asserts the same count. Consuming a recipe's ingredients is
-      // none of those — run it twice and the dinner comes off the shelves
-      // twice. The stamp below is what makes the replay visible.
+      // The one kind that is not naturally idempotent, so its writes carry the
+      // request key and a replay can see it already ran.
       const key = requestKey(r);
       if (readLog(account).some((e) => e.req === key)) {
         return `cooked ${r.recipe}: already taken off the shelves`;
       }
-      // An open plan for this dish outranks every reconstruction below, because
-      // it is the only list somebody actually agreed to: it was resolved against
-      // the shelves at the moment it was made and scoped to tonight (four thighs,
-      // not the package). Confirming it here is also what keeps the two screens
-      // from double-charging the same dinner — deducting separately left the plan
-      // open and armed to consume everything a second time.
+      // An open plan wins: it holds tonight's agreed quantities, and confirming
+      // it closes the plan so the meals page cannot charge the dinner again.
       const open = planFor(account, r.recipe, r.name);
       if (open) {
         return (
@@ -343,22 +276,12 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       const { recipes } = loadRecipes(account);
       const cat = recipes.find((x) => x.id === r.recipe);
       const book = loadCookbook(account).find((x) => x.id === r.recipe);
-      // The WRITTEN recipe wins over the catalog card. They share an id and can
-      // disagree completely: the card is the general idea of the dish, while the
-      // cookbook entry is the one that got written for this house, on this night,
-      // around what was actually in the fridge. Preferring the card is how a tap
-      // on a page built around raw chicken thighs took a package of deli buffalo
-      // chicken off the shelf instead, and emptied a bottle of ranch the recipe
-      // spends a tablespoon of.
+      // The written recipe beats the catalog card with the same id: it was
+      // written for this house around what was actually in the fridge.
       const needs = book?.needs ?? cat?.needs ?? [];
       if (!needs.length) return `cooked ${r.recipe}: no ingredient list, nothing to take off`;
       const meal = book?.name ?? cat?.name ?? r.name ?? r.recipe;
-      // Two genuine taps, two request keys, one dinner. The stamp above only
-      // recognises a REPLAY of a single tap; it cannot see a person pressing the
-      // button again because the page gave them no receipt the first time, which
-      // is the likelier story of the two. Once the first tap has closed the plan
-      // there is nothing open left to protect the second one, so it would deduct
-      // an entire second dinner from a reconstructed list.
+      // Two genuine taps have two keys; catch the second press separately.
       const already = cookedRecently(account, meal);
       if (already) {
         return `cooked "${meal}": already came off the shelves at ${already.at}, so this tap changed nothing`;
@@ -367,8 +290,6 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       const used = needs.filter(([slug]) => stock[slug]);
       const yields = cat?.yields ?? [];
       if (!used.length && !yields.length) {
-        // The ledger already believes none of this is in the house. Saying so is
-        // the honest answer; writing an empty batch to record it is not.
         return `cooked "${meal}": nothing it needs is on the shelves, so nothing came off`;
       }
       append(account, [
@@ -397,17 +318,11 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     }
 
     case "restock": {
-      // "The ledger is wrong, I do have that." The most common reason a dish
-      // looks un-makeable is a stale shelf, not an empty one, and being told so
-      // is better evidence than anything this system can infer on its own.
+      // "I do have that": a person's word beats anything inferred.
       if (!r.items?.length) return null;
       const stock = Object.fromEntries(live(account).map((i) => [i.id, i]));
       const want = typeof r.qty === "number" ? r.qty : 1;
-      // Two shapes of wrong, one correction. Either the shelf is empty and the
-      // thing is actually there, or there is some and the count is too low. The
-      // second was the case that silently did nothing: the item was present, so
-      // an "is it missing" check said no and the count stayed exactly as wrong
-      // as it was. Both are handled by asserting the count.
+      // Covers both "marked gone but here" and "here but counted too low".
       const fix = r.items.filter((id) => {
         const it = stock[id];
         return !it || it.gone || (typeof it.qty === "number" && it.qty < want);
@@ -428,9 +343,8 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     }
 
     case "reconcile": {
-      // One card, one verdict. Recorded as it arrives rather than at the end,
-      // so a phone that dies at item nine keeps the first eight; nothing
-      // reaches the ledger until the pass is explicitly saved.
+      // One shelf-check verdict, saved as it arrives so a dead phone loses
+      // nothing. The ledger changes only when the pass is applied.
       if (!r.session) return null;
       if (r.note === "apply") {
         const res = applySession(account, r.session);
@@ -449,32 +363,19 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
             ? { kind: "amount", qty: r.qty, unit: r.unit ?? null }
             : { kind: "have" };
       answerSession(account, r.session, r.item, verdict, r.profile ?? null);
-      // Handled, but deliberately unlogged: thirty of these arrive in ninety
-      // seconds and one line each would bury everything else that happened.
+      // Handled but not logged: they arrive dozens at a time.
       return "";
     }
 
     case "photo": {
-      // The share server wrote the bytes to a quarantine directory and told us
-      // where. Deciding what the picture MEANS is this side's job, which is why
-      // the public endpoint does not do it.
-      //
-      // A photo of the actual plate always beats the generated one. The
-      // generated shot is moved aside rather than overwritten, because
-      // "generated" is recoverable and "the night we cooked it" is not.
+      // A real photo of the plate replaces the generated one, which is moved
+      // aside rather than overwritten.
       if (!r.file || !r.recipe) return null;
       const dir = getAccount(account)?.site?.artifact;
       if (!dir) return null;
-      // Both of these name a file, and both arrive from a public endpoint.
-      //
-      // `/upload` is careful — it rebuilds the name from scratch and writes only
-      // into `img/upload/` — but `/callback` accepts any JSON object from anyone
-      // holding the page link, so a photo request can be posted directly with a
-      // `file` the server never wrote. This is a rename, which is a read of that
-      // path AND a delete of it, so an unchecked "../.." here moved arbitrary
-      // files off this machine and into the directory the tunnel serves. Confine
-      // the source to the one directory uploads land in, and require the recipe
-      // id to be an id rather than a path fragment.
+      // Both values come from a public endpoint, and the move below is a read
+      // and a delete of `file`: confine it to the upload directory and require a
+      // real recipe id.
       if (!safeId(r.recipe)) return `photo: "${r.recipe}" is not a recipe id`;
       const src = contained(dir, r.file, "img/upload");
       if (!src) return `photo for ${r.recipe}: refused, "${r.file}" is not an upload`;
@@ -501,25 +402,15 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     }
 
     case "addlist": {
-      // `missing` is what the person actually confirmed on the page, not what
-      // the site guessed. The button opens a picker first, because a tap on
-      // "add to list" is interest in a dish rather than a decision to cook it,
-      // and a list that fills itself with things nobody chose is a list people
-      // stop reading.
-      //
-      // An empty picker settles here. A real pick does not: what "chicken
-      // parm" needs from a supermarket, given what is already in the fridge
-      // and on the list, is a shopping decision, and it goes to me through
-      // `kitchen_shopping add`. `needsPerson` below has to agree with this.
+      // An empty pick settles here. A real pick is a shopping decision for a
+      // person (`kitchen_shopping add`); `needsPerson` must agree.
       if (!r.recipe) return `add to list: no recipe named, dropped`;
       if (!r.items?.length && !r.missing?.length)
         return `add to list for ${r.name ?? r.recipe}: nothing picked`;
       return null;
     }
 
-    // How this house wants to be cooked for. Deterministic: it writes to the
-    // account and changes nothing about what food exists, which is why it can
-    // settle in ten seconds rather than waiting for a session.
+    // Household preferences: an account write, no food changes.
     case "pref": {
       const acct = getAccount(account);
       if (!acct) return null;
@@ -533,14 +424,8 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
           ? (r.note as "prep" | "normal" | "ballout")
           : "normal";
         const methods = (r.items ?? []).filter((m) => m in METHOD_LABEL);
-        // Zero means "no opinion", which is a real answer and has to be stored
-        // as absent rather than as a budget of nothing. A zero-dollar weekly
-        // target would read as a household that may not buy food.
-        //
-        // Through `positive` rather than a bare truthiness test, because these
-        // come off a public endpoint: `"50" > 0` is true, so a string survived
-        // the old check and was persisted as the budget, and everything
-        // downstream then did arithmetic on it.
+        // Zero or anything that is not a positive number (e.g. the string "50")
+        // is stored as absent: no opinion.
         const budget = positive(r.qty);
         const perMeal = positive(r.amount);
         updateAccount(account, {
@@ -552,10 +437,8 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       return null;
     }
 
-    // Shopping for a dish the house cannot make and has never made. The names
-    // are already the model's own plain shopping words from when the idea was
-    // generated, so there is nothing to resolve and nothing to look up: this
-    // one is genuinely just a write.
+    // Shopping for an explore dish. Its buy list is already in plain shopping
+    // words, so this is just a write.
     case "idealist": {
       const set = readExplore(account);
       const dish = set?.dishes.find((d) => d.id === r.recipe);
@@ -566,9 +449,7 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
         account,
         buy.map((name) => ({
           name,
-          // No `item` slug on purpose. The house has never owned these, so
-          // claiming a ledger identity for them would invent an inventory row
-          // for food nobody has bought yet.
+          // No ledger slug: the house has never owned these.
           item: null,
           why: `to try ${dish.name}`,
           by: r.profile ?? null,
@@ -577,10 +458,8 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       return `add to list for ${dish.name} (idea): +${added.length}${merged.length ? `, ${merged.length} already on it` : ""}`;
     }
 
-    // A standing dinner text, set from the page. Deterministic: it writes a row
-    // on the household and changes nothing about food. The schedule is
-    // validated against this household's own members here rather than trusted,
-    // because the body arrived from a public endpoint.
+    // A standing dinner text set from the page, validated against the household
+    // by `normalize` because the body comes from a public endpoint.
     case "sched": {
       const acct = getAccount(account);
       if (!acct) return null;
@@ -602,9 +481,8 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
         );
         return `schedule ${r.recipe}: ${on ? "back on" : "paused"}`;
       }
-      // An edit carries forward only what the OLD row knew about firing. Every
-      // field the person can see on screen comes from the body, or a rename of
-      // the recipients would be silently thrown away by the previous values.
+      // An edit keeps only the old row's firing state; every visible field comes
+      // from the body.
       const was = list.find((x) => x.id === r.recipe);
       const d = normalize(
         {
@@ -633,20 +511,12 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
 }
 
 /**
- * Answer everything on this account's page that can be answered without me.
+ * Settle everything on this household's site that needs no person.
  *
- * Each request is acted on, then marked served, one at a time — never a mark
- * for the whole batch at the end, so a crash halfway through cannot un-serve
- * the ones already done.
- *
- * The window between acting and marking is real and cannot be closed by
- * ordering: mark first and a crash loses the action, mark second and a crash
- * replays it. So every kind handled here is idempotent instead. Most are so
- * naturally — a confirmed plan is gone, a ticked line has already left the
- * list, an asserted count asserts the same count. The one that is not is
- * `cooked`, which carries an explicit request stamp in the events it writes.
- * That is the property to preserve when adding a kind to AUTO: replaying it
- * must be harmless, or it must be able to see that it already ran.
+ * Each request is acted on and then marked served, one at a time. A crash
+ * between the two replays the request, so every kind handled here must be
+ * idempotent (`cooked` achieves that with a request stamp). Keep that property
+ * when adding a kind to AUTO.
  */
 export async function drain(account: string): Promise<DrainResult> {
   const out: DrainResult = { done: [], left: [], failed: [] };
@@ -654,14 +524,12 @@ export async function drain(account: string): Promise<DrainResult> {
   const dir = acct?.site?.artifact;
   if (!dir) return out;
 
-  // The drain runs every few seconds, so it is also the thing that keeps the home
-  // page's weather current. Deliberately best-effort and deliberately silent:
-  // a network failure here must never hold up somebody's "we made it", and a
-  // stale reading is simply not shown rather than shown wrong.
+  // Also keeps the page's weather current. Best-effort: a stale reading is
+  // simply not shown.
   try {
     await refreshWeather(account, acct);
   } catch {
-    // Nothing to say. The cache ages out on its own and the page falls silent.
+    // The cache ages out on its own.
   }
 
   for (const r of pending(account, dir)) {
@@ -678,9 +546,7 @@ export async function drain(account: string): Promise<DrainResult> {
       markHandled(account, [requestKey(r)]);
       if (line) out.done.push(line);
     } catch (e) {
-      // A failed request stays in the queue. It will be retried next pass, and
-      // if it keeps failing it surfaces to me as something still waiting, which
-      // is the correct escalation.
+      // Left in the queue: retried next pass, and surfaces as still waiting.
       out.failed.push(`${r.kind} ${r.recipe ?? r.plan ?? ""}: ${(e as Error).message}`);
     }
   }
@@ -688,15 +554,10 @@ export async function drain(account: string): Promise<DrainResult> {
 }
 
 /**
- * Whether a request is waiting on a person rather than on the next pass.
- *
- * Not the same question as AUTO membership. `make` is in AUTO but only settles
- * itself when the dish is already written out, and `addlist` is in AUTO only
- * to log the empty picker. This predicate is what decides who gets woken, so
- * a kind that is arithmetic on some inputs and mine on others has to be
- * described here exactly as `handleOne` treats it; the drain test pins the
- * two together per kind, because reading AUTO alone once made every unwritten
- * "make" vanish from the waiting list while it sat unanswered in the queue.
+ * Whether a request is waiting on a person rather than on the next pass. This
+ * decides who gets woken, so it must match `handleOne` exactly per kind: `make`
+ * settles only when the page exists, `addlist` only when nothing was picked.
+ * The drain test pins the two together.
  */
 export function needsPerson(account: string, dir: string, r: MakeRequest): boolean {
   if (!AUTO.has(r.kind)) return true;
@@ -711,23 +572,17 @@ export function needsPerson(account: string, dir: string, r: MakeRequest): boole
   return false;
 }
 
-/**
- * Requests still waiting on a person, across every account. Cheap, no I/O
- * beyond the log.
- */
+/** Unserved requests for this household that are waiting on a person. */
 export function stillWaiting(account: string): MakeRequest[] {
   const acct = getAccount(account);
   const dir = acct?.site?.artifact;
   if (!dir) return [];
-  const done = handled(account);
-  return pending(account, dir).filter(
-    (r) => needsPerson(account, dir, r) && !done.has(requestKey(r)),
-  );
+  return pending(account, dir).filter((r) => needsPerson(account, dir, r));
 }
 
-/** What the trigger reads. Only the fields it needs to decide and to dedupe. */
+/** The queue file published after each pass. */
 export type Queue = {
-  /** When the pass that wrote this finished. The heartbeat. */
+  /** When the pass finished; a stale value means the loop is down. */
   at: string;
   account: string;
   waiting: Array<{ key: string; kind: string; recipe?: string; name?: string }>;
@@ -736,24 +591,12 @@ export type Queue = {
 };
 
 /**
- * Publish what is still waiting on a person, at the end of a pass.
+ * Publish what is still waiting on a person, after the pass has settled what
+ * it can, so the file never lists a request already taken.
  *
- * This exists because the alarm and the drain were reading different things.
- * The alarm watched the raw callback log, which contains every tap; the drain
- * settles most of them within ten seconds. So the alarm fired on work that no
- * longer needed doing, and had I acted on one of those wake-ups the person would
- * have been sent the same recipe twice. Written here, after the pass, the file
- * cannot describe a request the drain has already taken.
- *
- * The timestamp is the other half. A syntax error in the render layer took this
- * whole loop down for 54 minutes on 2026-08-17 and nothing said so, because a
- * process that dies at import time has no chance to report anything. Nothing
- * inside the pass can cover that; only the absence of a fresh stamp can. So the
- * file is rewritten every pass whether or not anything changed, and a stale `at`
- * is the outage alarm.
- *
- * Written atomically: a reader polling every two minutes must never catch a
- * half-written file and read it as an empty queue.
+ * Rewritten every pass, changed or not: `at` is the heartbeat, and a stale one
+ * is the only signal of a loop that died at import time. Written atomically so
+ * a poller never reads a half-written file as an empty queue.
  */
 export function publishQueue(account: string, trouble?: string): void {
   const dir = getAccount(account)?.site?.artifact;

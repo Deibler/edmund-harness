@@ -1,14 +1,11 @@
 /**
- * Event-sourced inventory, one append-only log per account.
+ * Event-sourced inventory: one append-only JSONL log per household.
  *
- * The current state of a kitchen is a fold over its log, recomputed on every
- * read. That means the log is the only thing that has to be right, any batch
- * can be retracted, and every derived feature in this integration — spend,
- * calories, meal timing, the recap — is a different fold over the same events
- * rather than a second store that can drift.
+ * Current state is a fold over the log, recomputed on every read, so the log is
+ * the only thing that has to be right and any batch can be retracted. Spend,
+ * calories and the recap are other folds over the same events.
  *
- * Isolation is the file boundary. Nothing in this module takes two accounts,
- * so there is no query that can span them and nothing to remember to scope.
+ * Isolation is the file boundary: nothing here takes two accounts.
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -43,7 +40,7 @@ function shortId(n = 8): string {
   );
 }
 
-/** Lines that would not parse, by account. Surfaced rather than thrown. */
+/** Line numbers that did not parse, by account. Reported by callers, never thrown. */
 export const corruptLines = new Map<string, number[]>();
 
 export function readLog(account: string): KitchenEvent[] {
@@ -58,12 +55,8 @@ export function readLog(account: string): KitchenEvent[] {
     try {
       out.push(JSON.parse(t) as KitchenEvent);
     } catch {
-      // A single unparseable line used to throw out of here, which meant every
-      // tool in this integration failed for that household — inventory, plans,
-      // the site, all of it — until a human hand-edited the file. Two writers
-      // append to this log with no lock, and a process killed mid-append leaves
-      // exactly one truncated line. Losing one event is bad; losing the whole
-      // kitchen because of it is much worse. Skip it and let the caller report.
+      // Writers append without a lock, so a killed process can leave one torn
+      // line. Skip it rather than take the whole household offline.
       bad.push(i + 1);
     }
   }
@@ -73,21 +66,13 @@ export function readLog(account: string): KitchenEvent[] {
 }
 
 /**
- * Write a group of events sharing one batch id. Returns the batch id.
- *
- * One batch per user-visible action is what makes `undo` a single honest
- * operation: a six-ingredient dinner logged wrong is one retraction, not six.
+ * Append events under one shared batch id and return it. One batch per
+ * user-visible action keeps `undo` a single retraction.
  */
 export function append(account: string, events: Partial<KitchenEvent>[]): string {
   const batch = shortId();
-  if (!events.length) {
-    // Nothing to write. Falling through appended a bare newline, because the
-    // join of an empty list is an empty string and the terminator went on
-    // anyway. Harmless to the fold, which skips blank lines, but it put
-    // untraceable whitespace in an append-only file that is meant to be
-    // readable by a human with `less`.
-    return batch;
-  }
+  // An empty write would otherwise append a bare newline.
+  if (!events.length) return batch;
   const ts = nowIso();
   const path = logPath(account);
   mkdirSync(dirname(path), { recursive: true });
@@ -97,19 +82,14 @@ export function append(account: string, events: Partial<KitchenEvent>[]): string
 }
 
 /**
- * Batch ids an undo has retracted.
+ * Batch ids retracted by an undo.
  *
- * Key on `batch_target`, never the undo event's own `batch` — `append` stamps
- * every event with a fresh id, so reading `batch` here retracts the undo
- * itself and nothing else. That was a live bug in the Python engine until
- * 2026-08-16; keeping the helper named and shared stops it coming back.
+ * Keyed on `batch_target`; the undo's own `batch` is a fresh id and names only
+ * the undo. An undo counts only if it was not itself undone, which is what lets
+ * undoing an undo restore the original. Walking backwards settles that in one
+ * pass, because anything that cancels an undo comes later in the log.
  */
 export function droppedBatches(events: KitchenEvent[]): Set<string> {
-  // An undo only counts if it has not itself been retracted — that is what makes
-  // undoing an undo restore the original batch. Walking BACKWARDS decides that
-  // in one pass: any undo that cancels this one is necessarily later, so it has
-  // already been resolved by the time we get here. A naive forward union let a
-  // retracted undo keep suppressing its target.
   const dropped = new Set<string>();
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]!;
@@ -159,12 +139,9 @@ export function fold(account: string, events?: KitchenEvent[]): Record<string, I
     }
 
     for (const [k, v] of Object.entries(e.fields ?? {})) {
-      // `undefined` means the writer said nothing about this field. `null` means
-      // it said "there is no value" — clearing a wrong expiry date is a real
-      // correction, and skipping nulls made it impossible: once a date was on an
-      // item nothing could take it off again. Level is the exception, because a
-      // null level is how "no level was mentioned" reaches here from a qty-only
-      // add, and honouring that would wipe the level of every counted staple.
+      // `undefined` = field not mentioned; `null` = cleared (e.g. a wrong expiry
+      // date). Level is the exception: a qty-only add carries `level: null` to
+      // mean "not mentioned", and honouring it would wipe every counted level.
       if (v === undefined) continue;
       if (v === null && k === "level") continue;
       (it as Record<string, unknown>)[k] = v;
@@ -173,92 +150,56 @@ export function fold(account: string, events?: KitchenEvent[]): Record<string, I
     const q = e.qty ?? null;
 
     if (e.op === "add") {
-      // An `add` asserts the thing is in the house now, so whatever the last
-      // emptying left behind is stale from this event forward. Without this a
-      // restock INHERITS the emptiness: `it.level ?? "full"` reads the "out"
-      // that finishing the item just wrote, and an add carrying no count leaves
-      // the qty 0 that the use-all set. Buy olive oil, log it, and the page says
-      // "0" and "out" for something that came through the door a minute ago.
-      // This is the other half of use-to-zero setting level="out" — that rule is
-      // right, but it made a stale "out" reachable by a path that never had one.
-      //
-      // "low" is stale for the same reason and used to survive, because only
-      // "out" was cleared. Buying more of something is exactly the act that
-      // stops it being low, so a shelf check saying "running low on milk"
-      // outlived the jug bought two days later and kept milk on the shopping
-      // list indefinitely. An add that names its own level still wins: that is
-      // somebody saying how much actually came home.
+      // An add asserts the item is in the house now, so emptiness left by the
+      // last use is stale: a restock must not inherit qty 0, "out" or "low".
+      // An add that names its own level still wins.
       if (q !== null) it.qty = round((it.qty ?? 0) + q);
       else if (it.gone) it.qty = null; // restocked, and nobody counted it
       const carried = it.level === "out" || it.level === "low" ? null : it.level;
       it.level = (e.fields?.level ?? carried ?? "full") as Level;
-      // The date goes stale for exactly the reason the level does. An item that
-      // was empty still carries the clock of the pack somebody finished, so a
-      // restock inherited an expiry already in the past: pork bought this
-      // morning read as thirteen days expired and fell straight out of meal
-      // planning. An add that names its own date still wins. A top-up of
-      // something still in the house keeps the older clock, which is the
-      // conservative read while both packs are on the shelf.
+      // Likewise the finished pack's expiry, unless the add names a date. A
+      // top-up of something still present keeps the older, more cautious date.
       if (it.gone && !(e.fields && "expires" in e.fields)) it.expires = null;
       it.gone = false;
       it.used_since_check = 0;
       it.uses_since_check = 0;
     } else if (e.op === "use") {
-      // `some` is the difference between "we finished the ranch" and "a wrap
-      // used some ranch". Both arrive here with no quantity, and only the first
-      // one means the bottle is empty — see the field's note in types.ts.
+      // A null qty means "all of it" unless `some` is set ("a wrap used some
+      // ranch" does not empty the bottle); see `KitchenEvent.some`.
       if (q === null && !e.some) {
         it.qty = 0;
         it.level = "out";
         it.gone = true;
       } else if (it.qty === null) {
-        // Level-tracked staple: nobody knows how many teaspoons are in the jar,
-        // so a measured use accrues against the item instead of moving the
-        // level. Stepping the level on every pinch put salt, pepper and olive
-        // oil on the shopping list after a single dinner. The running total is
-        // a reason for a human to look, not a claim about what is left.
+        // Level-tracked staple: uses accrue for a human to check rather than
+        // stepping the level, or one dinner would put salt on the list.
         it.used_since_check = round((it.used_since_check ?? 0) + (q ?? 0));
         it.use_unit = e.unit ?? it.use_unit;
         it.uses_since_check = (it.uses_since_check ?? 0) + 1;
       } else if (q === null) {
-        // Marked `some` but the item turned out to be counted after all — the
-        // shelf changed between the write and the fold. Recording the touch
-        // without inventing a number is the honest floor; guessing one, or
-        // falling through to the subtraction with a null, is not.
+        // `some` against a counted item: record the touch, invent no number.
         it.uses_since_check = (it.uses_since_check ?? 0) + 1;
       } else {
         it.qty = round(Math.max(0, it.qty - q));
         it.gone = it.qty === 0;
-        // Keep level and qty telling the same story. Using the last of something
-        // left `level` at "full" beside a qty of 0, and any later write that
-        // consulted the level read a full container. The use-all branch above
-        // already does this; a counted item reaching zero is the same event.
+        // Keep level consistent with a qty that reached zero.
         if (it.gone) it.level = "out";
       }
     } else if (e.op === "set") {
-      // A null qty is "nobody counted this", not "there are zero". Treating it as
-      // a quantity assertion let a metadata correction that happened to carry a
-      // null qty decide whether the item still exists.
+      // A null qty means "not counted", never "zero".
       const setsQty = typeof e.qty === "number";
       const setsLevel = !!e.fields && "level" in e.fields && e.fields.level != null;
       if (setsQty) it.qty = q;
       if (setsLevel) {
-        // Somebody physically looked in the container, which is the only thing
-        // that ever knew. Everything accrued since the last look is now spent.
+        // Somebody looked, so accrued uses are settled.
         it.level = e.fields!.level as Level;
         it.used_since_check = 0;
         it.uses_since_check = 0;
       }
-      // A set that names a real quantity is a fresh count, so it also clears a
-      // stale "out" left behind by an earlier use-it-all; otherwise `set --qty 5`
-      // would leave the item marked gone with five of them on the shelf.
+      // A positive count is fresh evidence and clears a stale "out".
       if (setsQty && (q ?? 0) > 0 && !setsLevel && it.level === "out") it.level = null;
-      // Only a set that actually carries a quantity or a level may decide whether
-      // the item is still in the house. A metadata correction — fixing a display
-      // name, adding an alias, clearing a bad date — used to run `gone = (q === 0)`
-      // with q defaulted to null, which resurrected anything already consumed.
-      // Renaming an empty milk jug put milk back in the fridge, which is exactly
-      // the false "yes we have it" this ledger exists to stop.
+      // Only a count or a level decides presence. A metadata correction (a
+      // rename, an alias, a cleared date) must not resurrect a finished item.
       if (setsQty || setsLevel) it.gone = it.qty === 0 || it.level === "out";
     } else if (e.op === "toss") {
       it.qty = 0;
@@ -280,12 +221,9 @@ export function live(account: string, items?: Record<string, Item>): Item[] {
 }
 
 /**
- * Split candidates into ones the query really names and ones it merely touches.
- *
- * This distinction is the whole safety property of the ledger. "eggs" appears
- * inside "wide egg noodles", and a lookup that answers yes to that is worse
- * than one that answers nothing at all. Anything that MUTATES must use `exact`;
- * a loose hit is reported as a loose hit and never silently stands in.
+ * Split items into those the query names exactly (id, name or alias) and those
+ * it merely appears in. "eggs" appears in "wide egg noodles", so anything that
+ * writes must use `exact`; `near` is only ever reported as a near miss.
  */
 export function match(query: string, items: Record<string, Item>) {
   const q = query.toLowerCase().trim();
@@ -330,10 +268,7 @@ export function openPlans(account: string, events?: KitchenEvent[]): Record<stri
   return open;
 }
 
-// `now` is injectable because every clock decision downstream of this — what
-// leads the page, what the card says, what gets offered as dinner — is a
-// function of it, and a caller that cannot name the day can only be tested
-// against the day the test happens to run on.
+/** Whole days until the item's printed date (negative once past), or null. */
 export function daysLeft(item: Item, now = new Date()): number | null {
   if (!item.expires) return null;
   const d = new Date(`${item.expires}T00:00:00`);
@@ -355,7 +290,6 @@ export const isCategory = (s: string): s is Category =>
 export const isLocation = (s: string): s is Location =>
   (LOCATIONS as readonly string[]).includes(s);
 
-export { newPlanId };
-function newPlanId(): string {
+export function newPlanId(): string {
   return shortId(6);
 }

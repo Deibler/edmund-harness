@@ -1,22 +1,10 @@
 /**
  * What a recipe costs to cook, from what this household actually paid.
  *
- * Not a market price and not a lookup — the only prices here are line totals
- * off this kitchen's own receipts, so the number answers "what did this dinner
- * cost me" rather than "what does this dish cost in general".
- *
- * Two rules keep it honest:
- *
- *   A package price is not a portion price. A $15.35 pack of beef used one
- *   dinner at a time is not a $15.35 dinner. Where the purchase quantity is
- *   known the line is prorated by the share the recipe calls for; where it is
- *   not, the whole package counts, and that is flagged rather than hidden.
- *
- *   Staples are excluded, not guessed. A recipe needing "some" paprika, salt
- *   and olive oil is asking for a few cents of things nobody measures, and
- *   inventing a per-teaspoon rate for a jar would put a fabricated number in
- *   the middle of a column of real ones. They are counted and reported as
- *   uncounted instead.
+ * Prices are line totals from the household's own receipts. A package price is
+ * prorated by the share the recipe uses when the purchase quantity is known,
+ * and counted whole (and flagged) when it is not. Staples ("some" paprika) are
+ * reported as uncounted rather than given an invented per-teaspoon price.
  */
 
 import type { Recipe } from "./recipes.ts";
@@ -34,12 +22,9 @@ export type PricePoint = {
 };
 
 /**
- * Most recent price paid per item.
- *
- * The quantity comes from the priced event itself when it has one, and
- * otherwise from the nearest earlier `add` for the same item — prices
- * recovered later and written as corrections carry the money but not the
- * count, and the count is what makes proration possible.
+ * Most recent price paid per item. The quantity comes from the priced event, or
+ * from the nearest earlier `add`, since backfilled prices carry money but no
+ * count.
  */
 export function priceBook(account: string, events?: KitchenEvent[]): Map<string, PricePoint> {
   const evs = events ?? readLog(account);
@@ -75,10 +60,7 @@ export type RecipeCost = {
   unpriced: string[];
   /** Staples deliberately not costed: "some" of a jar. */
   uncounted: number;
-  /**
-   * True when every ingredient that could carry a cost did. A false here is
-   * what turns "$8.10" into "at least $8.10" on the page.
-   */
+  /** True when every costable ingredient had a price; false reads as "at least" on the page. */
   complete: boolean;
   lines: Array<{ id: string; name: string; cost: number | null; whole: boolean }>;
 };
@@ -96,19 +78,14 @@ export function recipeCost(
 
   for (const [id, want] of recipe.needs) {
     const name = items[id]?.name ?? id.replace(/-/g, " ");
-    // A leftover has no price of its own: its cost was already paid by the
-    // dinner that produced it, and charging it again would double count the
-    // pair. This is the whole economic point of a compound meal.
+    // A leftover was paid for by the dinner that produced it.
     if (id.startsWith("leftover-")) {
       lines.push({ id, name, cost: 0, whole: false });
       continue;
     }
     const it = items[id];
-    // A staple is decided by what the thing IS, not by whether the recipe
-    // bothered to write a number. Deciding it from a null quantity meant a
-    // snack plate of meat sticks and provolone costed out at $0.00, because
-    // "some provolone" and "some paprika" look identical in the catalog and
-    // only one of them is pennies.
+    // A staple is decided by what the item is, not by the recipe omitting a
+    // quantity: "some provolone" is not pennies the way "some paprika" is.
     const staple = it?.cat === "spice" || it?.cat === "condiment" || it?.qty === null;
     if (staple) {
       uncounted += 1;
@@ -121,9 +98,7 @@ export function recipeCost(
       lines.push({ id, name, cost: null, whole: false });
       continue;
     }
-    // An unstated quantity of a counted thing means one of them — one onion out
-    // of the bag, one tortilla off the stack. That is the smallest claim the
-    // catalog supports, and it beats both zero and the whole package.
+    // An unstated quantity of a counted item means one of them.
     const units = want ?? 1;
     const share = p.qty && p.qty > 0 ? Math.min(1, units / p.qty) : 1;
     const cost = Math.round(p.line * share * 100) / 100;

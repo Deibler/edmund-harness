@@ -1,18 +1,11 @@
 /**
- * A hero shot for every dish that has none.
+ * Generated photographs for dishes that have none.
  *
- * Without this a new idea arrives as a text card in a grid of photographed
- * ones, which looks broken rather than new, and the freshest suggestions are
- * the ugliest things on the page. Generated rather than searched because a
- * stock-photo hit for "beef penne skillet" is somebody's phone snapshot under
- * kitchen lights, and one bad photo in a consistent grid costs more than no
- * photo at all.
- *
- * This is the one OpenRouter call left in the kitchen, and it is rendering,
- * not judgement: the dish was written by me, the picture only has to look
- * like it. Cookable dishes go first because that is what somebody is most
- * likely to open tonight; the cap is per run so a catalog that grows by eight
- * fills in over a few days instead of an hour of image generation in one go.
+ * A card without a picture looks broken in a grid of photographed ones, so
+ * missing photos are generated in a consistent style. This is presentation,
+ * not judgement: the dish itself was written in the household's session.
+ * Cookable dishes go first, and each run is capped so a growing catalog fills
+ * in over a few days.
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -27,7 +20,7 @@ const PHOTO_STYLE =
   "appetising and homemade rather than styled for a menu. No text, no hands, no " +
   "faces, no packaging, no logos.";
 
-export async function makePhoto(r: Recipe, dest: string): Promise<boolean> {
+async function makePhoto(r: Recipe, dest: string): Promise<boolean> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -59,10 +52,11 @@ export async function makePhoto(r: Recipe, dest: string): Promise<boolean> {
 }
 
 /** Where a dish's picture lives, relative to the artifact root. */
-export function photoPath(dir: string, recipeId: string): string {
+function photoPath(dir: string, recipeId: string): string {
   return join(dir, "img", "meals", `${recipeId}.jpg`);
 }
 
+/** Photograph up to `cap` dishes that have no picture yet, most cookable first. */
 export async function photographMissing(
   account: string,
   dir: string,

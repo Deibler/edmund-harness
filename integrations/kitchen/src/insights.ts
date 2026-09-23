@@ -1,15 +1,10 @@
 /**
  * Everything derived from the log: meals, timing, intake, spend, waste, recap.
  *
- * The rule this file exists to honour: **no feature may require extra input.**
- * A household that only ever logs groceries and dinners gets calorie tracking,
- * a meal schedule, a spend picture and a year-in-review without ever answering
- * a question about any of them. So nothing here reads a settings form as a
- * prerequisite — settings only ever *override* a derived value.
- *
- * Everything is a fold over the same events the inventory is folded from, so
- * there is no second store to drift and no backfill to run. Add a year of
- * history and every number below is simply better.
+ * No feature here may require extra input: a household that only logs
+ * groceries and dinners still gets calories, a meal schedule, spend and a
+ * recap. Settings only override a derived value, never gate one. Everything is
+ * a fold over the same events as the inventory.
  */
 
 import { type MacroTotal, addTo, describeConfidence, emptyTotal } from "./nutrition.ts";
@@ -20,14 +15,8 @@ const DAY = 86400000;
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /**
- * The calendar day a meal belongs to, in the kitchen's own timezone.
- *
- * `toISOString().slice(0, 10)` is UTC, and this house is UTC-4. Every dinner
- * after 8pm therefore filed itself under tomorrow: Sunday's 8:30pm dinner
- * appeared on Monday, Sunday showed zero meals, and the calorie chart put an
- * evening meal and the next morning's on the same bar. Meanwhile the mealtime
- * learner read `getHours()` in local time, so the two halves of this file
- * disagreed about what day it was.
+ * The local calendar day of a timestamp. Never `toISOString().slice(0, 10)`,
+ * which is UTC and files every late dinner under the next day.
  */
 export function dayKey(d: Date): string {
   const y = d.getFullYear();
@@ -51,21 +40,8 @@ function liveEvents(account: string): KitchenEvent[] {
 }
 
 /**
- * Meals are reconstructed from consumption, not from anything anyone declared.
- *
- * A meal is a batch of `use` events with src="cooked" — which is exactly what
- * `cook` and a confirmed `plan` both write. Grouping by batch is what makes a
- * six-ingredient dinner one meal instead of six snacks.
- */
-/**
- * The dish, without the occasion.
- *
- * Meals get logged with a trailing date for readability at the time of writing
- * ("dirty rice with blackened shrimp, Sun 8/9"). That is fine in a log line and
- * wrong everywhere the name is used as an IDENTITY: the same dinner cooked on
- * two nights became two different dishes, so every meal counted once and the
- * recap concluded the house had never repeated itself. The event keeps its
- * original `why`; only the derived name is normalised.
+ * The dish name without a trailing date ("dirty rice, Sun 8/9" -> "dirty rice"),
+ * so the same dinner on two nights is one dish. The event keeps its `why`.
  */
 export function mealName(why: string | null | undefined): string {
   const raw = (why ?? "").trim();
@@ -84,6 +60,10 @@ export function mealName(why: string | null | undefined): string {
   );
 }
 
+/**
+ * Meals reconstructed from consumption: each batch of `use` events with
+ * src "cooked" (what cooking and a confirmed plan both write) is one meal.
+ */
 export function meals(account: string, since?: Date): Meal[] {
   const evs = liveEvents(account);
   const items = fold(account, evs);
@@ -105,18 +85,9 @@ export function meals(account: string, since?: Date): Meal[] {
 }
 
 /**
- * When this household actually eats, learned from when meals get logged.
- *
- * The signal is logging time, not eating time. Those converge once people are
- * confirming meals as they cook them, but a backfilled week — a batch of
- * history entered in one afternoon — drags the median toward the afternoon it
- * was typed. So the threshold is deliberately high and `basis` says out loud
- * what the number is measuring, rather than presenting a confident dinner hour
- * built from data-entry timestamps.
- *
- * Returns null rather than a plausible default when history is thin. An
- * invented dinner time is indistinguishable from a real one on the page, which
- * is exactly the failure this whole system exists to prevent.
+ * When the household eats, learned from when meals are logged. That measures
+ * logging time, which backfills distort, so `basis` says so and thin history
+ * returns null rather than a plausible default.
  */
 export function learnedSchedule(account: string): {
   dinnerHour: number | null;
@@ -183,13 +154,7 @@ export function intake(account: string, days = 14, splitBetween = 1): DayIntake[
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-/**
- * A calorie target nobody had to type.
- *
- * If the account set one, that wins. Otherwise the household's own median day
- * is the only defensible reference point — it is what they actually eat, so it
- * makes "today is high" meaningful without pretending to know anyone's body.
- */
+/** The account's calorie target, or else the household's own median logged day. */
 export function kcalTarget(
   account: string,
   setTarget?: number | null,
@@ -201,11 +166,8 @@ export function kcalTarget(
   if (setTarget) return { target: setTarget, source: "set on the account" };
   const all = intake(account, 30, splitBetween);
   const days = all.filter((d) => d.kcal > 0);
-  // A night of leftovers is a real day of eating that scores zero, because the
-  // leftover item is deliberately zeroed in the nutrition table so the original
-  // cook is not counted twice. Dropping those days silently made the median a
-  // "median cook-from-scratch day" while calling itself a median day, biasing the
-  // reference upward for exactly the households that eat leftovers most.
+  // Leftovers-only days score zero by design; they are excluded, and the source
+  // line says how many, so the median is not silently biased.
   const unmeasured = all.length - days.length;
   if (days.length < 5) return { target: null, source: "not enough logged days to infer one" };
   const sorted = days.map((d) => d.kcal).sort((a, b) => a - b);
@@ -235,26 +197,16 @@ export type Spend = {
 };
 
 /**
- * Grocery spend.
- *
- * Money is accounted per TRIP, not per line. A trip's cost is its printed
- * total when one was logged, and only falls back to summing line prices when
- * it wasn't — the total is both more reliable (one number instead of forty
- * transcriptions) and immune to a receipt being imported twice, which has
- * already happened once here.
- *
- * `coverage` is the fraction of TRIPS whose money is known. It used to be the
- * fraction of priced item rows, which read as 16% while three of four real
- * receipts were missing entirely, and quietly summing the priced remainder
- * reported a month of groceries as $49.81. A trip with no money attached is
- * named in `unpricedTrips` rather than averaged over or ignored.
+ * Grocery spend, accounted per trip. A trip costs its printed total when one was
+ * logged (reliable, and immune to a receipt imported twice), else the sum of its
+ * line prices. `coverage` is the fraction of trips whose money is known; trips
+ * with none are named in `unpricedTrips`.
  */
 export function spend(account: string, days = 90): Spend {
   const since = Date.now() - days * DAY;
   const live = liveEvents(account).filter((e) => new Date(e.ts).getTime() >= since);
 
-  // Declared totals first: src is the receipt's identity, so two imports of one
-  // receipt collapse to one trip here instead of doubling it.
+  // Declared totals, keyed by receipt src so a re-import is still one trip.
   const declared = new Map<string, { total: number; store: string; ts: string }>();
   for (const e of live) {
     if (e.op !== "trip") continue;
@@ -268,10 +220,8 @@ export function spend(account: string, days = 90): Spend {
     });
   }
 
-  // Then the item rows. Grouped by receipt AND DAY, not receipt alone: one
-  // receipt imported twice in the same afternoon is one shopping trip, but the
-  // same src reused across different days is genuinely several, and collapsing
-  // those turned three weekly shops into a single $300 purchase with no span.
+  // Item rows, grouped by receipt and day: a src reused on different days is
+  // several trips.
   const summed = new Map<
     string,
     { total: number; store: string; ts: string; lines: number; src: string | null }
@@ -285,9 +235,8 @@ export function spend(account: string, days = 90): Spend {
     if (!seen.has(key)) seen.set(key, { store, ts: e.ts, src });
     const p = e.fields?.price;
     if (typeof p !== "number") continue;
-    // `price` is the line total, not a rate to multiply by qty: qty counts the
-    // stocking unit (12 eggs) while a receipt prices the package (one dozen).
-    // Multiplying turned a $1.46 dozen into $17.52 and overstated a trip by 79%.
+    // `price` is the line total; never multiply it by qty (a $1.46 dozen is
+    // stocked as 12 eggs).
     const s = summed.get(key) ?? { total: 0, store, ts: e.ts, lines: 0, src };
     s.total += p;
     s.lines += 1;
@@ -300,8 +249,7 @@ export function spend(account: string, days = 90): Spend {
   const stores = new Map<string, { total: number; trips: Set<string> }>();
   const unpricedTrips: string[] = [];
   let pricedTrips = 0;
-  // A receipt has ONE printed total however many times it was imported, so once
-  // a src has been paid for, none of its item groups may add to the bill again.
+  // One printed total per receipt however often it was imported.
   const spentSrc = new Set<string>();
 
   const charge = (key: string, cost: number, store: string, ts: string) => {
@@ -338,25 +286,14 @@ export function spend(account: string, days = 90): Spend {
     charge(src, d.total, d.store, d.ts);
   }
 
-  // Defined as exactly what was charged plus what could not be: unioning the
-  // two maps directly double counted every receipt, because their keys live in
-  // different spaces ("src|day" against bare "src"), reporting four shops as
-  // eight and halving the coverage figure sitting right beside them.
+  // Charged trips plus unpriced ones. The two maps' keys differ ("src|day" vs
+  // "src"), so they must not be unioned directly.
   const trips = pricedTrips + new Set(unpricedTrips).size;
-  // Rate over the span the data actually covers, not over the window that was
-  // asked for. Three weeks of receipts queried with days=90 used to be divided by
-  // thirteen weeks, reporting a weekly grocery bill roughly a quarter of the real
-  // one — and it looked more precise the longer the window, which is backwards.
-  // Below a week there is no weekly rate to state, so say nothing rather than
-  // annualise a single shop.
+  // The weekly rate uses the span the data covers, not the requested window, and
+  // is omitted below a week.
   const spanDays = pricedTrips ? Math.max(1, (last - first) / DAY) : 0;
-  // Fencepost: N shopping days spanning D days cover N-1 gaps, but they FEED
-  // N periods — the last shop buys the week after it, past the span it closes.
-  // Dividing by the raw span therefore overstates the weekly bill by N/(N-1):
-  // three weekly $100 shops span 14 days and read as $150/week. Scale the
-  // denominator by that factor so each trip is credited with the stretch it
-  // actually covers. Distinct DAYS, not batches — two receipts one afternoon is
-  // one shopping day, and counting it as two invents a zero-length gap.
+  // Fencepost: N distinct shopping days span N-1 gaps but feed N periods, so
+  // the span is scaled by N/(N-1). Three weekly $100 shops are $100/week.
   const shopDays = new Set(
     [...seen.entries()]
       .filter(([k, m]) => (m.src && declared.has(m.src)) || summed.has(k))
@@ -413,13 +350,7 @@ export type Recap = {
   headline: string;
 };
 
-/**
- * The Spotify-Wrapped fold. Pure derivation, no new logging required.
- *
- * Everything here answers a question a person would actually ask out loud
- * ("what did we make most?", "what did we waste?"), because a stat nobody
- * would say aloud is filler.
- */
+/** The year-in-review: what was cooked most, wasted, bought new, and spent. */
 export function recap(account: string, days = 365, splitBetween = 1): Recap {
   const since = new Date(Date.now() - days * DAY);
   const ms = meals(account, since);
@@ -440,9 +371,8 @@ export function recap(account: string, days = 365, splitBetween = 1): Recap {
   }
   const busiest = [...byDay.entries()].sort((a, b) => b[1] - a[1])[0];
 
-  // Longest run of consecutive days with at least one meal logged. Both sides are
-  // "YYYY-MM-DD" parsed as UTC midnight, so the difference is exact whole days and
-  // a daylight-saving boundary cannot make two adjacent days look non-adjacent.
+  // Longest run of consecutive days with a meal. Day keys parse as UTC midnight,
+  // so differences are whole days across daylight-saving changes.
   const dates = [...byDay.keys()].sort();
   let streak: Recap["longestStreak"] = null;
   let runStart = dates[0];
@@ -465,11 +395,7 @@ export function recap(account: string, days = 365, splitBetween = 1): Recap {
   const purchased = new Set(
     evs.filter((e) => e.op === "add" && new Date(e.ts) >= since && e.item).map((e) => e.item!),
   ).size;
-  // Both sides of the waste ratio have to be the same unit. It used to divide a
-  // count of toss EVENTS by a count of DISTINCT items purchased, so throwing out
-  // the same thing twice counted twice while buying it twice counted once — and
-  // a household that restocks and bins one item repeatedly could print a waste
-  // rate above 100%. Distinct things tossed over distinct things bought.
+  // Waste rate: distinct items tossed over distinct items bought.
   const tossedDistinct = new Set(
     evs.filter((e) => e.op === "toss" && new Date(e.ts) >= since && e.item).map((e) => e.item!),
   ).size;
@@ -493,23 +419,12 @@ export function recap(account: string, days = 365, splitBetween = 1): Recap {
     .filter(([, ts]) => new Date(ts) >= since)
     .sort((a, b) => b[1].localeCompare(a[1]))
     .slice(0, 8)
-    // dayKey, not a slice of the ISO string: every timestamp here is stamped in
-    // UTC, so after 8pm Eastern the first ten characters are tomorrow.
     .map(([id, at]) => ({ id, name: items[id]?.name ?? id, at: dayKey(new Date(at)) }));
 
-  // Protein actually eaten, in pounds. Only `lb`-denominated uses count: a
-  // "1 pkg" of chicken is a real use but an unknown weight, and converting it
-  // with an assumed package size would put a fabricated number on a card that
-  // reads as measured. Uses that cannot be weighed are reported separately.
-  // Most meat is logged as "used it all" with no number, so a naive sum of
-  // `qty` reports zero pounds for a house that plainly ate meat. But an item
-  // stocked in POUNDS that gets finished consumed exactly what was on hand, and
-  // what was on hand is right there in the add. So walk the log forward keeping
-  // a running weight per lb-stocked item and attribute the finish to it.
-  //
-  // Anything stocked in pkg/ct/container stays unweighed and is reported as a
-  // count instead. A package is a real use of an unknown weight, and assuming
-  // a pound per pack would put an invented number on a card that reads measured.
+  // Meat and seafood eaten, in pounds. Only lb-stocked items can be weighed: a
+  // running on-hand weight per item turns "used it all" into pounds. Anything
+  // stocked by the package is counted as an unweighed use, never given an
+  // assumed weight.
   let meatLbs = 0;
   let meatUsesUnweighed = 0;
   const onHandLbs = new Map<string, number>();
@@ -544,16 +459,11 @@ export function recap(account: string, days = 365, splitBetween = 1): Recap {
     else meatUsesUnweighed += 1;
   }
 
-  // A compound meal is one cooked FROM something already cooked. The signal is
-  // a consumed item the ledger itself calls a leftover, which is what makes
-  // this countable at all rather than a label somebody has to remember to add.
+  // A compound meal consumed a leftover.
   const compoundMeals = ms.filter((m) => m.items.some((i) => i.id.startsWith("leftover-"))).length;
 
   const top = [...mealCounts.entries()].sort((a, b) => b[1] - a[1]);
-  // "The one you kept coming back to" is only true if they came back to it.
-  // With everything at 1x the honest headline is variety, not a fake favourite.
-  // No em-dashes in anything a person reads. House style, and this string is
-  // rendered as the recap's headline rather than buried in a tool response.
+  // Only name a favourite that was actually repeated. (User-facing: no em-dashes.)
   const headline = !top.length
     ? `Nothing cooked in this window yet. Log a dinner and the recap fills itself in.`
     : top[0]![1] > 1
@@ -567,9 +477,7 @@ export function recap(account: string, days = 365, splitBetween = 1): Recap {
     meatLbs: Math.round(meatLbs * 10) / 10,
     meatUsesUnweighed,
     compoundMeals,
-    // Only a genuine repeat. A "most made" of 1 is not a favourite, it is the
-    // alphabetically-luckiest row in a list where everything ties, and printing
-    // it as a chart-topper is the kind of stat that makes a recap feel fake.
+    // Genuine repeats only; a "most made" of 1 is noise.
     topMeals:
       top[0] && top[0][1] > 1
         ? top
@@ -594,11 +502,8 @@ export function recap(account: string, days = 365, splitBetween = 1): Recap {
 }
 
 /**
- * What the household needs to buy: things that ran out or were flagged low.
- *
- * Leftovers are excluded. A finished container of Tuesday's chicken is not a
- * grocery item, and putting "leftover creamy mushroom noodles" on a shopping
- * list is the kind of thing that makes people stop trusting the whole list.
+ * Items that ran out or were flagged low, leftovers excluded. A status fact, not
+ * the shopping list (see `shopping.ts`).
  */
 export function shoppingList(account: string): Array<{ id: string; name: string }> {
   return Object.values(fold(account))

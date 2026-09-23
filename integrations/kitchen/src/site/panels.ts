@@ -1,28 +1,19 @@
 /**
- * The five panels that are not the home page.
- *
- * What we have, what we made, what to buy, food this house does not cook, and
- * the standing texts. Together rather than one file each because they are the
- * same kind of thing: a read of one fold over the ledger, rendered as a list,
- * with no state of their own.
- *
- * Moved out of `site.ts` on 2026-08-17 unedited.
+ * The panels other than home: kitchen stock, history, shopping, explore and
+ * the standing dinner texts. Each is a read of the ledger rendered as markup,
+ * with no state of its own.
  */
 
-import type { Item } from "../types.ts";
-
-import { join } from "node:path";
 import { eaters } from "../accounts.ts";
 import { recipeCost } from "../cost.ts";
 import { bestBasket } from "../deals.ts";
-import { dayKey, expiring, meals, spend } from "../insights.ts";
-import { readList } from "../list.ts";
-import { lastMade } from "../made.ts";
+import { dayKey, expiring, meals } from "../insights.ts";
 import { type Cookable, EFFORT_LABEL, METHOD_LABEL, type Recipe, loadRecipes } from "../recipes.ts";
 import { lastChecked } from "../reconcile.ts";
 import { clock, dinnersOf, nextFire, recipients } from "../schedules.ts";
 import { type Line, type Suggestion, shopping } from "../shopping.ts";
 import { amount, live, slug } from "../store.ts";
+import type { Item } from "../types.ts";
 import { escapeHtml, fmtMoney } from "../util.ts";
 import { type Ctx, mealPhoto } from "./ctx.ts";
 import { ago, cap, daysLabel, fmtDate, j, shot, whenWord } from "./format.ts";
@@ -52,11 +43,8 @@ export function kitchenPanel(ctx: Ctx): string {
     </article>`;
   };
 
-  // A stock list is only as trustworthy as its last look, and a number with no
-  // date beside it invites more confidence than it has earned.
+  // When the shelves were last checked, and by whom (by name, not handle).
   const checked = lastChecked(ctx.account);
-  // Name, not principal. "imessage:dm:+1717..." is technically who looked and
-  // is not what anybody wants to read on a page about their own fridge.
   const who = checked?.by
     ? (eaters(ctx.acct).find((e) => e.principal === checked.by)?.label ?? null)
     : null;
@@ -121,19 +109,9 @@ export function historyPanel(ctx: Ctx): string {
     .slice(0, 150);
 
   /**
-   * The dish a logged meal name refers to.
-   *
-   * A cooked meal is recorded by the name somebody typed that night; a recipe
-   * and its written page are keyed by a slug the catalog chose. Slugging the
-   * logged name and using it as an id looks like a join and is not one: "creamy
-   * mushroom chicken over egg noodles, side salad" slugs to something no recipe
-   * has ever been called, so the history row opened a sheet that said the dish
-   * was not in the catalog and offered no link to the page that already existed
-   * for it. Which is the bug: the page was written, and history was the one
-   * place you could not reach it from.
-   *
-   * Longest match wins, and a prefix only counts on a slug boundary, so a dish
-   * cannot claim a night somebody cooked something that merely starts the same.
+   * The recipe id a logged meal name refers to. Meals are logged by free text
+   * ("creamy mushroom chicken over egg noodles, side salad"), so a logged name
+   * that extends a dish's name on a slug boundary counts; the longest match wins.
    */
   const dishes = [...ctx.cook.map((c) => c.recipe), ...ctx.book].map((r) => ({
     id: r.id,
@@ -177,30 +155,20 @@ export function historyPanel(ctx: Ctx): string {
     <div class="rt"><span class="note tabular">${escapeHtml(amount(i))}</span></div>
   </div>`;
 
-  // Every dish in the catalog, what it costs out of this kitchen's own receipts,
-  // and when it was last actually made. The cost is the household's, not a
-  // market rate: it prorates the line price of each ingredient by the share the
-  // recipe calls for, skips spices and condiments as unmeasurable pennies, and
-  // charges nothing for a leftover because the dinner that made it already paid.
-  // A cooked meal is recorded by the name somebody typed, not by recipe id, so
-  // matching on the id alone reported every dish as never made — including ones
-  // cooked last week. Index both the id and the slugged display name, and look
-  // up under both, which is the only join the two sides actually share.
-  const lastMade = new Map<string, string>();
+  // Every dish with its cost from this kitchen's own receipts (see `recipeCost`)
+  // and the date it was last made. Meals are logged by name, so look up both the
+  // recipe id and its slugged name, and accept a logged name that extends the
+  // recipe name on a slug boundary.
+  const madeByName = new Map<string, string>();
   for (const c of cooked) {
     const k = slug(c.name);
-    if (!lastMade.has(k)) lastMade.set(k, c.date);
+    if (!madeByName.has(k)) madeByName.set(k, c.date);
   }
   const madeOn = (r: Recipe): string | undefined => {
-    const exact = lastMade.get(r.id) ?? lastMade.get(slug(r.name));
+    const exact = madeByName.get(r.id) ?? madeByName.get(slug(r.name));
     if (exact) return exact;
-    // People log the dish plus what they served with it: "creamy mushroom
-    // chicken over egg noodles, side salad". That is the same dinner, so a
-    // logged name that EXTENDS the recipe name counts. Only in that direction,
-    // and only on a slug boundary, so "beef quesadillas" cannot claim a night
-    // somebody cooked something else beginning with the same words.
     const base = slug(r.name);
-    for (const [k, date] of lastMade) {
+    for (const [k, date] of madeByName) {
       if (k.startsWith(`${base}-`)) return date;
     }
     return undefined;
@@ -208,9 +176,7 @@ export function historyPanel(ctx: Ctx): string {
   const recipeRow = (c: Cookable) => {
     const k = recipeCost(c.recipe, ctx.items, ctx.prices);
     const made = madeOn(c.recipe);
-    // "+" rather than a rounder number: some ingredients have never been bought
-    // with a price attached, and a total that quietly omits them would read as
-    // exact. Same rule as the spend card.
+    // "+" marks a total missing some unpriced ingredients.
     const money = k.priced ? `$${k.total.toFixed(2)}${k.complete ? "" : "+"}` : "no prices yet";
     return `<button class="hrow2" data-act="past" data-id="${escapeHtml(c.recipe.id)}"
         data-name="${escapeHtml(c.recipe.name)}">
@@ -257,17 +223,9 @@ export function historyPanel(ctx: Ctx): string {
 }
 
 /**
- * The list you actually shop from.
- *
- * Three sections, never one, because a list is a set of commitments and the
- * three reasons a line exists are not equally binding: a meal somebody
- * committed to, a staple that ran out, and a line somebody typed. The model
- * behind this lives in `shopping.ts`; everything here is presentation.
- *
- * The tray underneath is the part that keeps the list clean over time. It holds
- * the things the system genuinely does not know whether you want again, each
- * with two buttons, and every answer is permanent. It shrinks to nothing within
- * a couple of shopping cycles and the list above it stays right after that.
+ * The shopping list, one card per group from `shopping.ts`, with the
+ * suggestion tray, the held-back items and per-store basket prices below it.
+ * Presentation only.
  */
 export function shoppingPanel(ctx: Ctx): string {
   const s = shopping(ctx.account);
@@ -419,14 +377,8 @@ export function shoppingPanel(ctx: Ctx): string {
 }
 
 /**
- * Food this house does not make, and would have to shop for.
- *
- * Its own panel rather than a row on the home page, and worth being strict
- * about why: everything on Home is anchored to the shelves, and mixing in
- * dishes that need a shopping trip would quietly break the one promise the
- * site makes, which is that what you are looking at is really here. So the
- * anchor is not weakened, it is left behind on purpose, once, in a place
- * labelled as such.
+ * Dishes unlike anything the house cooks. Kept off the home page, which only
+ * shows what the shelves can make; everything here needs a shopping trip.
  */
 export function explorePanel(ctx: Ctx): string {
   const set = ctx.explore;
@@ -491,14 +443,7 @@ export function explorePanel(ctx: Ctx): string {
   </section>`;
 }
 
-/**
- * Standing dinner texts.
- *
- * The one page here that produces a text message rather than something on
- * screen, so it says exactly that, twice: in the copy at the top and again on
- * every row, with who gets it. A schedule nobody remembers agreeing to is the
- * fastest way to make somebody turn all of this off.
- */
+/** Standing dinner texts. Each row says who receives it and when it next fires. */
 export function schedulePanel(ctx: Ctx): string {
   const list = dinnersOf(ctx.acct);
   const rows = list

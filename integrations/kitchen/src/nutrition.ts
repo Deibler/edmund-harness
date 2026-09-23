@@ -1,40 +1,24 @@
 /**
- * Calorie and macro estimation for logged food.
+ * Calorie and macro estimates for logged food, derived from what the ledger
+ * already records (item, category, how much a meal used) so nobody has to weigh
+ * or look anything up.
  *
- * The product constraint is that nutrition costs the household nothing: nobody
- * weighs anything, nobody looks a food up, nobody fills in a form. So this
- * derives from what the ledger already records — an item name, a category, and
- * how much of it a meal consumed.
- *
- * That buys convenience at the cost of precision, and the honest thing is to
- * say which you got. Every number carries a `basis`:
- *
- *   "table"    — the item was matched by name in the table below
- *   "category" — only its category was known, so a category average was used
- *   "unknown"  — no basis at all; contributes nothing and is counted as a gap
- *
- * A total built mostly from "category" is a ballpark and must be presented as
- * one. Never report a derived calorie figure as though someone measured it.
+ * Every figure carries a basis: "table" (matched by id), "category" (a category
+ * average), or "unknown" (contributes nothing). A total built mostly from
+ * category averages is a ballpark and must be presented as one.
  */
-
-import type { Item } from "./types.ts";
 
 export type Macro = { kcal: number; protein: number; carb: number; fat: number };
 /**
- * `carried` is a leftover: real food, but its calories were already counted the
- * night it was cooked, so it contributes zero on purpose. It gets its own basis
- * because calling it "table" made a leftovers-only dinner report "good — most
- * items matched by name" about a total of zero.
- *
- * `mismatched-unit` is a use event measured in something other than the unit the
- * item is stocked in. It contributes nothing rather than a wrong number.
+ * `carried`: a leftover, counted when it was cooked, so zero here and excluded
+ * from confidence. `mismatched-unit`: a use recorded in a unit other than the
+ * stocking unit, which contributes nothing rather than a wrong number.
  */
 export type Basis = "table" | "category" | "carried" | "mismatched-unit" | "unknown";
 
 /**
- * Per ONE unit of how the ledger counts the thing — a bag, a jug, a package, a
- * count. Portion sizing is handled by the qty in the use event, so these are
- * whole-container figures where the ledger tracks containers.
+ * Per one stocking unit (a bag, a jug, a package, one egg). Portions come from
+ * the qty on the use event.
  */
 const TABLE: Record<string, Macro> = {
   // proteins
@@ -127,11 +111,8 @@ const TABLE: Record<string, Macro> = {
 };
 
 /**
- * Category fallbacks, per unit. Coarse on purpose: these exist so an unmatched
- * item degrades to a labelled ballpark instead of vanishing from the total.
- * Condiments and spices are deliberately near-zero — a pinch of paprika should
- * never move a daily number, and pretending it does is how derived nutrition
- * loses credibility.
+ * Category fallbacks per unit, so an unmatched item degrades to a labelled
+ * ballpark. Condiments and spices are near zero on purpose.
  */
 const BY_CATEGORY: Record<string, Macro> = {
   produce: { kcal: 60, protein: 2, carb: 14, fat: 0.3 },
@@ -153,8 +134,7 @@ const ZERO: Macro = { kcal: 0, protein: 0, carb: 0, fat: 0 };
 export function macroFor(itemId: string, cat?: string): { macro: Macro; basis: Basis } {
   const hit = TABLE[itemId];
   if (hit) return { macro: hit, basis: "table" };
-  // Leftovers are re-plated meals; their calories were already counted when the
-  // meal was cooked. Counting them again would double every batch-cook.
+  // Leftovers were counted when the meal was cooked.
   if (itemId.startsWith("leftover-")) return { macro: ZERO, basis: "carried" };
   const byCat = cat ? BY_CATEGORY[cat] : undefined;
   if (byCat) return { macro: byCat, basis: "category" };
@@ -177,16 +157,9 @@ export function emptyTotal(): MacroTotal {
 }
 
 /**
- * Add `qty` units of an item into a running total.
- *
- * `useUnit` is the unit the consumption was recorded in, and `stockUnit` is the
- * unit the table's numbers are per. Every figure in TABLE is per one of however
- * the ledger counts that thing — a jug of milk, a box of butter, one egg — so
- * scaling by a qty measured in anything else is not an approximation, it is a
- * different number entirely. "use butter 11 tbsp" against a per-pound row of
- * 3250 kcal yields 35,750 kcal for a loaf of bread. Nothing in the current logs
- * does this because every use so far carries no unit at all, but the tool schema
- * accepts one, so the guard belongs here rather than in the convention.
+ * Add `qty` units of an item into a running total. When the use was recorded in
+ * a different unit from the stocking unit the figures are per (11 tbsp against
+ * a per-pound butter row), nothing is added and the item counts as mismatched.
  */
 export function addTo(
   total: MacroTotal,
@@ -203,7 +176,7 @@ export function addTo(
     macro = ZERO;
     basis = "mismatched-unit";
   }
-  // A null qty means "all of it" — one container's worth is the honest read.
+  // A null qty means "all of it": one container's worth.
   const n = qty === null ? 1 : qty;
   total.kcal += macro.kcal * n;
   total.protein += macro.protein * n;
@@ -218,11 +191,8 @@ export function addTo(
 }
 
 /**
- * How much of a total rests on real table hits, 0..1. Below ~0.6, say "rough".
- *
- * Leftovers are excluded from both sides. They are neither a good measurement
- * nor a bad one — they are a deliberate zero — and counting them as table hits
- * let a plate of reheated pasta claim high confidence about no calories at all.
+ * How much of a total rests on table hits, 0..1. Leftovers are excluded from
+ * both sides: they are a deliberate zero, not a measurement.
  */
 export function confidence(t: MacroTotal): number {
   const n = t.fromTable + t.fromCategory + t.unknown + t.mismatched;
@@ -243,8 +213,4 @@ export function describeConfidence(t: MacroTotal): string {
   if (c >= 0.8) return `good — most items matched by name${tail}`;
   if (c >= 0.5) return `rough — a fair share fell back to category averages${tail}`;
   return `very rough — mostly category averages, treat as a ballpark${tail}`;
-}
-
-export function itemMacro(item: Item): Macro {
-  return macroFor(item.id, item.cat).macro;
 }

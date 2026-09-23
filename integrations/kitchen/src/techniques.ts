@@ -1,27 +1,11 @@
 /**
- * What a technique word actually looks like.
+ * Reference visuals for technique words ("dice", "sear", a cut of meat).
  *
- * A step that says "dice the onion" is doing a lot of unearned work. Dice how
- * small? The difference between a 1/4 inch dice and a rough chop is the
- * difference between onion that melts into a gravy and onion you bite into, and
- * no amount of prose fixes that as fast as one photograph of the finished pile.
- * Same for "sear until fond forms", which is meaningless until you have seen
- * fond, and for a cut of meat, where the name on the package is the whole
- * instruction and a chart is the only way to know where it came from.
- *
- * THE SOURCING RULE, and it is Alex's, from 2026-08-13: reference visuals are
- * real photographs from a real dataset, plus real chefs on video. Not drawings
- * I generated, which he rejected outright, and not an AI image of what a
- * brunoise "looks like", which is a picture of a plausible brunoise rather than
- * a brunoise. Every image below is a Wikimedia Commons file under a free
- * licence, downloaded and served from the artifact directory so the page does
- * not hotlink someone else's bandwidth. Every video id was resolved against
- * YouTube's oembed endpoint rather than recalled, because a plausible-looking
- * dead link is worse than no link.
- *
- * Attribution is rendered on the page, not buried here. That is both the
- * licence terms and the point: the credit is what makes it a real photograph of
- * a real thing rather than a stock image.
+ * Sourcing rule: real photographs and real chefs only, never generated images.
+ * Every image is a Wikimedia Commons file under a free licence, downloaded and
+ * served from the artifact directory rather than hotlinked; every video id was
+ * verified against YouTube's oembed endpoint. Attribution is rendered on the
+ * page, as the licences require.
  */
 
 export type Technique = {
@@ -288,19 +272,7 @@ export const TECHNIQUES: Technique[] = [
 
 export const BY_ID = new Map(TECHNIQUES.map((t) => [t.id, t]));
 
-/**
- * Techniques a step is talking about, inferred from its own words.
- *
- * Inference rather than a field the recipe writer has to fill in, because every
- * recipe already written would otherwise have none, and a feature that only
- * works on recipes written after it shipped is a feature nobody sees. The
- * recipe writer can still name them explicitly; this is the floor, not the
- * ceiling.
- *
- * Deliberately conservative. A false positive puts a picture of a brunoise next
- * to a step that never mentioned one, which makes the whole panel look
- * automated and ignorable.
- */
+/** Word cues per technique id. Conservative: a false positive is worse than a miss. */
 const CUES: Array<[string, RegExp]> = [
   ["dice", /\bdic(e|ed|ing)\b|\bcut .{0,24}\b(cubes?|1\/[24] ?(inch|in)\b)/i],
   ["mince", /\bminc(e|ed|ing)\b/i],
@@ -321,14 +293,16 @@ const CUES: Array<[string, RegExp]> = [
   ["rest", /\brest (the|for|it)\b|\blet .{0,16} rest\b/i],
 ];
 
+/**
+ * Techniques a step mentions, inferred from its words, at most two. Used when a
+ * recipe does not name its techniques explicitly.
+ */
 export function techniquesFor(step: { title: string; body: string }): Technique[] {
   const text = `${step.title}. ${step.body}`;
   const out: Technique[] = [];
   for (const [id, re] of CUES) {
     if (re.test(text)) {
       const t = BY_ID.get(id);
-      // Two panels is the most a step can carry before the instruction is
-      // buried under its own references.
       if (t && !out.some((x) => x.id === id) && out.length < 2) out.push(t);
     }
   }

@@ -1,13 +1,9 @@
 /**
- * The shopping list, which is the part of this system that fails by being
- * ignored rather than by throwing.
+ * The shopping list, which fails by being ignored rather than by throwing.
  *
- * Every assertion here traces to a line somebody actually complained about on a
- * real list: leftovers you cannot buy, chicken thighs bought the previous day,
- * a jug of milk restocked two days earlier, and imitation crab legs that had
- * been on the list since the one sushi bake they were bought for. None of those
- * were crashes. All of them were the list quietly becoming something you scroll
- * past, which is the only way a list ever dies.
+ * Each assertion traces to a real complaint about a list: leftovers that cannot be
+ * bought, items bought the day before, a restocked item that never left the list, and
+ * one-off purchases returning forever.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -77,9 +73,7 @@ check(
 
 /* ── restocking a low item clears the flag ────────────────────────────────── */
 
-// The bug: `add` cleared a stale "out" but carried a stale "low" straight
-// through it, so a shelf check saying "running low on milk" outlived the jug
-// bought two days later and milk never left the list again.
+// Buying more clears a stale "low" as well as a stale "out".
 section("buying more of something stops it being low");
 
 append(A, [
@@ -136,7 +130,7 @@ check(
   })(),
 );
 
-/* ── the one-off, which is the whole crab legs story ──────────────────────── */
+/* ── the one-off ──────────────────────────────────────────────────────────── */
 
 section("answering once, forever");
 
@@ -160,8 +154,8 @@ check(
 
 /* ── not this trip ────────────────────────────────────────────────────────── */
 
-// Distinct from "never" on purpose. Collapsing the two would teach the system
-// that the household does not keep broth, when all they said was "not today".
+// Distinct from "never": "not today" must not teach the system the house stopped
+// keeping broth.
 section("not this trip");
 
 useUp("chicken-broth");
@@ -171,8 +165,7 @@ skip(A, ["chicken-broth"], tripCount(A));
 check("skipping takes it off this list", !names().includes("Chicken broth"));
 check("without claiming they stopped buying it", readBook(A).items["chicken-broth"] === undefined);
 
-// Every one of these adds food and none of them is a shop. Each used to count
-// as a trip, so putting dinner in the fridge spent a "not this trip".
+// None of these is a shop, so none may spend a "not this trip".
 append(A, [
   { op: "add" as const, item: "leftover-soup", qty: 1, fields: { name: "Soup" }, src: "cooked" },
 ]);
@@ -227,10 +220,7 @@ check(
 
 /* ── a trip settles the list even when nobody ticked anything ─────────────── */
 
-// The observed failure: the household shopped from their own note, came back
-// with a full car, and the site's list was unchanged because nobody had the
-// page open. A list that only settles by tapping is a list that goes stale the
-// first time it is ignored.
+// A receipt settles the list even when nobody ticked anything on the page.
 section("settling against a receipt");
 
 addToList(A, [{ name: "Chicken broth", item: "chicken-broth", why: "for soup" }]);
@@ -270,9 +260,8 @@ check(
 
 /* ── an answer lands on something real ────────────────────────────────────── */
 
-// The model answers with the name it read on the list. A member's own lines get
-// a prefix, so slugging that name missed the id, the answer was filed under a
-// slug nothing uses, and the reply still said "Recorded".
+// An answer given by name must land on the real item, including a member's prefixed
+// line, or be refused; it must never claim "Recorded" for an id nothing uses.
 section("answers");
 
 const { answerTarget } = await import("../src/shopping.ts");

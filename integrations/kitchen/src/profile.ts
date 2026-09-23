@@ -1,15 +1,9 @@
 /**
- * Who is using the site right now, and the things they mark while using it.
+ * Per-person marks made on the site: favourites, meal notes and declined pairs.
  *
- * The household is the unit of ISOLATION — one fridge, one ledger. The person
- * is the unit of PREFERENCE: a favourite is Alex's, not the kitchen's, and a
- * note on a dinner belongs to whoever cooked it. So this sits alongside the
- * ledger rather than inside it. None of it is an event: a favourite has no
- * time, it has a current value, and folding it out of an append-only log would
- * mean replaying history to answer "is this starred".
- *
- * The browser picks a profile once and keeps it in a cookie, which is what
- * makes "text this to me" mean something on a page two people share.
+ * The household is the unit of isolation (one fridge, one ledger); the person is
+ * the unit of preference. These are current values rather than events, so they
+ * live in `profile.json` beside the ledger instead of in it.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -27,11 +21,9 @@ export type MealNote = {
 };
 
 /**
- * A leg of a compound pair somebody has said they are not doing.
- *
- * Keyed "parentId>childId" so declining "roast pork then banh mi" does not
- * silently decline every other pork pairing. Dated, because a decision about
- * this week's dinner should not still be suppressing a suggestion in October.
+ * A leg of a compound pair somebody declined. Keyed "parentId>childId" so one
+ * decline does not suppress every pairing with the same parent; dated so it
+ * expires (see `activeSkips`).
  */
 export type PairSkip = { pair: string; leg: "parent" | "child"; at: string; by?: string | null };
 
@@ -55,15 +47,11 @@ export function loadProfiles(account: string): ProfileState {
   if (!existsSync(p)) return empty();
   try {
     const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<ProfileState>;
-    // Every field is listed here, and every field added later must be added
-    // here too. Rebuilding the object from a fixed set rather than spreading it
-    // means a new field is silently discarded on the next read: pair skips were
-    // written correctly and forgotten a second later, which looks exactly like
-    // a button that does nothing.
+    // Rebuilt from a fixed field list: a field added to ProfileState must be
+    // added here too, or it is silently dropped on the next read.
     return { favorites: raw.favorites ?? {}, notes: raw.notes ?? {}, skips: raw.skips ?? [] };
   } catch {
-    // Preferences are not the ledger. Losing a star is survivable; refusing to
-    // render the site because one of them is malformed is not.
+    // A malformed preferences file must not stop the site rendering.
     return empty();
   }
 }
@@ -99,13 +87,7 @@ export function addNote(
   return full;
 }
 
-/**
- * Pairs somebody has opted out of, still inside their shelf life.
- *
- * Fourteen days, matching the decay engine's vindication window: a human
- * decision outranks a suggestion, but not forever, because the kitchen the
- * decision was made about is gone by then.
- */
+/** Declined pair legs from the last fourteen days, keyed `pair|leg`. */
 export function activeSkips(s: ProfileState, now = Date.now()): Map<string, "parent" | "child"> {
   const out = new Map<string, "parent" | "child">();
   for (const k of s.skips ?? []) {
@@ -123,10 +105,7 @@ export function skipPair(
   const s = loadProfiles(account);
   s.skips ??= [];
   s.skips.push({ pair, leg, at: nowIso(), by: who });
-  // A decision can be reversed by making the thing, so this only ever grows to
-  // the size of a season's worth of dinners. Trimmed anyway so the file cannot
-  // become the biggest thing in the account directory.
-  s.skips = s.skips.slice(-200);
+  s.skips = s.skips.slice(-200); // bounded; only the last fortnight is ever read
   save(account, s);
 }
 
@@ -136,5 +115,4 @@ export function unskipPair(account: string, pair: string): void {
   save(account, s);
 }
 
-export const favoritedBy = (s: ProfileState, recipe: string): string[] => s.favorites[recipe] ?? [];
 export const notesFor = (s: ProfileState, key: string): MealNote[] => s.notes[key] ?? [];

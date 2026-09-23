@@ -1,16 +1,9 @@
-/**
- * Small formatting helpers shared by every panel.
- *
- * Nothing here knows what a kitchen is. They are here because the same three
- * date phrasings and the same image-or-monogram fallback were being written
- * inline in six panels, and the sixth one always drifted.
- *
- * Moved out of `site.ts` on 2026-08-17 unedited.
- */
+/** Formatting helpers shared by the panels: dates, JSON embedding, images. */
 
 import { DAY_NAME, SHORT_DAY, clock } from "../schedules.ts";
 import { escapeHtml } from "../util.ts";
 
+/** Up to two initials, for an item or dish with no photo. */
 export const monogram = (s: string) =>
   s
     .split(/\s+/)
@@ -19,6 +12,7 @@ export const monogram = (s: string) =>
     .map((w) => w[0]!.toUpperCase())
     .join("");
 
+/** An image slot, or a monogram tile when there is no image. */
 export function shot(src: string | null, alt: string, cls = ""): string {
   const inner = src
     ? `<img data-img="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">`
@@ -26,6 +20,7 @@ export function shot(src: string | null, alt: string, cls = ""): string {
   return `<div class="shot ${cls}">${inner}</div>`;
 }
 
+/** JSON safe to embed inside a `<script>` element. */
 export const j = (v: unknown) =>
   JSON.stringify(v).replace(/</g, "\\u003c").replace(/-->/g, "--\\>");
 
@@ -57,7 +52,7 @@ export function daysLabel(days: number[]): string {
   return days.map((d) => SHORT_DAY[d]).join(" ");
 }
 
-/** "tomorrow at 4pm" reads better than a date somebody has to work out. */
+/** "today at 4pm", "tomorrow at 4pm" or "Friday at 4pm". */
 export function whenWord(d: Date): string {
   const now = new Date();
   const days = Math.round(

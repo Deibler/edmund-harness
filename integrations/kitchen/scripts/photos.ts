@@ -1,10 +1,9 @@
 /**
  * Photograph whatever on a household's site has no picture, then re-render.
  *
- * Spawned detached by `kitchen_ideas save`, because a tool call must not sit
- * on image generation: the ideas are on the page the moment they are saved,
- * and the pictures arrive a minute later. The morning pass does the same work
- * inline. Usage: `bun integrations/kitchen/scripts/photos.ts <account>`.
+ * Spawned detached by `kitchen_ideas save` so the tool call does not wait on
+ * image generation; the daily pass does the same work inline.
+ * Usage: `bun integrations/kitchen/scripts/photos.ts <account>`.
  */
 
 import { existsSync } from "node:fs";

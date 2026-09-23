@@ -1,47 +1,26 @@
 /**
- * Getting somebody from "what can I make with chicken" to a real kitchen.
+ * Onboarding: from "what can I make with chicken" to a working household.
  *
- * The people already using this were set up by hand, one tool call at a time,
- * by me, over an evening. That does not scale past the people I do it for, and
- * worse, a half-finished setup is the failure mode: an account with no shelves
- * gives worse answers than no account at all, because now every reply is
- * hedged against a ledger that knows nothing. Somebody who opts in and finds a
- * page saying their kitchen is empty has learned that this does not work.
+ * Nothing is created until everything needed can be, because a half-set-up
+ * household (an account with empty shelves) gives worse answers than none.
  *
- * So the shape here is: nothing is created until everything can be, and what a
- * person is asked for is only what cannot be derived.
- *
- * WHAT MUST BE ASKED. Two things, and they are both facts about the world that
- * no amount of cleverness recovers: who eats here, and what is on the shelves.
- * The second is a photograph, not a questionnaire, because a person will point
- * a camera at a fridge and will not type in forty items.
- *
- * WHAT MUST NOT BE ASKED. Everything else. When they eat, how often they cook,
- * what they spend, what they like, how many meals a week — every one of those
- * is a fold over the log once there is a log, and asking for it up front trades
- * a minute of a stranger's patience for an answer that is worse than the one
- * the system would have worked out by itself. This is the same rule the rest of
- * the integration runs on and the reason there is no settings form anywhere in
- * it. The optional arguments below exist to CAPTURE those when somebody
- * volunteers them in conversation, never to prompt for them.
+ * Only two things are asked for, because nothing can derive them: who eats
+ * here, and what is on the shelves (from photographs, not a questionnaire).
+ * Everything else (meal times, spend, tastes) is folded from the log once one
+ * exists. The optional arguments below capture those details when somebody
+ * volunteers them; they are never prompted for.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { createAccount, getAccount, idOk, listAccounts, updateAccount } from "./accounts.ts";
 import { loadCookbook } from "./cookbook.ts";
 import { append, live, readLog } from "./store.ts";
 import { type Account, CATEGORIES, type Category, LOCATIONS, type Location } from "./types.ts";
 
-/* ── is this person even a candidate ─────────────────────────────────────── */
+/* ── is this person a candidate ──────────────────────────────────────────── */
 
 /**
- * Whether a principal already has a kitchen, without throwing.
- *
- * `resolveAccount` deliberately fails hard for an unknown caller, which is
- * right when a tool is about to read or write food. It is wrong as the thing
- * that decides whether to make an offer, because "no account" is the entire
- * population this feature is for.
+ * The household a principal belongs to, or null. Unlike `resolveAccount`, an
+ * unknown caller is a normal answer here: it is who onboarding is for.
  */
 export function accountOf(principal: string | null): string | null {
   if (!principal) return null;
@@ -54,7 +33,7 @@ export function accountOf(principal: string | null): string | null {
 export type Step = {
   id: "shelves" | "people" | "site" | "cooked";
   done: boolean;
-  /** What this step is for, in the words I would use saying it out loud. */
+  /** What this step is for, in plain words. */
   what: string;
   /** The next concrete move when it is not done. */
   next: string;
@@ -65,17 +44,13 @@ export type State = {
   /** True once the parts that make the system usable are all in place. */
   ready: boolean;
   steps: Step[];
-  /** One line I can say verbatim. */
+  /** One line that can be said verbatim. */
   summary: string;
 };
 
 /**
- * How far along a household is, derived rather than stored.
- *
- * A stored "onboarding_complete" flag is a claim that can outlive the thing it
- * describes: delete every item and the flag still says finished. Each of these
- * reads the actual artifact, so a household that empties its ledger correctly
- * goes back to needing shelves.
+ * How far along a household is, derived from its data rather than stored, so a
+ * household that empties its ledger goes back to needing shelves.
  */
 export function state(account: string | null): State {
   if (!account) {
@@ -127,9 +102,8 @@ export function state(account: string | null): State {
       next: "not a blocker; it happens on its own the first time they cook",
     },
   ];
-  // The first three are what make it work. A meal is the thing that makes it
-  // get better, and holding "ready" hostage to it would mean telling somebody
-  // their setup is incomplete when the only thing missing is dinner.
+  // A logged meal improves the kitchen but is not needed for it to work, so it
+  // does not hold back "ready".
   const ready = steps.filter((s) => s.id !== "cooked").every((s) => s.done);
   const left = steps.filter((s) => !s.done && s.id !== "cooked");
   return {
@@ -149,10 +123,9 @@ export type Provisioned = { account: string; created: boolean; state: State };
 /**
  * Create a household, or fill in what an existing one is missing.
  *
- * Every precondition is checked before anything is written, because the whole
- * point is that there is no half-provisioned state to be stuck in. Calling it
- * twice is safe and is how the optional details get added later, when somebody
- * mentions them in conversation rather than when a form demanded them.
+ * Every precondition is checked before anything is written, so there is no
+ * half-provisioned state. Idempotent: calling it again is how optional details
+ * are added later.
  */
 export function provision(
   id: string,
@@ -207,7 +180,7 @@ export function provision(
   return { account: id, created: !had, state: state(id) };
 }
 
-/* ── reading a first stock-up out of photographs ─────────────────────────── */
+/* ── a first stock-up from photographs ───────────────────────────────────── */
 
 export type Proposal = {
   /** Ledger slug this would create. */
@@ -223,20 +196,11 @@ export type Proposal = {
 };
 
 /**
- * What to look for in a first set of pictures, before anything is tracked.
+ * The brief for reading a first set of kitchen photographs.
  *
- * The deliberate opposite of the shelf check, and the difference is the
- * ledger. That one hands over a checklist and forbids naming anything new,
- * because against an established kitchen "what food do you see" produces a
- * shopping catalogue that would bury real corrections. Here there is no ledger
- * yet: the checklist would be empty, every real item would come back as an
- * unactionable unknown, and the household would finish onboarding with an
- * empty fridge.
- *
- * I look at the photographs myself; this is the brief that used to be a
- * vision model's prompt. Still proposals, never writes: a photo is a sample,
- * not an audit, and the whole list goes in front of the person before
- * `acceptStock` appends a single event.
+ * The opposite of the shelf check: with no ledger yet there is no checklist to
+ * verify, so the model lists what it can see. The result is only a proposal;
+ * the person reviews the list before `acceptStock` writes anything.
  */
 export function stockBrief(files: string[], where?: string | null): string {
   return [
@@ -265,12 +229,9 @@ export function stockBrief(files: string[], where?: string | null): string {
 }
 
 /**
- * Put accepted proposals on the shelves, as one batch.
- *
- * One batch so a bad reading is one retraction rather than forty, which is the
- * same property that lets the automatic cleanup guess at all. Anything the
- * ledger already has is skipped rather than doubled — running this twice on the
- * same photograph is a thing a person will do.
+ * Put accepted proposals on the shelves as one batch, so a bad reading is a
+ * single undo. Items the ledger already has are skipped, making a repeat run on
+ * the same photograph harmless.
  */
 export function acceptStock(
   account: string,
@@ -294,16 +255,4 @@ export function acceptStock(
     })),
   );
   return { batch, added, skipped };
-}
-
-/**
- * A directory this household's site can live in, made before it is recorded.
- *
- * Here rather than in the tool so that "provisioned" means the folder exists,
- * not that a path was written into the registry and might not.
- */
-export function siteDir(account: string, base: string): string {
-  const dir = join(base, `kitchen-${account}`);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return dir;
 }

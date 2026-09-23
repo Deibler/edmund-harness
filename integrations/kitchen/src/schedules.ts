@@ -1,33 +1,14 @@
 /**
- * Standing dinner texts.
+ * Standing dinner texts ("text us at four what we are having").
  *
- * "Text me at four every day and tell me what we are having." The whole feature
- * is that sentence, and the design follows from one property of it: the text has
- * to ARRIVE. A suggestion that lands at 4:00 four days out of five is worse than
- * no suggestion at all, because the household stops planning around it and then
- * stops reading it.
+ * The text has to arrive, so the pick is deterministic: the same ranking the
+ * home page runs, from the ledger and the clock alone, sent by the watch pass
+ * with no model in the delivery path. If the dish has never been written out,
+ * firing also queues the request a "Make this" tap would, so a written page can
+ * follow; the text never waits on it.
  *
- * So the pick is deterministic. It is the same ranking the home page already
- * runs — what the shelves can actually cook, reordered by what the day argues
- * for — and it needs nothing but the ledger and a clock. The launchd pass that
- * drains the site's buttons fires these too, and sends the text
- * itself. No model is in the delivery path.
- *
- * A model is still wanted for the part it is good at. If the dish has never been
- * written out, firing also drops the exact request a person would have made by
- * pressing "Make this" into the site's callback queue, which wakes a session,
- * which writes the page and sends it. That is an enrichment on top of a text
- * that already went out, rather than a dependency the text waits on.
- *
- * Two rules that are less obvious than they look:
- *
- *   A missed window is skipped, never fired late. If the Mac was asleep at four
- *   and wakes at nine, a text about tonight's dinner is now a text about a
- *   dinner that did not happen. Silence is the honest output.
- *
- *   Firing opens no plan and consumes nothing. Being told what to cook is not
- *   evidence that anybody cooked it, and this integration's whole posture is
- *   that only a human saying so takes food off a shelf.
+ * A missed window is skipped, never fired late. Firing opens no plan and
+ * consumes nothing: being told what to cook is not evidence anybody cooked it.
  */
 
 import { execFileSync } from "node:child_process";
@@ -49,18 +30,9 @@ export const MEALS = ["dinner", "lunch", "breakfast"] as const;
 export type MealKind = (typeof MEALS)[number];
 
 /**
- * Categories each meal is willing to propose. A schedule says which meal it is.
- *
- * `dinner` deliberately does NOT reuse MEAL_CATS. That set answers "is this a
- * meal rather than a side or a dessert", which is a different question, and the
- * two differ on exactly one category: a dish somebody authored as lunch is
- * lunch. Sharing one set is how a fifteen-minute ham and Swiss sandwich, fully
- * in stock and never yet cooked, beat every real dinner in the house on the 4pm
- * text.
- *
- * The asymmetry with `lunch` is intended. A dinner dish genuinely can be lunch,
- * which is what leftovers are, but a sandwich is not dinner. The relation only
- * runs one way, so it cannot be one shared set however tempting that looks.
+ * Categories each meal may propose. Not `MEAL_CATS`, which answers a different
+ * question and admits lunch. The relation is one-way: a dinner can be lunch, a
+ * lunch is never dinner.
  */
 const CATS_FOR: Record<MealKind, Set<string>> = {
   dinner: new Set(["dinner", "compound"]),
@@ -84,13 +56,9 @@ export type Dinner = {
   /** Local YYYY-MM-DD this last fired, so a restart cannot re-send today's. */
   fired?: string | null;
   /**
-   * Who has already received today's, as `YYYY-MM-DD|principal`.
-   *
-   * Per person because sends fail per person. `fired` alone meant one transient
-   * failure — a wedged `imsg`, which happens — silently cost that person the
-   * whole day while the household read as delivered. With this the next pass
-   * inside the grace window retries only the people it owes, and nobody gets
-   * a second copy of a text they already have.
+   * Who has received today's, as `YYYY-MM-DD|principal`. Per person because
+   * sends fail per person: a retry inside the grace window reaches only those
+   * still owed, and nobody gets a second copy.
    */
   sent?: string[];
   /** ISO of the last send, for "last sent" on the page. */
@@ -104,12 +72,7 @@ export const REPEAT_DAYS = 7;
 /** How many past picks a schedule remembers. */
 const PICKS_KEPT = 14;
 
-/**
- * How late a fire may be and still be worth sending.
- *
- * Long enough to survive a laptop lid, short enough that the text is still about
- * the evening it was written for.
- */
+/** Minutes late a fire may still be sent: survives a closed lid, still about tonight. */
 export const GRACE_MIN = 75;
 
 const DAY_NAME = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -120,12 +83,10 @@ export function dinnersOf(acct: Account): Dinner[] {
 }
 
 /**
- * Coerce anything into a schedule that cannot misbehave, or refuse it.
- *
- * Every write path goes through here — the site's sheet, the MCP tool, a hand
- * edit of the registry — because an invariant enforced on one path is not
- * enforced. The specific thing being prevented is a `to` list naming somebody
- * who does not live here, which would text a stranger a dinner every night.
+ * Coerce input into a valid schedule, or refuse it. Every write path (site, tool,
+ * registry edit) goes through here, chiefly so `to` can never name somebody
+ * outside the household. Rebuilt from a fixed field list: a new `Dinner` field
+ * must be carried here too.
  */
 export function normalize(
   raw: Partial<Dinner> & { id?: string },
@@ -162,8 +123,7 @@ export function normalize(
     on: raw.on !== false,
     created: raw.created ?? now.toISOString(),
     fired: raw.fired ?? null,
-    // Only today's receipts are worth keeping; yesterday's cannot suppress
-    // anything and would otherwise grow in the registry forever.
+    // Only today's receipts matter; older ones would grow forever.
     sent: (raw.sent ?? []).filter((s) => typeof s === "string" && s.startsWith(dayKeyOf(now))),
     last: raw.last ?? null,
     picks: (raw.picks ?? []).slice(-PICKS_KEPT),
@@ -213,7 +173,7 @@ export function describe(d: Dinner, acct: Account): string {
 const sameSet = (a: number[], b: number[]) =>
   a.length === b.length && a.every((x, i) => x === b[i]);
 
-/** 24-hour storage, 12-hour display. Nobody says "sixteen hundred" about dinner. */
+/** 24-hour storage, 12-hour display. */
 export function clock(at: string): string {
   const [h, m] = at.split(":").map(Number) as [number, number];
   const ampm = h < 12 ? "am" : "pm";
@@ -224,13 +184,7 @@ export function clock(at: string): string {
 const dayKeyOf = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-/**
- * Should this fire right now?
- *
- * Three ways to answer no, and they are different: not today, not yet, and too
- * late to matter. Only the third is a judgement call, and it is the one that
- * keeps a sleeping machine from texting last night's dinner over breakfast.
- */
+/** Whether the window is open now: on, today, not yet fired, and within `GRACE_MIN`. */
 export function dueNow(d: Dinner, now = new Date()): boolean {
   if (!d.on) return false;
   if (d.days.length && !d.days.includes(now.getDay())) return false;
@@ -243,12 +197,7 @@ export function dueNow(d: Dinner, now = new Date()): boolean {
 /** Today's receipt for one person, the key `sent` is keyed by. */
 const receipt = (principal: string, now: Date) => `${dayKeyOf(now)}|${principal}`;
 
-/**
- * Who this schedule still owes a text today.
- *
- * Separate from `dueNow` because they answer different questions: whether the
- * window is open, and who inside it has not been reached yet.
- */
+/** Who this schedule still owes a text today. */
 export function owed(
   d: Dinner,
   acct: Account,
@@ -286,12 +235,9 @@ export type Pick = {
 };
 
 /**
- * Tonight's answer, from the ledger alone.
- *
- * Deliberately the same ranking the home page shows, so the text and the page
- * agree. Cookability outranks everything, then how well the dish fits the day,
- * and a dish cooked in the last three weeks is pushed down rather than removed:
- * a household with six recipes and a busy month should still be told something.
+ * Tonight's pick, from the ledger alone. The same terms the home page ranks by,
+ * so the text and the page agree: cookable first, then fit to the day and the
+ * household's history. Recent dishes are pushed down, never removed.
  */
 export function pickFor(
   account: string,
@@ -306,9 +252,7 @@ export function pickFor(
   const book = loadCookbook(account);
   const written = new Set(book.map((b) => b.id));
 
-  // Written-only recipes are cookable choices too. Without this a household
-  // whose catalog is thin but whose cookbook is full would be told there is
-  // nothing to eat while five written dinners sat one tap away.
+  // Written recipes count as choices even when the catalog lacks them.
   const extra: Recipe[] = book
     .filter((b) => !recipes.some((r) => r.id === b.id))
     .map((b) => ({
@@ -342,21 +286,14 @@ export function pickFor(
         when,
         score:
           (c.ready ? 1000 : 0) +
-          // A dish written FOR this meal outranks one merely allowed into the
-          // pool. This is a tiebreak, not the guarantee — `CATS_FOR` is the
-          // guarantee — but without it a never-cooked wrong-meal dish wins on
-          // `novelty` alone, which is the shape of the sandwich bug one layer up.
+          // A dish written for this meal beats one merely allowed into the pool.
           (c.recipe.cat === meal ? 45 : 0) +
           // One missing item is a stop at the shop; four is a different dinner.
           -12 * c.missing.length +
           // Suggested by this text in the last week: say something else.
           (recent.has(c.recipe.id) ? -60 : 0) +
           moodScore(c.recipe, mood, acct) +
-          // The fridge and the history, on the same terms the home page uses.
-          // Deliberately the SAME function: a 4pm text that names one dinner and
-          // a site that leads with a different one is worse than either alone,
-          // and that is what two hand-written scoring rules drift into. It also
-          // subsumes the old repeat penalty, which is why that line is gone.
+          // The same fit function the home page uses, so the two cannot drift.
           fitScore(c.recipe, items, made, prof, now),
       };
     })
@@ -381,13 +318,7 @@ const MEAL_WORD: Record<MealKind, string> = {
   breakfast: "Breakfast",
 };
 
-/**
- * What the text actually says.
- *
- * Written here rather than by a model so that it is identical whether a session
- * is awake or not, and so that it can never claim the house has something it
- * does not. Prose, no bullets: it is a text message.
- */
+/** The text itself: deterministic prose that never claims food the house lacks. */
 export function composeText(
   pick: Pick | null,
   d: Dinner,
@@ -395,12 +326,8 @@ export function composeText(
   url: string | null,
   shopping: number,
   /**
-   * Whether a written page can actually follow this text.
-   *
-   * Not a detail. The enrichment reaches a session by landing in the site's
-   * callback log, which nothing polls unless the site is served, so a household
-   * with no public URL would be promised a page that could never arrive. A
-   * promise this system cannot keep is worse than saying nothing.
+   * Whether a written page can follow. The request travels through the site's
+   * callback log, so a household with no served site is never promised one.
    */
   canWrite = Boolean(acct.site?.url),
 ): string {
@@ -431,13 +358,7 @@ export function composeText(
 const list = (xs: string[]) =>
   xs.length === 1 ? xs[0]! : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
 
-/**
- * The deep link to a written recipe, if there is a served site to link into.
- *
- * Returns null rather than a guess when the household has no URL. A link that
- * 404s in a text message is worse than no link, and this is exactly the state
- * a household sits in before anybody has shared its page.
- */
+/** The deep link to a written recipe, or null when the household has no served site. */
 export function recipeUrl(acct: Account, recipeId: string): string | null {
   const base = acct.site?.url;
   if (!base) return null;
@@ -451,12 +372,9 @@ export function recipeUrl(acct: Account, recipeId: string): string | null {
 const IMSG = "/opt/homebrew/bin/imsg";
 
 /**
- * Send one text, outside any model session.
- *
- * The legacy AppleScript path on purpose: the IMCore bridge double-emits, which
- * on a standing schedule would mean two identical dinner texts every single
- * evening. Throws on failure so the caller can leave the schedule unfired and
- * try again on the next minute's pass rather than silently swallowing the day.
+ * Send one text outside any model session, through `imsg` rather than the IMCore
+ * bridge (which double-emits). Throws on failure so the schedule stays unfired
+ * and the next pass retries.
  */
 export function sendTo(principal: string, body: string): void {
   const handle = principal.replace(/^imessage:dm:/, "");
@@ -470,12 +388,8 @@ export function sendTo(principal: string, body: string): void {
 }
 
 /**
- * Ask a session to write this dish out properly.
- *
- * Appends the same request a person's "Make this" tap produces, to the same
- * file, so there is exactly one path from "somebody wants a recipe" to a written
- * page. Best-effort: the text has already gone out, and a household with no
- * served site simply never gets the enrichment.
+ * Queue the same request a "Make this" tap produces, so there is one path from
+ * wanting a recipe to a written page. Best-effort; false with no served site.
  */
 export function requestWrite(
   acct: Account,
@@ -509,15 +423,9 @@ export type FireResult = {
 };
 
 /**
- * Fire one schedule: pick, text whoever is still owed, and ask for a page if
- * there isn't one.
- *
- * Marked fired for the DAY only once everybody has it. Marking on the first
- * success meant a single transient send failure — a wedged `imsg`, which is a
- * thing that happens here — cost that person the day while the log said the
- * schedule had fired. Each success is recorded individually, so the next pass
- * inside the grace window retries exactly the people it owes and nobody gets
- * a duplicate.
+ * Fire one schedule: pick, text whoever is still owed, and ask for a page if the
+ * dish is not written. Marked fired for the day only once everybody has it;
+ * each success is recorded so a retry reaches only those still owed.
  */
 export function fire(account: string, d: Dinner, now = new Date()): FireResult {
   const acct = getAccount(account);
@@ -530,10 +438,8 @@ export function fire(account: string, d: Dinner, now = new Date()): FireResult {
     failed: [],
     queuedWrite: false,
   };
-  // Nobody left to text. Either everyone already has today's, or `to` names
-  // people who have since left the household — which is worth saying out loud
-  // rather than re-picking a dinner every minute of the window for an audience
-  // of nobody.
+  // Nobody left to text: everyone has today's, or every recipient has left the
+  // household, which is reported.
   if (!to.length) {
     if (!recipients(d, acct).length) {
       res.failed.push({
@@ -562,13 +468,12 @@ export function fire(account: string, d: Dinner, now = new Date()): FireResult {
       res.failed.push({ principal: person.principal, why: (e as Error).message });
     }
   }
-  // Only ask for a page the first time, or a schedule retrying one failed
-  // recipient queues a second identical write request every minute.
+  // Ask for a page only on the first send, not on retries for a failed recipient.
   if (pick && !pick.written && res.sent.length && !(d.sent ?? []).length) {
     try {
       res.queuedWrite = requestWrite(acct, pick, recipients(d, acct), now);
     } catch {
-      // The text landed. A missing enrichment is not worth failing the fire.
+      // The text landed; a missing page is not worth failing the fire.
     }
   }
   if (res.sent.length) {
@@ -601,4 +506,4 @@ export function due(acct: Account, now = new Date()): Dinner[] {
   return dinnersOf(acct).filter((d) => dueNow(d, now));
 }
 
-export { DAY_NAME, SHORT_DAY, dayKeyOf };
+export { DAY_NAME, SHORT_DAY };

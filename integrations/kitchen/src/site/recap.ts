@@ -1,16 +1,9 @@
 /**
- * The year in review, Wrapped-style.
- *
- * Its own file because it is the one panel that reads a whole years history
- * rather than todays state, and it is long: every figure here is a fold over
- * the ledger with its own confidence caveat, because a recap that presents a
- * guess as a measurement is worse than one that admits it is a trend.
- *
- * Moved out of `site.ts` on 2026-08-17 unedited.
+ * The year in review, Wrapped-style. Every figure is a fold over the ledger and
+ * carries its own caveat, so an estimate is never presented as a measurement.
  */
 
-import { join } from "node:path";
-import { kcalTarget, meals, recap, spend } from "../insights.ts";
+import { kcalTarget, recap, spend } from "../insights.ts";
 import { slug } from "../store.ts";
 import { escapeHtml, fmtMoney } from "../util.ts";
 import { type Ctx, mealPhoto } from "./ctx.ts";
@@ -35,9 +28,7 @@ export function recapPanel(ctx: Ctx): string {
       )
       .join("");
 
-  // Only cards with something true to say. A stat that reads "1" or "0" because
-  // nothing has happened yet is worse than an absent card: it makes the whole
-  // page look automated rather than observed.
+  // Only cards with something true to say; a card reading "0" is left out.
   const cards: string[] = [];
 
   cards.push(`<div class="sc a">

@@ -1,28 +1,15 @@
 /**
- * Is this household actually wired up?
+ * Household health check: which parts are broken, which are merely absent,
+ * and which are fine.
  *
- * Every feature here degrades quietly by design. No weather means the page
- * never mentions weather; no price book means deals report as unknown; no
- * written recipe means a card offers to write one. That is the right behaviour
- * for a person reading the page and the wrong behaviour for whoever set it up,
- * because the difference between "this household has no shopping list" and
- * "this household's site has never been served to anybody" looks identical from
- * the outside: a quiet, correct-looking page.
+ * Every feature degrades quietly by design, which is right for the person
+ * reading the page and wrong for whoever set it up: "no shopping list" and "a
+ * site nobody has ever been served" look the same from outside. This module
+ * reads the same state as everything else, changes nothing, and reports:
  *
- * So the quiet is made loud in exactly one place. Nothing here changes
- * anything; it reads the same state every other module reads and says which
- * parts are broken, which are merely absent, and which are fine. The
- * distinction matters more than the list does:
- *
- *   BROKEN   something claims to work and does not. A schedule that texts a
- *            person who has left, a site directory that does not exist.
- *   ABSENT   a real, valid state that costs a feature. No coordinates, no
- *            served URL, an empty catalog. Never described as an error.
- *   OK       checked and true.
- *
- * Written after Jordan's household turned out to have a perfectly rendered
- * website that no server had ever served and no trigger had ever watched. Every
- * individual piece reported success.
+ *   broken  something claims to work and does not
+ *   absent  a valid state that costs a feature; never reported as an error
+ *   ok      checked and true
  */
 
 import { existsSync } from "node:fs";
@@ -34,7 +21,6 @@ import { readWeather } from "./mood.ts";
 import { cookable, loadRecipes } from "./recipes.ts";
 import { dinnersOf, nextFire, recipients } from "./schedules.ts";
 import { corruptLines, fold, live, readLog } from "./store.ts";
-import type { Account } from "./types.ts";
 
 export type Level = "ok" | "absent" | "broken";
 
@@ -63,11 +49,8 @@ const broken = (what: string, detail: string, fix: string): Finding => ({
 });
 
 /**
- * Everything checkable about one household, without touching the network.
- *
- * Deliberately synchronous and cheap enough to run on every daily pass. Whether
- * a URL actually answers is a separate, slower question and lives in the daily
- * script, which already fetches the page to compare its length.
+ * Everything checkable about one household without the network. Cheap enough
+ * for every daily pass; the daily script checks the live URL separately.
  */
 export function checkAccount(id: string): Report {
   const acct = getAccount(id);
@@ -98,8 +81,7 @@ export function checkAccount(id: string): Report {
       ),
     );
   } else if (!people.length) {
-    // A household whose only member is a group chat has no messageable person,
-    // so "text this to me" and every schedule silently reach nobody.
+    // Group chats only: nothing can be texted to a person.
     f.push(
       broken(
         "members",
@@ -199,7 +181,7 @@ export function checkAccount(id: string): Report {
   } else if (!existsSync(join(dir, "index.html"))) {
     f.push(broken("site", `${dir} exists but has no index.html`, "kitchen_site to re-render"));
   } else if (!acct.site?.url) {
-    // The one that hid for a week: rendered perfectly, served to nobody.
+    // Rendered but served to nobody: the failure that looks like success.
     f.push(
       broken(
         "site",
@@ -222,9 +204,8 @@ export function checkAccount(id: string): Report {
     }
   }
 
-  // Taps only reach anybody if something is watching the callback log. This
-  // module cannot see the trigger table, so it reports the precondition rather
-  // than claiming the trigger exists.
+  // Reports only the precondition for taps working; the watcher itself is not
+  // visible from here.
   if (dir && existsSync(join(dir, "_callbacks.jsonl"))) {
     f.push(ok("taps", "the page has posted at least once, so the callback path works"));
   } else if (dir && acct.site?.url) {
@@ -319,5 +300,3 @@ export function summarise(r: Report): string {
 export function checkAll(): Report[] {
   return listAccounts().map((a) => checkAccount(a.id));
 }
-
-export type { Account };

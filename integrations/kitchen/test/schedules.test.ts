@@ -1,20 +1,12 @@
 /**
- * Standing dinner texts.
+ * Standing dinner texts. Each failure here reaches a real phone at a specific
+ * minute, in rough order of harm:
  *
- * The failure modes here are all invisible until a specific minute arrives, and
- * two of them reach a real person's phone, which is why they get a test rather
- * than a careful read. In rough order of how bad they are:
- *
- *   Texting somebody who does not live here. `to` arrives from a public
- *   callback endpoint, so it is untrusted input that ends in a message.
- *
- *   Sending twice. The pass runs every minute inside a 75-minute window, so
- *   anything short of a hard "already fired today" check sends 75 dinners.
- *
- *   Sending late. A Mac asleep at four and awake at nine must stay quiet.
- *
- *   Claiming food. The composed text is the one place this system describes the
- *   shelves without a human in the loop, so it has to say "short" out loud.
+ *   - texting somebody outside the household (`to` is untrusted input from a
+ *     public callback endpoint);
+ *   - sending twice inside the 75-minute window;
+ *   - sending late after the machine slept through the window;
+ *   - claiming food the house does not have.
  */
 
 import type { Recipe } from "../src/recipes.ts";
@@ -120,7 +112,7 @@ check(
 
 /* ── firing ──────────────────────────────────────────────────────────────── */
 
-// A Sunday. 2026-08-16 is a Sunday, which is also the day this was written.
+// 2026-08-16 is a Sunday.
 const sun = (h: number, m = 0) => new Date(2026, 7, 16, h, m);
 const mon = (h: number, m = 0) => new Date(2026, 7, 17, h, m);
 
@@ -128,8 +120,7 @@ section("when it fires");
 check("not before the time", !dueNow(at4(), sun(15, 59)));
 check("on the minute", dueNow(at4(), sun(16, 0)));
 check("still inside the grace window", dueNow(at4(), sun(16, GRACE_MIN - 1)));
-// The whole point of the window: a machine that was asleep must not text about
-// a dinner the evening has already passed.
+// A machine that slept through the window must not text about a dinner already past.
 check("not once the evening has gone", !dueNow(at4(), sun(21, 0)));
 check("a paused schedule never fires", !dueNow(at4({ on: false }), sun(16, 5)));
 check("a weekday schedule skips Sunday", !dueNow(at4({ days: [1, 2, 3, 4, 5] }), sun(16, 5)));
@@ -172,8 +163,8 @@ const ready = composeText(pick(), at4(), house, null, 0, true);
 check("it names the dish", /roast pork loin with onions/.test(ready));
 check("and says the house can cook it", /Everything it needs is in the house/.test(ready));
 check("no written page means it promises one", /Writing it out now/.test(ready));
-// The household this would have lied to is Jordan's: a site rendered to disk
-// and served to nobody, so the request that writes the page reaches no one.
+// A site rendered to disk but served to nobody means the page request reaches no one,
+// so the text must not promise one.
 check(
   "but only when a page could actually follow",
   !/Writing it out now/.test(composeText(pick(), at4(), house, null, 0, false)),
@@ -237,11 +228,8 @@ check("a paused one says so", /\(paused\)/.test(describeDinner(at4({ on: false }
 
 /* ── one failed send must not cost that person the day ───────────────────── */
 
-// `fired` was a single flag for the whole household, set as soon as ANY send
-// succeeded. So a transient failure texting one person — a wedged `imsg`, which
-// happens on this machine — marked the schedule delivered and that person
-// silently got nothing, every day it happened, with the log reading "fired".
-// Receipts are per person now, and `owed` is what the retry reads.
+// Receipts are per person: a transient failure texting one person must not mark the
+// schedule delivered for them. `owed` is what the retry reads.
 section("partial delivery");
 
 const today = new Date(2026, 7, 17, 16, 5);
@@ -267,8 +255,7 @@ check(
   owed({ ...at4(), sent: [key(HUNTER, today), key(KAYLA, today)] }, house, today).length === 0,
 );
 
-// Yesterday's receipts must not suppress today's text, which is the failure
-// this whole mechanism could most easily introduce.
+// Yesterday's receipts must not suppress today's text.
 const yesterday = new Date(2026, 7, 16, 16, 5);
 check(
   "yesterday's receipts do not suppress today",
@@ -282,9 +269,8 @@ check(
     .length === 0,
 );
 
-// A schedule addressed only to people who have since left cannot send at all.
-// It used to re-pick a dinner every minute of the 75-minute window for an
-// audience of nobody, silently.
+// A schedule addressed only to people who have left says so, instead of re-picking a
+// dinner every minute for nobody.
 check(
   "a schedule whose recipients all left has nobody to text",
   recipients({ ...at4(), to: ["imessage:dm:+19999999999"] }, house).length === 0,

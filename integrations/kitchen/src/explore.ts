@@ -1,37 +1,25 @@
 /**
- * Food this house does not make.
+ * The explore shelf: dishes deliberately unlike anything this house cooks.
  *
- * Every other surface in this integration is anchored to the ledger: what is
- * on the shelves, what can be cooked tonight, what was cooked before. That is
- * the right anchor and it has one failure mode, which is that a kitchen
- * gradually proposes only the things it already knows. Ten weeks of correct
- * suggestions and you are eating the same eight dinners with better labelling.
- *
- * This is the deliberate exception. It generates dishes chosen for DISTANCE
- * from the household's own history: different cuisines, different techniques,
- * different shopping. Nothing here is checked against stock, because checking
- * it against stock is precisely what would drag it back to the same eight
- * dinners.
- *
- * The honesty rule still holds, it just moves: these are labelled as ideas you
- * would have to shop for, never as things you can make, and nothing here can
- * write to the ledger. A dish only becomes real when somebody asks for the
- * recipe, and the shopping only becomes real when somebody puts it on a list.
+ * Every other surface is anchored to the ledger, which over time proposes only
+ * what the household already knows. Explore dishes are chosen for distance from
+ * that history and are not checked against stock. They are labelled as ideas to
+ * shop for, never as things the house can make, and nothing here writes to the
+ * ledger.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { accountDir } from "./accounts.ts";
 import { loadCookbook } from "./cookbook.ts";
-import { loadRecipes } from "./recipes.ts";
-import type { Effort, Method } from "./recipes.ts";
+import { type Effort, type Method, loadRecipes } from "./recipes.ts";
 import { live, slug } from "./store.ts";
 
 export type ExploreDish = {
   id: string;
   name: string;
   desc: string;
-  /** Where it comes from. The whole point of the shelf, so it is required. */
+  /** Where it comes from. Required: distance is the point of the shelf. */
   cuisine: string;
   /** Why it is far from what this house cooks, in a sentence. */
   why: string;
@@ -81,15 +69,9 @@ const METHODS = new Set<string>([
 ]);
 
 /**
- * What I need in front of me before writing this shelf.
- *
- * Built around a NEGATIVE list, which is the part that matters. Asked for
- * "interesting dinners" I would write the same weeknight chicken anyone would;
- * handed the actual catalog and told "not these, and not anything that rhymes
- * with these" is what produces distance. Everything on the shelves goes in as
- * well, not as a constraint but so the shopping line is honest about what is
- * already in the house: the first set ever written here told them to buy
- * chicken breasts they already had.
+ * The brief for writing the shelf. Built around a negative list (every dish the
+ * house already cooks), which is what produces distance, plus everything owned,
+ * so the shopping line does not ask for food already in the house.
  */
 export function exploreBrief(account: string, theme?: string | null): string {
   const { recipes } = loadRecipes(account);
@@ -127,13 +109,9 @@ export function exploreBrief(account: string, theme?: string | null): string {
 }
 
 /**
- * Validate and write a set I have written.
- *
- * Coercion, not trust, even though the author is me: the shape lands on a
- * public page and a bad enum would render as `undefined` in a pill. A repeat
- * of something the house already cooks is the one thing this shelf may not
- * contain, so it is dropped rather than shown as a near miss, and anything on
- * a shopping line that the house demonstrably owns is moved across.
+ * Validate and write a set. Fields are coerced because they land on a public
+ * page; a dish the house already cooks is dropped, and anything on a shopping
+ * line that the house owns is moved to `have`.
  */
 export function saveExplore(
   account: string,

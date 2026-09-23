@@ -1,35 +1,19 @@
 /**
- * Inviting people to a note, which is the one thing local automation cannot do.
+ * Inviting household members to the shared note on icloud.com.
  *
- * Apple exposes no invite anywhere a script can reach: the dictionary's
- * `shared` property is read only, `NSSharingService` named
- * `com.apple.Notes.SharingExtension` does nothing for Notes, and the share
- * sheet is hosted by `ShareSheetUI`, which reports zero children to
- * accessibility, so there is not even a button to press. A link on its own is
- * worthless too, because access is gated on the invite list rather than on the
- * link, which is why "just send them the URL" is not an answer.
+ * No local automation can invite anyone to a note: AppleScript's `shared` is
+ * read only, the Notes sharing extension does nothing, and the share sheet
+ * exposes no accessibility children. Access is gated on the invite list, so a
+ * link alone is not enough. The invite UI is only reachable as ordinary DOM on
+ * icloud.com; `icloud.ts` opens the note and this decides who should be on it.
  *
- * The invite UI does exist in exactly one place a program can touch it:
- * icloud.com/notes, where it is ordinary DOM. `icloud.ts` gets a note open;
- * this decides who should be on it.
- *
- *   - READ BEFORE WRITE. Sharing twice must not invite twice, so this always
- *     reads the participant list first and adds only who is missing. Calling it
- *     on an already correct note does nothing at all and says so.
- *   - VERIFY AFTER. The result is read back off the page, never assumed from
- *     the fact that a click succeeded.
+ *   - Read before write: the participant list is read first and only the
+ *     missing are invited, so sharing twice never invites twice.
+ *   - Verify after: the result is read back off the page, never assumed from a
+ *     successful click.
  */
 
-import {
-  type Failure,
-  type Page,
-  evaluate,
-  openedUrl,
-  pressEnter,
-  sleep,
-  typeText,
-  withNote,
-} from "./icloud.ts";
+import { type Failure, type Page, evaluate, pressEnter, sleep, typeText } from "./icloud.ts";
 
 export type Participant = {
   /** As iCloud renders it: a name, an email, or a formatted phone number. */
@@ -50,31 +34,24 @@ export type ShareOutcome = {
   link: string | null;
 };
 
-export type ShareResult = (ShareOutcome & { title: string; url: string | null }) | Failure;
-
 /* ------------------------------------------------------------------ *
  * Comparing people
  * ------------------------------------------------------------------ */
 
 /**
- * Reduce a handle to something two spellings of the same person share.
+ * Reduce a handle to a key two spellings of the same person share.
  *
- * The page renders what you typed as "+1 (555) 010-0001", so a literal
- * comparison against "+15550100001" says the person is missing and invites them
- * a second time on every run. Phone numbers collapse to their last ten digits
- * because country code presence is inconsistent between what a caller passes
- * and what iCloud displays; email collapses to lowercase.
+ * iCloud renders "+15550100001" as "+1 (555) 010-0001", so a literal compare
+ * re-invites on every run. Phone numbers collapse to their last ten digits
+ * (country codes are inconsistent), emails to lowercase.
  */
 export function idKey(handle: string): string {
   const s = handle.trim().toLowerCase();
   if (!s) return "";
   if (s.includes("@")) return s;
   const digits = s.replace(/\D/g, "");
-  // A label with no digits in it is a DISPLAY NAME, not a broken number. Once
-  // somebody accepts an invite iCloud stops showing their handle and shows
-  // their contact name instead, so this is the normal steady state rather than
-  // an edge case. Returning "" for those made every name equal to every other
-  // name, which is a worse failure than not matching at all.
+  // No digits means a display name, which is what iCloud shows once somebody
+  // accepts. It keys as itself, so distinct names never compare equal.
   if (!digits) return `name:${s.replace(/\s+/g, " ")}`;
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
@@ -106,17 +83,12 @@ const OPEN_SHARE = `
 `;
 
 /**
- * Read who is on the note.
+ * Read who is on the note: one `.ck-sharing-manage-share-list-item-view` per
+ * participant, the person followed by "(Owner)" or "Invited".
  *
- * Each participant is one `.ck-sharing-manage-share-list-item-view`, whose text
- * is the person followed by "(Owner)" or "Invited". An earlier version scanned
- * for any div containing "(Owner)" and took the last match, which is the most
- * deeply nested one — that returned a single row and reported the two people
- * actually on the note as absent.
- *
- * `ok` is separate from an empty list on purpose. A popover that has not
- * rendered yet and a note nobody is on look identical in the DOM, and treating
- * the first as the second would re-invite the whole household on every run.
+ * `ok` is separate from an empty list because an unrendered popover and a note
+ * nobody is on look the same, and mistaking one for the other would re-invite
+ * the whole household.
  */
 const READ_PEOPLE = `
   const rows = await wait(() => {
@@ -180,24 +152,17 @@ const SUBMIT = `
  * ------------------------------------------------------------------ */
 
 /**
- * Put everyone named on the note that is already open, and nobody twice.
- *
- * Separate from `shareNote` so a sync that has just written the list can invite
- * in the same browser session rather than opening the note a second time.
+ * Put everyone named on the already-open note, nobody twice. Runs inside the
+ * sync's browser session so the note is opened once.
  */
 export async function shareOpenNote(
   cdp: Page,
   recipients: string[],
   /**
-   * Handles a previous run already put on this note successfully.
-   *
-   * Needed because a participant's label is not stable: iCloud shows the handle
-   * you invited until the person accepts, and their CONTACT NAME afterwards.
-   * From that moment no comparison against a phone number can recognise them,
-   * so without this the sync re-invites everyone who ever accepted, every time
-   * the list changes. Trusted only while the note still holds at least as many
-   * people as we believe we put there — if somebody has actually been removed,
-   * this falls back to matching on labels and re-invites them.
+   * Handles a previous run put on this note. Needed because a participant's
+   * label turns into a contact name once they accept. Trusted only while the
+   * note still has at least that many guests; if somebody was removed, matching
+   * falls back to labels and they are re-invited.
    */
   alreadyOn: string[] = [],
 ): Promise<ShareOutcome | Failure> {
@@ -224,9 +189,8 @@ export async function shareOpenNote(
     existing = read.people;
   }
   const have = new Set(existing.map((p) => idKey(p.label)));
-  // One of the participants is us, the owner. Everyone else is somebody a run
-  // like this one put there, so a shortfall means a person was removed and the
-  // remembered list can no longer be believed.
+  // Guests exclude the owner. Fewer guests than remembered means somebody was
+  // removed, so the memory is not trusted.
   const guests = existing.filter((p) => !p.owner).length;
   const trustMemory = alreadyOn.length > 0 && guests >= alreadyOn.length;
   const remembered = new Set(trustMemory ? alreadyOn.map(idKey) : []);
@@ -251,7 +215,7 @@ export async function shareOpenNote(
   const sent = await evaluate<{ ok: boolean; why?: string; link?: string | null }>(cdp, SUBMIT);
   if (!sent.ok) return { ok: false, error: `The invite was not sent (${sent.why}).` };
 
-  // Read the truth back rather than trusting the click.
+  // Verify by reading the participant list back.
   await sleep(1200);
   const reopened = await evaluate<{ ok: boolean; alreadyShared?: boolean }>(cdp, OPEN_SHARE);
   const after =
@@ -268,65 +232,4 @@ export async function shareOpenNote(
     };
   }
   return { ok: true, participants: after, added: missing, present, link: sent.link ?? null };
-}
-
-/** Who is currently on the note. Read only; invites nobody. */
-export async function noteShareStatus(title: string, known?: string | null): Promise<ShareResult> {
-  return (await withNote(
-    title,
-    async (cdp): Promise<ShareResult> => {
-      const opened = await evaluate<{ ok: boolean; alreadyShared?: boolean; why?: string }>(
-        cdp,
-        OPEN_SHARE,
-      );
-      if (!opened.ok)
-        return { ok: false, error: `Could not open the share panel (${opened.why}).` };
-      if (!opened.alreadyShared) {
-        return {
-          ok: true,
-          title,
-          participants: [],
-          added: [],
-          present: [],
-          link: null,
-          url: openedUrl(),
-        };
-      }
-      const read = await evaluate<{ ok: boolean; people: Participant[] }>(cdp, READ_PEOPLE);
-      if (!read.ok) return { ok: false, error: "The participant list did not render." };
-      return {
-        ok: true,
-        title,
-        participants: read.people,
-        added: [],
-        present: [],
-        link: null,
-        url: openedUrl(),
-      };
-    },
-    { known },
-  )) as ShareResult;
-}
-
-/**
- * Make sure everyone named is on the note, opening it first.
- *
- * Returns what it actually did rather than what it attempted. An empty `added`
- * with a populated `participants` is the steady state and the normal result of
- * running this on a schedule.
- */
-export async function shareNote(
-  title: string,
-  recipients: string[],
-  known?: string | null,
-): Promise<ShareResult> {
-  return (await withNote(
-    title,
-    async (cdp): Promise<ShareResult> => {
-      const out = await shareOpenNote(cdp, recipients);
-      if (!out.ok) return out;
-      return { ...out, title, url: openedUrl() };
-    },
-    { known },
-  )) as ShareResult;
 }

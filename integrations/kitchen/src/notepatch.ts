@@ -1,24 +1,17 @@
 /**
- * Change only the lines of a note that need changing.
+ * Writing a note by changing only the lines that differ.
  *
- * The obvious write — select everything, paste the new list — is what filled
- * one household member's phone with the list title seven times over. Apple
- * Notes is a CRDT, and a device that has ever edited a note itself can bring
- * back text another replica deleted, then push that text back to the server.
- * Measured on this Mac in September 2026 against a scratch note: the web copy
- * stayed clean while the device kept a layer of every select-all paste. A whole-body write
- * deletes EVERY line on every pass, title included, so each pass left one more
- * complete copy for a device to resurrect.
+ * Apple Notes is a CRDT, and a device that has edited a note can resurrect text
+ * another replica deleted. A whole-body select-all and paste deletes every line
+ * on every write, title included, so each write left another complete copy for
+ * a member's phone to bring back. Editing only changed lines means an unchanged
+ * title or line is never deleted and cannot come back twice.
  *
- * So a write here deletes exactly the lines that changed and nothing else. An
- * unchanged title is never touched, which means it cannot come back twice.
- *
- * The editor is a canvas with no text model to address, so the caret is steered
- * by keystrokes and every selection is copied and checked before anything is
- * pasted over it. Where the note cannot be walked that way — two clipboard views
- * that disagree, a selection that does not say what was counted — the caller's
- * whole-body write is the fallback, because a list that is current matters more
- * than one that is tidy.
+ * The editor is a canvas with no text model, so the caret is steered by
+ * keystrokes and every selection is copied back and compared before anything
+ * replaces it. A note that cannot be walked that way (clipboard views that
+ * disagree, a selection that is not what was counted) falls back to the
+ * whole-body write, and the result says so.
  */
 
 import {
@@ -41,17 +34,14 @@ export type Para = { raw: string; block: Block | null };
 /**
  * The note's paragraphs, or null when the two clipboard views disagree.
  *
- * The HTML says what each line is and the plain text says how far the caret has
- * to travel across it. Steering by one while trusting the other would select the
- * wrong text the first time they differ — an attachment, a drawing, anything the
- * HTML renders as something other than characters — so any disagreement at all
- * means this note is not walked, and the caller rewrites it the old way.
+ * The HTML says what each line is; the plain text says how far the caret moves
+ * across it. Any disagreement (an attachment, a drawing) would put the caret on
+ * the wrong text, so such a note is not walked at all.
  */
 export function paragraphs(html: string, text: string): Para[] | null {
   if (!text) return html.trim() ? null : [];
-  // Every paragraph the editor writes ends in a line break, the last one
-  // included. A note that does not has come from somewhere else, and where its
-  // end is cannot be reasoned about by counting.
+  // Every paragraph the editor writes ends in a line break, the last included.
+  // Without it the end of the note cannot be found by counting.
   if (!text.endsWith("\n")) return null;
   const lines = text.slice(0, -1).split("\n");
   const chunks = html.split(/<\/p>/i).filter((c) => /<span/i.test(c));
@@ -75,12 +65,9 @@ const keyOf = (b: Block | null): string =>
 export type Hunk = { at: number; remove: number; insert: Block[] };
 
 /**
- * The fewest line changes that turn `cur` into `want`.
- *
- * A longest common subsequence over whole lines. Lines are the unit because a
- * line is what a person reads and ticks; rewriting part of one saves nothing
- * and makes the caret arithmetic harder. Blank paragraphs are lines too, and
- * since nothing asks for one, stray blanks are removed in passing.
+ * The fewest whole-line changes that turn `cur` into `want`, by longest common
+ * subsequence. Blank paragraphs (null) are lines too; nothing asks for one, so
+ * stray blanks are removed in passing.
  */
 export function diffParas(cur: Array<Block | null>, want: Block[]): Hunk[] {
   const a = cur.map(keyOf);
@@ -123,11 +110,8 @@ export function diffParas(cur: Array<Block | null>, want: Block[]): Hunk[] {
 }
 
 /**
- * Take the freshest tick for every checklist line.
- *
- * The list being written was built from an earlier read. Somebody in a shop can
- * tick the eggs between that read and this write, and every tick in a built
- * document came from the note in the first place, so the newer read wins.
+ * Take the freshest tick for every checklist line. The document being written
+ * was built from an earlier read, and somebody may have ticked a line since.
  */
 export function carryTicks(want: Block[], fresh: Block[]): Block[] {
   const ticks = ticksIn(fresh);
@@ -163,13 +147,10 @@ const key = (cdp: Page, name: string, code: string, vk: number, modifiers = 0) =
   press(cdp, name, code, vk, { modifiers });
 
 /**
- * Put the caret at the start of paragraph `i`.
- *
- * Cmd+Up is the top of the note, and Ctrl+E then Right is "the start of the
- * next paragraph". Ctrl+E is used rather than the down arrow because it goes to
- * the end of the PARAGRAPH: a long line wraps, and the arrow moves one wrapped
- * row at a time. Paragraph `n` of an `n` paragraph note is the empty spot after
- * the last line break, which is where an append goes.
+ * Put the caret at the start of paragraph `i`: Cmd+Up to the top, then Ctrl+E
+ * (end of paragraph, even across wrapped rows, unlike the down arrow) and Right
+ * per paragraph. Paragraph `n` of an `n`-paragraph note is the append point
+ * after the last line break.
  */
 async function caretTo(cdp: Page, i: number): Promise<void> {
   await key(cdp, "ArrowUp", "ArrowUp", 38, 4);
@@ -182,13 +163,9 @@ async function caretTo(cdp: Page, i: number): Promise<void> {
 const graphemes = (s: string): number => [...new Intl.Segmenter().segment(s)].length;
 
 /**
- * Apply one hunk, checking the selection before replacing it.
- *
- * The copy is the whole point. There is no way to look at a canvas selection,
- * and a selection one character off in either direction takes a letter of the
- * next line with it — which a person reads as their list quietly getting
- * corrupted. Copying it back and comparing text is the only way to know what
- * is about to be pasted over.
+ * Apply one hunk. The selection to be replaced is copied back and compared
+ * first, since a canvas selection cannot be inspected and one character off
+ * would take a letter of the next line with it.
  */
 async function applyHunk(cdp: Page, cur: Para[], h: Hunk): Promise<string | null> {
   await caretTo(cdp, h.at);
@@ -234,13 +211,11 @@ async function applyHunk(cdp: Page, cur: Para[], h: Hunk): Promise<string | null
  * ------------------------------------------------------------------ */
 
 /**
- * Start noting every save the page makes. Returns the page's clock.
+ * Record every `/records/modify` save the page makes; returns the page clock.
  *
- * Reading the note back straight after an edit only proves the editor shows it.
- * The save goes out about six seconds later, and it is at save time that iCloud
- * notices another replica wrote first, answers CONFLICT, and merges — which is
- * the other way a note ends up with two copies of itself. A read taken before
- * that merge cannot see it, so the check waits for the save.
+ * A read straight after an edit only proves the editor shows it. The save goes
+ * out seconds later, and that is when iCloud detects another replica's write,
+ * answers CONFLICT and merges, so verification waits for the save.
  */
 const WATCH_SAVES = `
   const f = document.querySelector('iframe');
@@ -271,7 +246,7 @@ const SAVES_SINCE = `
 
 type Save = { started: number; status: number; conflict: boolean };
 
-/** Wait for a save that began after `since` to be accepted. Conflicts are merged and retried by the page. */
+/** Wait for a save begun after `since` to be accepted. The page merges and retries conflicts. */
 async function waitForSave(
   cdp: Page,
   since: number,
@@ -299,12 +274,10 @@ export type PatchResult =
 /**
  * Make the note say `want`, touching only the lines that differ.
  *
- * Each attempt reads the note fresh, so a second attempt starts from whatever
- * the first one — or a concurrent save merge — actually left. Hunks go in from
- * the bottom up so an edit never moves the lines above it.
- *
- * `walkable: false` on a failure means the note could not be steered through at
- * all, and a whole-body rewrite is the only way left to make it current.
+ * Each attempt reads the note fresh, so a retry starts from whatever the last
+ * attempt or a save merge left. Hunks apply bottom-up so an edit never moves
+ * the lines above it. `walkable: false` means the caret cannot be steered
+ * through this note and only a whole-body rewrite can make it current.
  */
 export async function patchBody(cdp: Page, want: Block[], attempts = 3): Promise<PatchResult> {
   let why = "the note never came back saying what was written to it";
@@ -333,7 +306,7 @@ export async function patchBody(cdp: Page, want: Block[], attempts = 3): Promise
       const failed = await applyHunk(cdp, cur, h);
       if (failed) return { ok: false, why: failed, walkable: false };
     }
-    // Only a save that STARTED after the last keystroke carries all of them.
+    // Only a save started after the last keystroke carries every edit.
     const since = await evaluate<number>(cdp, "return Date.now();");
     const saved = hunks.length ? await waitForSave(cdp, since) : { saved: true, conflicts: 0 };
 
@@ -351,13 +324,9 @@ export async function patchBody(cdp: Page, want: Block[], attempts = 3): Promise
 }
 
 /**
- * Write a note the careful way, falling back to a whole-body write only when
- * the careful way cannot be taken.
- *
- * An empty note has nothing to delete, so there is nothing a whole-body paste
- * could leave behind, and it goes straight to that. Otherwise the fallback is
- * only for a note the caret cannot be steered through, and the result says so,
- * because a fallback that happens every time is the old bug back.
+ * Write a note line by line, falling back to a whole-body write only for an
+ * empty note (nothing to delete) or one the caret cannot walk. The result says
+ * which happened, so a fallback that fires every time is visible in the log.
  */
 export async function writeNote(
   cdp: Page,

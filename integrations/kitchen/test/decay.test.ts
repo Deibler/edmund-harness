@@ -1,7 +1,7 @@
 /**
- * The leftover sweep must be reversible. That is the entire licence for guessing.
+ * The leftover sweep: what it retires, and that one undo restores it all.
  *
- * Runs against a throwaway KITCHEN_DIR so it never touches a real household.
+ * Runs against a scratch KITCHEN_DIR.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -28,7 +28,7 @@ const iso = (msAgo: number) =>
 
 import { check } from "./harness.ts";
 
-// Six days of leftovers, an onion on the counter, and a jar of paprika.
+// Old leftovers, onions on the counter, paprika, raw meat past its date, frozen peas.
 append("t", [
   {
     op: "add",
@@ -93,7 +93,7 @@ const last = lastSweep("t");
 check("the sweep is offered for undo", last?.batch === swept.batch);
 check("undo lists what it took", (last?.items.length ?? 0) === stale.length);
 
-// The whole point: one retraction puts everything back exactly as it was.
+// One retraction puts everything back exactly as it was.
 append("t", [{ op: "undo", batch_target: swept.batch!, why: "still here" }]);
 check("stock is restored", live("t").length === before);
 check(
@@ -102,6 +102,5 @@ check(
 );
 check("a retracted sweep is not offered again", lastSweep("t") === null);
 
-// And the guess must not be re-made on the next pass, or the undo is pointless:
-// the items are still old, so the sweep has to see them as freshly touched.
+// The next pass must not re-remove what was just rescued, although it is still old.
 check("re-sweeping does not immediately re-remove", staleItems("t").length === 0);

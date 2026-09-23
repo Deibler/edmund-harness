@@ -1,22 +1,10 @@
 /**
- * The grocery list you can actually add something TO.
+ * The written shopping list: lines somebody (or the model) added on purpose.
  *
- * Until now the list was purely derived: anything the ledger believed had run
- * out, plus whatever stood between the kitchen and a nearly-cookable dish. That
- * is a good list and it is not a complete one, because it can only ever contain
- * things the house used to have. "I want to make the chicken parm on Thursday
- * and we have never owned breadcrumbs" is invisible to a derived list, and it
- * is the single most common reason a person opens a shopping list at all.
- *
- * So there is a written layer on top. It is kept OUT of the event log on
- * purpose. The log is a record of what happened to food; wanting to buy
- * something is not something that happened, and folding intent into the same
- * stream would mean an unbought item either lingers in inventory as a lie or
- * needs a second retraction event to cancel a plan that was never real.
- *
- * The list is also allowed to be wrong for a while. Nothing here consumes or
- * produces stock. Buying is still recorded by a receipt, which is the only
- * thing that knows what was actually paid.
+ * The derived list can only contain things the house used to have; this layer
+ * holds everything else ("breadcrumbs for Thursday's chicken parm"). It lives
+ * outside the event log because wanting to buy something is not something that
+ * happened to food. Nothing here changes stock; a receipt does that.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -54,8 +42,7 @@ export function readList(account: string): List {
     const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<List>;
     return { version: 1, entries: Array.isArray(raw.entries) ? raw.entries : [] };
   } catch {
-    // A corrupt list costs the written lines, not the derived ones. Same call as
-    // everywhere else in this integration: degrade to less, never to nothing.
+    // A corrupt file loses the written lines only; the derived list still works.
     return { version: 1, entries: [] };
   }
 }
@@ -67,14 +54,8 @@ function writeList(account: string, l: List): void {
 }
 
 /**
- * Add lines, merging rather than duplicating.
- *
- * Two dishes both wanting heavy cream is one carton and two reasons, not two
- * lines. Merging on the key and appending the reason is what keeps the list
- * short enough to shop from, which is the only quality it has to have.
- *
- * Returns the entries that were genuinely new, so a caller can say what it did
- * without re-reading the file.
+ * Add lines, merging on the key: two dishes wanting cream is one line with two
+ * reasons. Returns the new entries and the names that were merged.
  */
 export function addToList(
   account: string,
@@ -91,8 +72,7 @@ export function addToList(
     const existing = byKey.get(key);
     if (existing) {
       const why = [existing.why, raw.why].filter(Boolean).join("; ");
-      // Only widen. A second dish asking for the same thing should never shrink
-      // an amount somebody already wrote down.
+      // Only widen: never overwrite an amount already written down.
       existing.why = why || null;
       if (!existing.amount && raw.amount) existing.amount = raw.amount;
       merged.push(existing.name);
@@ -118,13 +98,8 @@ export function addToList(
 }
 
 /**
- * Change how much of something to buy.
- *
- * Its own function rather than a flag on `addToList`, because that one only
- * ever widens: a second dish asking for cream must not shrink an amount
- * somebody wrote down. This is the opposite intent — a person correcting the
- * line — and it has to be able to overwrite. Returns false when the line is not
- * written down, which is the caller's cue to write it first.
+ * Overwrite how much of a written line to buy: a person's correction, unlike
+ * `addToList`, which never changes an existing amount. False when no such line.
  */
 export function setAmount(account: string, key: string, amount: string | null): boolean {
   const l = readList(account);
@@ -142,8 +117,4 @@ export function removeFromList(account: string, keys: string[]): number {
   l.entries = l.entries.filter((e) => !drop.has(e.key) && !drop.has(e.item ?? ""));
   writeList(account, l);
   return before - l.entries.length;
-}
-
-export function clearList(account: string): void {
-  writeList(account, { version: 1, entries: [] });
 }

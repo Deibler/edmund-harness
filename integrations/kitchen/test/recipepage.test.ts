@@ -1,16 +1,9 @@
 /**
- * The recipe page is the thing somebody is holding while they cook, and it is
- * the only part of this system whose bugs are invisible to every other test:
- * the ledger can be perfect and the page still unreadable.
+ * The recipe page layout contract.
  *
- * Both defects reported so far were the same shape. Three items sized to their
- * own content on one row, so a wordy amount ate the width, the ingredient name
- * collapsed to one word per line, and the stock badge printed on top of it —
- * once in the per-step lists, then again in the overview list. So what is
- * asserted here is the layout CONTRACT rather than any particular pixel: every
- * ingredient row is the same shape, the amount has its own line, and nothing
- * competes with the name for width. A future change that reintroduces a row
- * whose layout depends on how long its text happens to be fails here.
+ * Every ingredient row has the same shape, the amount has its own line, and nothing
+ * competes with the name for width. A row whose layout depends on its text length
+ * would fail here.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -83,11 +76,8 @@ const html = renderRecipePage(recipe, {
 
 /* ── one row shape ───────────────────────────────────────────────────────── */
 
-// The first fix stacked only the rows whose amount ran past 16 characters,
-// which left the list alternating between two layouts and turned on a number
-// somebody would have to re-tune the first time an amount got wordier. Every
-// row carrying the same class is what makes that impossible to reintroduce
-// without this failing.
+// Every row carries the same class; stacking only long amounts would alternate
+// layouts and depend on a tuned threshold.
 section("ingredient rows");
 
 const rowClasses = [...html.matchAll(/<div class="(ing[^"]*)"/g)].map((m) => m[1] ?? "");
@@ -125,8 +115,7 @@ check(
   /\.ing \.st\{[^}]*grid-column:2/.test(ingCss) && /\.ing \.st\{[^}]*justify-self:end/.test(ingCss),
 );
 
-// A variant link is a name and a reason, no amount and no stock. It shared the
-// class and would have inherited the ingredient grid.
+// A variant link has no amount or stock and must not inherit the ingredient grid.
 check(
   "variant links do not reuse the ingredient row",
   html.includes(".vrow{") && !/<a class="ing"/.test(html),
@@ -138,8 +127,7 @@ section("stock honesty");
 
 check("a tracked ingredient in the house reads have", html.includes(">have<"));
 check("a tracked ingredient that is gone reads out", html.includes(">out<"));
-// Salt is not tracked and never will be. Flagging it would train people to
-// ignore the colour on the lines that matter, so it gets no badge.
+// Untracked staples like salt get no badge, so the colour keeps its meaning.
 check(
   "only the tracked lines get a badge, so the colour keeps its meaning",
   (html.match(/class="st"/g) ?? []).length === 2,
@@ -149,13 +137,8 @@ check("the amount is rendered, not dropped", html.includes("the whole package, a
 
 /* ── a written slug that is really a display name ────────────────────────── */
 
-// The failure this pins, from 2026-08-17: a recipe was saved with `item` and
-// `needs` carrying display names ("Boneless skinless chicken thighs") instead of
-// ledger slugs. Every lookup missed, and a miss is indistinguishable from an
-// item the house has run out of, so the page rendered EVERY line "out" over a
-// full fridge and told two people to go shopping. The old back-fill could not
-// help, because it only repaired lines whose slug was absent and these had one
-// that was merely wrong.
+// A recipe saved with display names where ledger slugs belong must still resolve. A
+// lookup miss reads as "out", so every line showed out over a full fridge.
 
 section("display names resolve to slugs");
 
@@ -170,9 +153,8 @@ const named = {
     { name: "Butter", amount: "2 tablespoons", item: "Butter" },
     { name: "Salt", amount: "to taste", item: "Salt" },
   ],
-  // Its own steps, naming its own ingredients. Reusing the fixture's steps
-  // would leave `uses` pointing at names this recipe does not have, and the
-  // badge counts below would then be measuring the mismatch instead of the fix.
+  // Its own steps, naming its own ingredients, so the badge counts below measure the
+  // fix rather than a fixture mismatch.
   steps: [
     {
       n: 1,
@@ -194,19 +176,18 @@ const namedHtml = renderRecipePage(named, {
 });
 
 check("a display name in `item` still finds the item on the shelf", namedHtml.includes(">have<"));
-// The count that matters. Badges also render inside the per-step lists, so the
-// number of "have" labels tracks how many steps mention a tracked ingredient,
-// which is not what is being tested here. Zero "out" over a full fridge is.
+// Badges also render in per-step lists, so the assertion is zero "out" over a full
+// fridge rather than a count of "have".
 check("and nothing in a full fridge is reported out", !namedHtml.includes(">out<"));
-// Salt resolves nowhere. It must fall back to untracked rather than staying
-// pointed at a dead key, which is what printed "out" on every staple.
+// An unresolvable line falls back to untracked, not to a dead key that reads as
+// "out".
 check(
   "a slug that resolves nowhere is untracked, not missing",
   (namedHtml.match(/class="st"/g) ?? []).length === 2,
 );
 
-// The repair must not be able to invent stock. A dish needing something the
-// ledger has never heard of is a real shortfall and has to keep saying so.
+// The repair must not invent stock: an ingredient the ledger has never seen is still
+// a shortfall.
 const absent = renderRecipePage(
   {
     ...named,

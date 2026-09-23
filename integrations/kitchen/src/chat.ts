@@ -1,19 +1,10 @@
 /**
- * The conversation that happens ON the site.
+ * The chat on the household site.
  *
- * Asking "can I swap the cream for milk" while looking at a recipe should not
- * require switching to Messages, retyping which recipe, and waiting. So the
- * page carries a thread, and the thread is per PERSON rather than per
- * household: two people sharing a kitchen do not share a train of thought, and
- * a reply meant for Alex appearing under Sam's profile would be worse than
- * having no chat at all.
- *
- * Every message records the page it was sent from. That context is the whole
- * reason an on-page chat beats a text message — "how do I cut this" means
- * something specific when the answer knows you were looking at the onion.
- *
- * Storage is one JSONL per person, append-only, because a conversation IS a
- * log: it only ever grows, and order is the meaning.
+ * One thread per person, not per household: two people sharing a kitchen do
+ * not share a conversation. Each message records the page and subject it was
+ * sent from, which is what gives a question like "how do I cut this" its
+ * meaning. Stored as one append-only JSONL per person.
  */
 
 import {
@@ -42,10 +33,8 @@ export type ChatTurn = {
   id?: string | null;
 };
 
+/** A principal as a filename. The whole string is kept, so distinct principals never collide. */
 function safe(principal: string): string {
-  // A principal is "imessage:dm:+1717...". Anything that is not obviously safe
-  // in a filename becomes an underscore; collisions across principals are not
-  // possible because the whole string is encoded, not truncated.
   return principal.replace(/[^A-Za-z0-9+.-]/g, "_");
 }
 
@@ -62,7 +51,7 @@ export function readThread(account: string, principal: string, limit = 60): Chat
     try {
       out.push(JSON.parse(line) as ChatTurn);
     } catch {
-      // A torn line costs that line. Same call as the ledger reader.
+      // A torn line costs that line, as in the ledger reader.
     }
   }
   return out.slice(-limit);
@@ -81,17 +70,13 @@ export function appendTurn(
 }
 
 /**
- * Publish each person's thread next to the page so the browser can read it.
+ * Publish each member's thread next to the page, which polls it.
  *
- * The page is static behind a share token and cannot call anything, so a reply
- * reaches it exactly one way: as a file it polls. `chat/` deliberately does NOT
- * start with an underscore, because the share server refuses to GET those — the
- * underscore prefix is what keeps the inbound callback log write-only, and this
- * is the outbound half.
- *
- * Each thread is only readable by someone who already holds the share key, which
- * is the same trust boundary as the rest of the site: everyone with the link can
- * see the household's food, and these are members of that household.
+ * The page is static behind a share token, so a file is the only way a reply
+ * reaches it. `chat/` must not start with an underscore: the share server
+ * refuses to serve those, which is what keeps the inbound callback log
+ * write-only. Readers need the share key, the same boundary as the rest of the
+ * site.
  */
 export function publishThreads(account: string, principals: string[], outDir: string): number {
   const dir = join(outDir, "chat");
@@ -103,14 +88,9 @@ export function publishThreads(account: string, principals: string[], outDir: st
     writeFileSync(join(dir, `${safe(p)}.json`), JSON.stringify({ turns }));
     n += 1;
   }
-  // Prune anything that is not a current member's thread.
-  //
-  // Publishing without pruning is a data leak waiting to happen: rendering a
-  // DIFFERENT household into this directory once left that household's thread
-  // sitting here, readable by anyone holding this site's share key. A member
-  // who leaves would leave their conversation behind the same way. The output
-  // directory belongs to exactly one account, so anything else in here is
-  // wrong by definition.
+  // Remove any thread that is not a current member's. The directory belongs to
+  // one household, and a stale file (another household's render, a member who
+  // left) would be readable by anyone holding this site's key.
   for (const f of readdirSync(dir)) {
     if (f.endsWith(".json") && !mine.has(f)) rmSync(join(dir, f), { force: true });
   }
@@ -126,9 +106,8 @@ export function openQuestions(
   for (const p of principals) {
     const t = readThread(account, p, 20);
     const last = t[t.length - 1];
-    // Unanswered means the last word was theirs. Anything else is a finished
-    // exchange, and re-answering a finished exchange is how a chat starts
-    // talking to itself.
+    // Unanswered means the last word was theirs; re-answering a finished
+    // exchange would make the chat talk to itself.
     if (last && last.from === "them") out.push({ principal: p, turn: last });
   }
   return out;

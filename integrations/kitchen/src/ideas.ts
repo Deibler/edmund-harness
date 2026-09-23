@@ -20,7 +20,7 @@ import { live } from "./store.ts";
 import type { Account, Item } from "./types.ts";
 
 export const IDEAS_TARGET = 10;
-/** An unmade idea is not worth keeping forever; the kitchen has moved on. */
+/** Days an unmade idea stays on the site. */
 export const IDEA_MAX_AGE_DAYS = 21;
 
 export type Idea = Recipe & { created?: string; origin?: string };
@@ -44,11 +44,8 @@ export function writeOverlay(account: string, o: Overlay): void {
 }
 
 /**
- * Drop the ideas the kitchen has moved past, and say how many are wanted.
- *
- * An idea built on food that is gone is dropped, because a card that reads as
- * cookable and is not is the single most obvious way the site goes stale. An
- * idea nobody made in three weeks is dropped too: the household has voted.
+ * Drop ideas built on food that is gone, or unmade for `IDEA_MAX_AGE_DAYS`, and
+ * say how many more the page could use.
  */
 export function pruneIdeas(
   account: string,
@@ -75,9 +72,8 @@ export function pruneIdeas(
 }
 
 /**
- * Pantry basics a recipe may name without the ledger tracking them. Nobody logs
- * salt, and rejecting a dish for seasoning it would push recipes to leave the
- * seasoning out.
+ * Pantry basics a recipe may name without the ledger tracking them, so dishes
+ * are not rejected for being seasoned.
  */
 export const BASICS = new Set([
   "salt",
@@ -167,12 +163,8 @@ export function ideasBrief(account: string, acct: Account, want: number): string
 }
 
 /**
- * Validate and append ideas I have written.
- *
- * Rejection is per dish and says why, so a bad slug costs one card and not the
- * batch. A dish whose id is already on the overlay replaces it rather than
- * doubling; one that shadows the shared catalog is refused, because the point
- * of this layer is dishes the catalog does not have.
+ * Validate and append written ideas. Rejection is per dish with a reason. An id
+ * already on the overlay is replaced; one in the shared catalog is refused.
  */
 export function saveIdeas(
   account: string,

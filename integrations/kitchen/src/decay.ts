@@ -1,18 +1,13 @@
 /**
  * Retiring leftovers nobody logged eating.
  *
- * Leftovers are the fastest-moving food in any kitchen and the one the ledger
- * is least likely to hear about: nobody logs a reheat. A container untouched
- * for four days has been eaten or thrown out, so the daily pass retires it
- * without asking.
- *
- * Everything else is judged with evidence (`evidence.ts`), reviewed by the
- * model and confirmed in a follow-up (`followups.ts`), because a clock alone
- * is wrong too often: onions outlive their "use by" by weeks and raw chicken is
- * usually frozen, not rotting.
+ * Nobody logs a reheat, so a leftover container untouched for four days is
+ * assumed eaten or thrown out and the daily pass retires it without asking.
+ * Everything else is judged from evidence (`evidence.ts`) and confirmed in a
+ * follow-up (`followups.ts`); a clock alone is wrong too often for that.
  *
  * Each sweep is one batch, so one undo restores everything it took, and an
- * item somebody rescues is left alone for two weeks.
+ * item somebody rescues is exempt for two weeks.
  */
 
 import { append, live, readLog } from "./store.ts";
@@ -38,12 +33,7 @@ function lastTouched(item: Item): number {
   return new Date(item.updated || item.added).getTime();
 }
 
-/**
- * Items a person has explicitly rescued from an automatic cleanup, and when.
- *
- * Found by walking undos back to the auto-cleanup batches they retract, which
- * is the only record that the guess was overruled.
- */
+/** Items a person rescued from an automatic cleanup (an undo of its batch), and when. */
 function vindicated(evs: KitchenEvent[]): Map<string, number> {
   const sweptIn = new Map<string, string[]>();
   for (const e of evs) {
@@ -88,21 +78,15 @@ export type Sweep = {
 };
 
 /**
- * Retire everything that has clearly gone, in one retractable batch.
- *
- * Logged as `use` with src `auto-cleanup`, never `cooked`: this food was not
- * eaten as a meal, and letting a guess flow into the recap would put invented
- * pounds of meat and phantom dinners into the one place that is supposed to be
- * a record of what actually happened.
+ * Retire every stale leftover in one retractable batch. Logged as `use` with
+ * src `auto-cleanup`, never `cooked`, so a guess never reaches the meal recap.
  */
-export function sweepStale(account: string, opts: { dryRun?: boolean; now?: number } = {}): Sweep {
+export function sweepStale(account: string, opts: { now?: number } = {}): Sweep {
   const now = opts.now ?? Date.now();
   const stale = staleItems(account, now);
   if (!stale.length) return { batch: null, removed: [] };
 
   const removed = stale.map((s) => ({ id: s.item.id, name: s.item.name, reason: s.reason }));
-  if (opts.dryRun) return { batch: null, removed };
-
   const batch = append(
     account,
     stale.map((s) => ({
@@ -119,11 +103,9 @@ export function sweepStale(account: string, opts: { dryRun?: boolean; now?: numb
 }
 
 /**
- * The most recent automatic cleanup, for the "that was wrong, put it back" path.
- *
- * Only the last one is offered. An undo button for a sweep from three weeks ago
- * would restore food that is now certainly not there, which is the same error
- * in the other direction.
+ * The most recent automatic cleanup, for the site's "put it back" button. Only
+ * the last one is offered: undoing an old sweep would restore food that is
+ * certainly gone by now.
  */
 export function lastSweep(
   account: string,
@@ -140,8 +122,7 @@ export function lastSweep(
     }
   }
   if (!batch) return null;
-  // A sweep that has already been undone must not be offered again, or the
-  // button restores nothing and looks broken.
+  // An undone sweep is not offered again; the button would restore nothing.
   const undone = evs.some((e) => e.op === "undo" && e.batch_target === batch);
   if (undone) return null;
   return {
