@@ -9,7 +9,7 @@ import type { ToolDef } from "../../../src/mcp/tools/types.ts";
 import { getAccount, updateAccount } from "../src/accounts.ts";
 import { STORES, bestBasket, bestDeals, importPrices, loadPrices } from "../src/deals.ts";
 import { addToList } from "../src/list.ts";
-import { WAIT_MS, syncNote } from "../src/notesync.ts";
+import { markNoteWritten, noteBehind, noteLines, noteText, noteTitle } from "../src/notelist.ts";
 import { markHandled } from "../src/requests.ts";
 import { setDisposition, skip } from "../src/restock.ts";
 import { priceMaxAgeDays } from "../src/settings.ts";
@@ -31,8 +31,9 @@ export function shoppingTools(ctx: ToolContext): ToolDef[] {
         "answering the second one as if it were the first is what fills a list with noise. " +
         "Set `answer` to record a decision, `add` to put lines on the list yourself " +
         "(what a dish needs from a supermarket is your call, after kitchen_status: real " +
-        "products, nothing the house already owns, staples assumed), or `notes` to push " +
-        "the list into Apple Notes.",
+        "products, nothing the house already owns, staples assumed). The household's shared " +
+        "Apple Note is not written by any tool: bring it up to date on screen in Notes with " +
+        "the computer tools, then set `noteWritten`.",
       inputSchema: z.object({
         account: Acct,
         add: z
@@ -78,31 +79,24 @@ export function shoppingTools(ctx: ToolContext): ToolDef[] {
               ),
           })
           .optional(),
-        notes: z.boolean().optional().describe("Push the current list into Apple Notes."),
-        share: z
+        noteWritten: z
           .boolean()
           .optional()
           .describe(
-            "Invite everyone in the household to the note so it is one shared list on all " +
-              "their phones. Writes the note first if it does not exist yet, then invites only " +
-              "the people not already on it, so this is safe to call repeatedly.",
-          ),
-        shareWith: z
-          .array(z.string())
-          .optional()
-          .describe(
-            "Extra phone numbers or email addresses to invite, on top of the household. " +
-              "Each must be an Apple Account or the invite will not stick.",
+            "Set once you have made the household's Apple Note match the list on screen and " +
+              "checked it with a screenshot. Records the list as written, which is what stops " +
+              "the kitchen waking you to do it.",
           ),
         noteTitle: z
           .string()
           .optional()
           .describe(
             "Name the Apple Note the list lives in, or adopt one that already exists by " +
-              "title. Saved on the household; pass once.",
+              "title. Saved on the household; pass once. It is also how the screen tools know " +
+              "which note is this household's.",
           ),
       }),
-      handler: async ({ account, add, key, answer, notes, share, shareWith, noteTitle: wanted }) =>
+      handler: async ({ account, add, key, answer, noteWritten, noteTitle: wanted }) =>
         withAccount(ctx, account, async (id) => {
           const said: string[] = [];
           if (key && !isWaiting(id, "addlist", key))
@@ -145,9 +139,7 @@ export function shoppingTools(ctx: ToolContext): ToolDef[] {
           }
           if (wanted?.trim()) {
             updateAccount(id, { note_list: wanted.trim() });
-            said.push(
-              `The list will be written into the note called "${wanted.trim()}" from now on.`,
-            );
+            said.push(`This household's note is now the one called "${wanted.trim()}".`);
           }
           if (answer && target?.ok) {
             if (answer.as === "skip") skip(id, [target.id], tripCount(id));
@@ -162,30 +154,13 @@ export function shoppingTools(ctx: ToolContext): ToolDef[] {
               }.`,
             );
           }
-          // Writing and sharing happen in one note session, which reads the note
-          // first so ticks made in a shop survive the write.
-          if (notes || share) {
-            // Queue behind the background pass: two writers would mangle the note.
-            const r = await syncNote(id, { share, shareWith, wait: WAIT_MS });
-            if (!r.ok) {
-              said.push(`Apple Notes failed: ${r.error}`);
-            } else {
-              said.push(
-                `${
-                  (r.wrote
-                    ? `Apple Notes: wrote ${r.lines} line(s) to "${r.title}" as tappable checkboxes`
-                    : `Apple Notes: "${r.title}" was already current (${r.lines} line(s))`) +
-                  (r.ticked.length ? `. Already ticked off: ${r.ticked.join(", ")}` : "")
-                }.`,
-              );
-              if (r.adopted.length) {
-                said.push(`Picked up off the note and put on the list: ${r.adopted.join(", ")}.`);
-              }
-              if (r.invited.length) said.push(`Invited ${r.invited.join(", ")}.`);
-              if (share && !r.invited.length)
-                said.push("Everyone in the household was already on it.");
-              if (r.link) said.push(`The link is ${r.link}`);
-            }
+          if (noteWritten) {
+            markNoteWritten(id);
+            said.push(`Recorded: "${noteTitle(id)}" matches the list.`);
+          } else if (noteBehind(id)) {
+            said.push(
+              `The shared note "${noteTitle(id)}" is behind the list. Bring it up to date on screen (Notes, only the lines that differ, ticks left alone), then call again with noteWritten:true. Left alone, you are woken to do it once the list settles. Above the sentinel line it should read:\n${noteText(noteLines(id))}`,
+            );
           }
 
           const s = shopping(id);

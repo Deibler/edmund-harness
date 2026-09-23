@@ -4,8 +4,8 @@
  * For every household: fires due dinner texts, settles the site's taps that
  * need no judgement (`drain.ts`), re-renders only when something changed,
  * wakes the right member session for taps that need a person, and sends the
- * follow-up owed after a meal. Then it keeps at most one shared Apple Note in
- * step with its list.
+ * follow-up owed after a meal, and wakes the household's session to bring its
+ * shared Apple Note up to date on screen once the list has changed.
  *
  * Deterministic answers (a meal confirmed, a line ticked) are settled here
  * because routing them through a model would only make them slower.
@@ -15,12 +15,18 @@ import { existsSync } from "node:fs";
 import { getAccount, listAccounts } from "../src/accounts.ts";
 import { drain, needsPerson, publishQueue } from "../src/drain.ts";
 import { followupDue, markAsked, mayOffer, readFollowups } from "../src/followups.ts";
-import { syncDueNotes } from "../src/notesync.ts";
+import { canEditNotes, holdNote, noteDue, noteLines } from "../src/notelist.ts";
 import { describe, due, fire } from "../src/schedules.ts";
 import { loadKitchenSettings } from "../src/settings.ts";
 import { shopping } from "../src/shopping.ts";
 import { writeSite } from "../src/site.ts";
-import { wakeForFollowup, wakeForRequests } from "../src/wake.ts";
+import {
+  MAX_ATTEMPTS,
+  sessionFor,
+  wakeForFollowup,
+  wakeForNote,
+  wakeForRequests,
+} from "../src/wake.ts";
 
 const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 
@@ -46,7 +52,7 @@ function fireDue(id: string): void {
 }
 
 // The same `[kitchen]` settings the MCP tools use, so both read the same kitchen.
-loadKitchenSettings();
+const config = loadKitchenSettings();
 
 for (const { id } of listAccounts()) {
   try {
@@ -131,6 +137,35 @@ for (const { id } of listAccounts()) {
       }
     }
 
+    // The shared note has no writer but Edmund on screen. Once the list has
+    // changed and settled, the household's session is woken to bring the note
+    // up to date; a chat the screen policy gives no Notes is not woken, and
+    // that is logged once per list rather than every ten seconds.
+    if (acct) {
+      try {
+        const { due, signature } = noteDue(id);
+        const session = due ? sessionFor(acct) : null;
+        if (due && session && canEditNotes(config, session)) {
+          const w = wakeForNote(id, acct, signature, noteLines(id));
+          for (const x of w.woke)
+            console.log(
+              `${stamp()} ${id}: note is behind the list; woke ${x.session}, job ${x.job}`,
+            );
+          if (w.held.some((h) => h.why === "exhausted") && holdNote(id, signature))
+            console.log(
+              `${stamp()} ${id}: note still behind after ${MAX_ATTEMPTS} wakes; waiting for the list to change`,
+            );
+        } else if (due && holdNote(id, signature)) {
+          console.log(
+            `${stamp()} ${id}: note is behind the list, but ${session ? `${session} has no screen tools for Notes` : "the household has no session"}; not waking`,
+          );
+        }
+      } catch (e) {
+        trouble = [trouble, `note: ${(e as Error).message}`].filter(Boolean).join("; ");
+        console.error(`${stamp()} ${id}: FAILED note check ${(e as Error).message}`);
+      }
+    }
+
     // Written last: the queue's timestamp is the liveness signal, so a pass
     // that failed early must not write it.
     publishQueue(id, trouble);
@@ -138,23 +173,4 @@ for (const { id } of listAccounts()) {
     // One household's failure must not stop the others.
     console.error(`${stamp()} ${id}: FAILED ${(e as Error).message}`);
   }
-}
-
-/*
- * Keep the shared Apple Notes in step with the lists. This drives a browser, so
- * it runs after the household loop and handles at most one note per pass;
- * `syncDueNotes` decides with a pure fold whether any note needs opening.
- */
-try {
-  for (const r of await syncDueNotes()) {
-    if (!r.ok) {
-      console.error(`${stamp()} ${r.account}: FAILED note sync ${r.error}`);
-      continue;
-    }
-    console.log(
-      `${stamp()} ${r.account}: note "${r.title}" ${r.wrote ? "rewritten" : "already current"} (${r.lines} lines, via ${r.via}${r.how ? `, ${r.how}` : ""})${r.ticked.length ? `, ${r.ticked.length} ticked off` : ""}${r.adopted.length ? `, adopted ${r.adopted.join(", ")}` : ""}${r.invited.length ? `, invited ${r.invited.join(", ")}` : ""}`,
-    );
-  }
-} catch (e) {
-  console.error(`${stamp()} FAILED note sync ${(e as Error).message}`);
 }

@@ -39,7 +39,7 @@ export const KINDS = [
   "idearecipe", // write an explore dish out as a real recipe page
   "sched", // create, pause or delete a standing dinner text
   "keep", // whether running out of something means buying it again
-  "notes", // push the current list into Apple Notes
+  "notes", // ask Edmund to bring the Apple Note up to date
 ] as const;
 export type Kind = (typeof KINDS)[number];
 

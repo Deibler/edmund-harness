@@ -188,16 +188,12 @@ export type Account = {
    * a group, where a working turn would reach every phone.
    */
   wake?: string | null;
-  /** Title of the Apple Note the list is written into; set it to adopt an existing note. */
-  note_list?: string | null;
   /**
-   * The note's icloud.com address, learned on first open. Later runs navigate
-   * straight to it; finding a note by title drives a virtualised list whose
-   * recycled rows can select the wrong note.
+   * Title of the household's shared Apple Note; set it to adopt an existing
+   * note. Edmund edits that note on screen, and the screen tools use the
+   * title to tell this household's list from another's.
    */
-  note_url?: string | null;
-  /** The share link sent to people. */
-  note_link?: string | null;
+  note_list?: string | null;
   /** Where the kitchen is, for the weather. No default: absent means no weather. */
   place?: { lat: number; lon: number; label?: string | null } | null;
   /**

@@ -46,14 +46,18 @@ export function applyKitchenConfig(config: Config): void {
 }
 
 /**
- * Load and apply the harness config (the launchd scripts' path). Best-effort:
- * every setting has a working default, and the scripts must keep running from
- * a checkout with no config.
+ * Load and apply the harness config (the launchd scripts' path), returning it
+ * for the parts of a script that read core settings. Best-effort: every
+ * setting has a working default, and the scripts must keep running from a
+ * checkout with no config (null then).
  */
-export function loadKitchenSettings(path = "./config.toml"): void {
+export function loadKitchenSettings(path = "./config.toml"): Config | null {
   try {
-    applyKitchenConfig(loadConfig(path));
+    const config = loadConfig(path);
+    applyKitchenConfig(config);
+    return config;
   } catch {
     // Defaults stand.
+    return null;
   }
 }

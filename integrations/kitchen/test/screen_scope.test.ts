@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { ConfigSchema } from "../../../src/config/config.ts";
 import { screenScope } from "../screen-scope.ts";
 import { createAccount } from "../src/accounts.ts";
-import { noteTitle } from "../src/notedoc.ts";
+import { noteTitle } from "../src/notelist.ts";
 
 const ALEX = "imessage:dm:+15550100001";
 const SAM = "imessage:dm:+15550100002";

@@ -57,7 +57,7 @@ global `[integrations]` switch.
 
 | Package | What it adds | Needs | Notes |
 |---|---|---|---|
-| `kitchen` | Per household inventory, meal plans that refuse missing ingredients, grocery deals, a site per household, iCloud Notes sharing. | Ledger files, OpenRouter for presentation media only, Chrome for the Notes bridge | Food judgement runs in the household's main session, never a kitchen sub-agent |
+| `kitchen` | Per household inventory, meal plans that refuse missing ingredients, grocery deals, a site per household, a shared Apple Note per household that Edmund keeps up to date on screen. | Ledger files, OpenRouter for presentation media only, `[computer_use]` with Notes for the shared note | Food judgement runs in the household's main session, never a kitchen sub-agent |
 | `mirror` | A voice and display channel on a Raspberry Pi smart mirror: wake word, speech to text, spoken replies, typed on-glass components. | The Pi bridge, a local speech sidecar | The only channel integration; its own session namespace |
 | `trading` | An autonomous trading sub-persona with risk limits enforced in code, price triggers, a journal and a kill switch. | The broker's MCP endpoint and an account | Real money. Off by default. Own session namespace and own dashboard |
 | `radaromega` | Drives a radar application over the Chrome DevTools Protocol. Contributes a freshness watchdog and two skills; the tools come from a vendored MCP server. | The application, a vendored server that is not in this repository | Tied to a paid desktop app |

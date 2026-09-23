@@ -18,7 +18,7 @@ import { getRecipe, loadCookbook } from "./cookbook.ts";
 import { readExplore } from "./explore.ts";
 import { addToList, removeFromList, setAmount } from "./list.ts";
 import { VIBES, refreshWeather } from "./mood.ts";
-import { WAIT_MS, syncNote } from "./notesync.ts";
+import { requestNoteUpdate } from "./notelist.ts";
 import { confirmPlan, cookedRecently, planFor, useLines } from "./plans.ts";
 import { addNote, skipPair, toggleFavorite, unskipPair } from "./profile.ts";
 import { METHOD_LABEL, loadRecipes } from "./recipes.ts";
@@ -180,10 +180,11 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     }
 
     case "notes": {
-      // A person is waiting, so queue behind any sync in flight.
-      const res = await syncNote(account, { wait: WAIT_MS });
-      if (!res.ok) return `apple notes: ${res.error}`;
-      return `apple notes: ${res.wrote ? "wrote" : "confirmed"} ${res.lines} line${res.lines === 1 ? "" : "s"} in "${res.title}" via ${res.via}${res.adopted.length ? `, took ${res.adopted.join(", ")} off the note` : ""}${res.invited.length ? `, invited ${res.invited.join(", ")}` : ""}`;
+      // Nothing writes the note but Edmund on screen, so a tap asks for him:
+      // the next watch pass wakes the household's session without waiting
+      // for the list to settle.
+      requestNoteUpdate(account);
+      return "apple notes: asked Edmund to bring the note up to date";
     }
 
     case "shopped": {
