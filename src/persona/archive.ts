@@ -283,3 +283,26 @@ export function sweepPersonArchives(
 export function sweepGroupArchives(baseDir = GROUPS_DIR): { files: number; moved: number } {
   return sweepPersonArchives(baseDir, GROUP_ARCHIVABLE_SECTIONS);
 }
+
+/**
+ * The boot sweep: person files, group files and SOUL.md. One entry point so
+ * the daemon cannot run two of the three again. It ran people and groups
+ * only, archiveSelfFile had no caller outside its tests, and SOUL.md went
+ * from 31 KB to 43 KB of every system prompt in the month after the gate for
+ * it was written.
+ */
+export function sweepAllArchives(
+  dirs: { people: string; groups: string; persona: string } = {
+    people: PEOPLE_DIR,
+    groups: GROUPS_DIR,
+    persona: PERSONA_DIR,
+  },
+): { files: number; moved: number } {
+  const people = sweepPersonArchives(dirs.people);
+  const groups = sweepGroupArchives(dirs.groups);
+  const self = archiveSelfFile("SOUL.md", dirs.persona);
+  return {
+    files: people.files + groups.files + (self ? 1 : 0),
+    moved: people.moved + groups.moved + (self?.moved ?? 0),
+  };
+}

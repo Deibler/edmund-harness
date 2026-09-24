@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { PERSONA_DIR } from "../claude/persona.ts";
 import { atomicWriteFileSync } from "../util/atomic-write.ts";
 import { easternDate } from "../util/clock.ts";
+import { archiveSelfFile } from "./archive.ts";
 
 /**
  * Self-memory file mutations. Mirrors `write-note.ts` (which targets
@@ -33,8 +34,6 @@ const SECTION_HEADINGS: Record<SelfSection, string> = {
   other: "### Other durable context",
 };
 
-const SOUL_PATH = join(PERSONA_DIR, "SOUL.md");
-
 /**
  * Longest self-note accepted.
  *
@@ -61,11 +60,21 @@ function stripLeadingDate(note: string): string {
  * Append a dated bullet under one of the five evolving-character sections
  * in SOUL.md. Creates the section if it's missing. Idempotent: if a bullet
  * with the same trimmed note text already exists under that section, no-op.
+ *
+ * Every append is followed by the size gate. SOUL.md grew from 31 KB back to
+ * 43 KB in the month after 2026-08-28 because the archiver was written and
+ * tested then but never called: nothing ran it after a note landed.
+ * Archiving in the same call also means one note is one persona edit, not
+ * two.
  */
-export function appendSelfNote(params: { section: SelfSection; note: string }): {
+export function appendSelfNote(
+  params: { section: SelfSection; note: string },
+  dir = PERSONA_DIR,
+): {
   path: string;
   appended: boolean;
 } {
+  const soulPath = join(dir, "SOUL.md");
   const heading = SECTION_HEADINGS[params.section];
   const trimmed = stripLeadingDate(params.note.trim());
   if (!trimmed) throw new Error("note must not be empty");
@@ -83,16 +92,17 @@ export function appendSelfNote(params: { section: SelfSection; note: string }): 
   const today = easternDate();
   const entry = `- **${today}** — ${trimmed}`;
 
-  const current = existsSync(SOUL_PATH) ? readFileSync(SOUL_PATH, "utf8") : "";
+  const current = existsSync(soulPath) ? readFileSync(soulPath, "utf8") : "";
   // Idempotency: if the same body text already appears under this heading,
   // skip. Lets the model retry / restate without producing duplicates.
   if (sectionContains(current, heading, trimmed)) {
-    return { path: SOUL_PATH, appended: false };
+    return { path: soulPath, appended: false };
   }
 
   const next = insertUnderHeading(current, heading, entry);
-  atomicWriteFileSync(SOUL_PATH, next);
-  return { path: SOUL_PATH, appended: true };
+  atomicWriteFileSync(soulPath, next);
+  archiveSelfFile("SOUL.md", dir);
+  return { path: soulPath, appended: true };
 }
 
 export function readSelfFile(file: SelfFile): string {

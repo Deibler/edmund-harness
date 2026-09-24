@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { archiveSelfFile } from "../src/persona/archive.ts";
+import { archiveSelfFile, sweepAllArchives } from "../src/persona/archive.ts";
+import { appendSelfNote } from "../src/persona/self-memory.ts";
 
 /**
  * SOUL.md is injected into EVERY turn of EVERY conversation, so a token here
@@ -76,6 +77,46 @@ describe("SOUL.md archiving", () => {
       const after = readFileSync(join(dir, "SOUL.md"), "utf8");
       // Newest dates survive; the sweep is oldest-first.
       expect(after).toContain("2026-06-27");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * The gate above was written on 2026-08-28 and run once by hand. Nothing in
+ * the daemon called it: the boot sweep covered people and groups, and a new
+ * self-note never triggered it. SOUL.md grew from 31 KB back to 43 KB. These
+ * pin both callers.
+ */
+describe("the SOUL size gate is actually run", () => {
+  test("the boot sweep covers SOUL.md, not just person and group files", () => {
+    const root = mkdtempSync(join(tmpdir(), "sweep-"));
+    try {
+      const dirs = { people: join(root, "p"), groups: join(root, "g"), persona: root };
+      mkdirSync(dirs.people);
+      mkdirSync(dirs.groups);
+      writeFileSync(join(root, "SOUL.md"), soulWith(60));
+      const res = sweepAllArchives(dirs);
+      expect(res.moved).toBeGreaterThan(0);
+      expect(readFileSync(join(root, "archive", "SOUL.md"), "utf8")).toContain(
+        "durable fact number 0",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a new self-note sends an oversized SOUL.md through the gate", () => {
+    const dir = mkdtempSync(join(tmpdir(), "soul-"));
+    try {
+      writeFileSync(join(dir, "SOUL.md"), soulWith(60));
+      const before = readFileSync(join(dir, "SOUL.md"), "utf8").length;
+      appendSelfNote({ section: "other", note: "a fact worth keeping" }, dir);
+      const after = readFileSync(join(dir, "SOUL.md"), "utf8");
+      expect(after).toContain("a fact worth keeping");
+      expect(after.length).toBeLessThan(before);
+      expect(existsSync(join(dir, "archive", "SOUL.md"))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
