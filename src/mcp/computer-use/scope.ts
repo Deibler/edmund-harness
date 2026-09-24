@@ -108,6 +108,28 @@ export function windowAt(
 }
 
 /**
+ * The window a key press lands in. A key has no point, and the front window
+ * is not always the one being typed in: with several checklist lines selected,
+ * Notes puts a small untitled window in front of the note. So: the window
+ * holding the focused element, else the frontmost one that has `holds` in it
+ * (the note body, the conversation list), else the front one.
+ */
+export function keyWindow(
+  inspection: Inspection,
+  focus: { window?: string } | null,
+  holds: string,
+): InspectedWindow | undefined {
+  const has = (w: InspectedWindow) => !!w.frame && !!w.found[holds];
+  return (
+    (focus?.window
+      ? inspection.windows.find((w) => w.title === focus.window && has(w))
+      : undefined) ??
+    inspection.windows.find(has) ??
+    inspection.windows[0]
+  );
+}
+
+/**
  * Why a note may not be changed from this session, or null when it may. No
  * one edits another household's list; a contact edits only their own.
  */

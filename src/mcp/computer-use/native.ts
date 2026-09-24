@@ -67,6 +67,14 @@ export type PointOwner = {
   identifier?: string;
   /** Identifiers of its ancestors, nearest first. */
   ancestors?: string[];
+  /**
+   * For the focused element only, when it edits text (never a password
+   * field): the selection, and the text in it and either side of it.
+   */
+  selection?: { location: number; length: number };
+  selectedText?: string;
+  textBefore?: string;
+  textAfter?: string;
 };
 
 /** One window and its named elements, as `inspect` finds them. */

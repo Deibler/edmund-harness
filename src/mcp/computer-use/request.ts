@@ -21,7 +21,12 @@ const SCAN = 30;
 const MAX_CHARS = 500;
 /** A scheduled event older than this did not start the turn now running. */
 const TURN_MS = 20 * 60_000;
-const EVENT_CHARS = 800;
+/**
+ * Enough for a whole kitchen wake: the classifier compares a deletion with the
+ * lines the event says the note should have, so cutting the event off before
+ * them (it was 800) left every deletion looking unrequested.
+ */
+const EVENT_CHARS = 4000;
 
 /**
  * A reader for the latest messages people sent in this session's chats,
