@@ -112,6 +112,22 @@ export type CaptureOptions = {
   rect?: Rect;
 };
 
+/**
+ * What a settle watches: the apps a capture would show, over `rect` (the
+ * display below its menu bar, whose clock and status icons never stop), at
+ * `width`x`height`. No image ever leaves the helper.
+ */
+export type SettleView = {
+  display: number;
+  exclude: string[];
+  include?: string[];
+  rect: Rect;
+  width: number;
+  height: number;
+};
+
+export type SettleResult = { ms: number; settled: boolean };
+
 /** A rectangle in points: display-local for a zoom, global elsewhere. */
 export type Rect = { x: number; y: number; width: number; height: number };
 
@@ -136,6 +152,16 @@ export interface Native {
   /** Quit these exact processes, never forcing; says which exited and which did not. */
   quit(apps: Array<{ pid: number; bundleId: string }>): Promise<QuitResult>;
   capture(opts: CaptureOptions): Promise<Capture>;
+  /** Remember the screen as `settle` will see it, just before an action. */
+  settleMark(view: SettleView): Promise<void>;
+  /**
+   * Wait for the action's effect: until the screen differs from the marked
+   * frame by `minChanged` pixels and then holds still for `quietMs`, or
+   * `maxMs` passes. Nothing seen changing means the whole `maxMs`.
+   */
+  settleWait(
+    view: SettleView & { maxMs: number; quietMs: number; minChanged: number },
+  ): Promise<SettleResult>;
   cursor(): Promise<{ x: number; y: number }>;
   click(x: number, y: number, button: Button, count: number, flags: number): Promise<void>;
   move(x: number, y: number, held: Button | null): Promise<void>;
@@ -195,6 +221,12 @@ export class NativeHelper implements Native {
   }
   capture(opts: CaptureOptions) {
     return this.call<Capture>("capture", opts);
+  }
+  async settleMark(view: SettleView) {
+    await this.call("settle_mark", view);
+  }
+  settleWait(view: SettleView & { maxMs: number; quietMs: number; minChanged: number }) {
+    return this.call<SettleResult>("settle", view);
   }
   cursor() {
     return this.call<{ x: number; y: number }>("cursor");

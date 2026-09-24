@@ -42,6 +42,7 @@ import type {
   QuitResult,
   Rect,
   RunningApp,
+  SettleView,
 } from "./native.ts";
 import {
   type ActionKind,
@@ -99,6 +100,19 @@ const TYPED_SHOWN = 300;
 /** How long an action waits for another conversation to finish with the screen. */
 export const SCREEN_WAIT_MS = 120_000;
 const SCREEN_POLL_MS = 1_000;
+/**
+ * A batch's `wait` right after an action ends once the screen shows the
+ * action's effect and has held still this long, instead of sleeping in full.
+ * One 68-minute turn on 2026-09-23 spent 599s in 560 waits, 532 of them a
+ * flat second. An effect that never shows still gets the whole wait.
+ */
+const SETTLE_QUIET_MS = 300;
+/** Pixels, at the watch's half resolution, that count as an effect: more than a caret blink. */
+const SETTLE_MIN_CHANGED = 50;
+/** Longer waits are deliberate (an export, a launch) and are slept in full. */
+const SETTLE_MAX_SECONDS = 10;
+/** The menu bar's clock and status icons never stop changing, so a settle watches below it. */
+const MENU_BAR_POINTS = 40;
 /** Never quit at the end of a hold, whoever launched them: the bridge lives in Messages. */
 const NEVER_QUIT = new Set([MESSAGES, FINDER]);
 
@@ -129,6 +143,10 @@ export class ComputerSession {
   private frame: Frame | null = null;
   private display = "auto";
   private held: Button | null = null;
+  /** The next input marks the screen first, because a `wait` follows it. */
+  private markNext = false;
+  /** What the last input marked, for the `wait` right after it. */
+  private marked: SettleView | null = null;
   /**
    * Set while this conversation holds the screen: the pids already running
    * when it took the screen (never quit when it lets go) and when it last
@@ -241,6 +259,10 @@ export class ComputerSession {
     let failed = false;
     for (const [i, action] of actions.entries()) {
       const label = `[${i + 1}/${actions.length}] ${action.action}`;
+      if (action.action !== "wait") {
+        this.marked = null;
+        this.markNext = actions[i + 1]?.action === "wait";
+      }
       try {
         const step = await this.step({ ...action, explanation }, reference);
         content.push({ type: "text", text: `${label}: ${step.text}` });
@@ -258,6 +280,8 @@ export class ComputerSession {
         break;
       }
     }
+    this.markNext = false;
+    this.marked = null;
     if (latest) this.frame = latest;
     return { content, ...(failed ? { isError: true } : {}) };
   }
@@ -309,11 +333,8 @@ export class ComputerSession {
 
   private async step(a: Action, ref: Frame | null): Promise<Step> {
     switch (a.action) {
-      case "wait": {
-        const secs = Math.min(Math.max(a.duration ?? 1, 0), MAX_WAIT_SECONDS);
-        await this.sleep(secs * 1000);
-        return { text: `Waited ${secs}s.` };
-      }
+      case "wait":
+        return this.wait(a);
       case "cursor_position":
         return this.cursorPosition(ref);
       case "screenshot":
@@ -348,6 +369,66 @@ export class ComputerSession {
         return this.type(a);
       default:
         throw new Refusal(`unknown action "${a.action}"`);
+    }
+  }
+
+  /**
+   * Sleep, or, right after an input that marked the screen, watch for that
+   * input's effect and stop once the screen has held still. A settle that
+   * fails sleeps out whatever is left.
+   */
+  private async wait(a: Action): Promise<Step> {
+    const secs = Math.min(Math.max(a.duration ?? 1, 0), MAX_WAIT_SECONDS);
+    const view = this.marked;
+    this.marked = null;
+    const started = this.now();
+    if (view && secs > 0 && secs <= SETTLE_MAX_SECONDS) {
+      const r = await this.native
+        .settleWait({
+          ...view,
+          maxMs: secs * 1000,
+          quietMs: SETTLE_QUIET_MS,
+          minChanged: SETTLE_MIN_CHANGED,
+        })
+        .catch(() => null);
+      if (r?.settled) {
+        return {
+          text: `Waited ${(r.ms / 1000).toFixed(1)}s, until the screen stopped changing (asked for up to ${secs}s).`,
+        };
+      }
+      if (r) return { text: `Waited ${secs}s.` };
+    }
+    await this.sleep(Math.max(0, secs * 1000 - (this.now() - started)));
+    return { text: `Waited ${secs}s.` };
+  }
+
+  /**
+   * Called right before input reaches the screen: when a `wait` follows,
+   * remember the screen for it. Best effort; a wait without a mark sleeps.
+   */
+  private async beforeInput(): Promise<void> {
+    if (!this.markNext) return;
+    this.markNext = false;
+    try {
+      const display = this.pickDisplay(await this.native.displays());
+      const frame = frameFor(display);
+      const rect = {
+        x: 0,
+        y: MENU_BAR_POINTS,
+        width: display.width,
+        height: display.height - MENU_BAR_POINTS,
+      };
+      const view: SettleView = {
+        display: display.id,
+        ...this.captureFilter(await this.native.running()),
+        rect,
+        width: Math.round(frame.width / 2),
+        height: Math.round((frame.height * rect.height) / display.height / 2),
+      };
+      await this.native.settleMark(view);
+      this.marked = view;
+    } catch {
+      this.marked = null;
     }
   }
 
@@ -435,6 +516,7 @@ export class ComputerSession {
           ? "double-click"
           : `${button}-click${a.text ? ` with ${a.text} held` : ""}`;
     await this.approve(a, front, target, `${verb} ${describeElement(target)}`, at);
+    await this.beforeInput();
     await this.native.click(at.x, at.y, button, count, flags);
     const done =
       count === 3
@@ -460,6 +542,7 @@ export class ComputerSession {
         at,
       );
     }
+    await this.beforeInput();
     await this.native.move(at.x, at.y, this.held);
     return { text: "Moved." };
   }
@@ -481,6 +564,7 @@ export class ComputerSession {
       from,
     );
     await this.approve(a, front, target, `drop onto ${describeElement(target)}`, to);
+    await this.beforeInput();
     await this.native.drag(from, to);
     return { text: "Dragged." };
   }
@@ -498,6 +582,7 @@ export class ComputerSession {
       `press and hold the left button on ${describeElement(target)}`,
       at,
     );
+    await this.beforeInput();
     await this.native.buttonDown("left");
     this.held = "left";
     return { text: "Left button down." };
@@ -516,6 +601,7 @@ export class ComputerSession {
       `release the left button over ${describeElement(target)}`,
       at,
     );
+    await this.beforeInput();
     await this.native.buttonUp("left");
     this.held = null;
     return { text: "Left button up." };
@@ -539,6 +625,7 @@ export class ComputerSession {
     );
     const dy = dir === "up" ? amount : dir === "down" ? -amount : 0;
     const dx = dir === "left" ? amount : dir === "right" ? -amount : 0;
+    await this.beforeInput();
     await this.native.scroll(at.x, at.y, dx, dy, flags);
     return { text: `Scrolled ${dir} ${amount}.` };
   }
@@ -563,6 +650,7 @@ export class ComputerSession {
             : ", which deletes nothing (no text beside the caret)"
       }`,
     );
+    await this.beforeInput();
     await this.native.chord(chord, { repeat });
     return { text: "Key pressed." };
   }
@@ -571,6 +659,7 @@ export class ComputerSession {
     const secs = Math.min(Math.max(a.duration ?? 0, 0), MAX_WAIT_SECONDS);
     const { chord, focus, front, words } = await this.prepareChord(a);
     await this.approve(a, front, focus, `hold ${words} for ${secs}s`);
+    await this.beforeInput();
     await this.native.chord(chord, { holdMs: secs * 1000 });
     return { text: `Held for ${secs}s.` };
   }
@@ -620,6 +709,7 @@ export class ComputerSession {
       focus,
       `type text "${clip(text, TYPED_SHOWN)}" into ${into}${replacing}`,
     );
+    await this.beforeInput();
     if (text.includes("\n") && this.flags.clipboardWrite) {
       const previous = await this.native.clipboardRead();
       await this.native.clipboardWrite(text);
@@ -970,10 +1060,7 @@ export class ComputerSession {
     running: RunningApp[],
   ): Promise<{ exclude: string[]; include?: string[]; redact: Rect[]; withheld: string[] }> {
     if (this.policy.tier !== "contact") {
-      const exclude = running
-        .filter((a) => a.regular && a.bundleId && !this.isGranted(a.bundleId))
-        .map((a) => a.bundleId);
-      return { exclude, redact: [], withheld: [] };
+      return { ...this.captureFilter(running), redact: [], withheld: [] };
     }
     const redact: Rect[] = [];
     const left: RunningApp[] = [];
@@ -990,6 +1077,18 @@ export class ComputerSession {
     }
     const include = [...this.grants.keys()].filter((id) => !left.some((a) => a.bundleId === id));
     return { exclude: [], include, redact, withheld: left.map((a) => a.name) };
+  }
+
+  /**
+   * Whose windows a capture takes: the operator's leaves out ungranted apps,
+   * anyone else's takes only granted ones.
+   */
+  private captureFilter(running: RunningApp[]): { exclude: string[]; include?: string[] } {
+    if (this.policy.tier === "contact") return { exclude: [], include: [...this.grants.keys()] };
+    const exclude = running
+      .filter((a) => a.regular && a.bundleId && !this.isGranted(a.bundleId))
+      .map((a) => a.bundleId);
+    return { exclude };
   }
 
   private pickDisplay(displays: Display[]): Display {
