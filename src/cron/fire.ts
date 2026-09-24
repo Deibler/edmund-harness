@@ -12,7 +12,7 @@ import type { EchoCache } from "../sessions/echo-cache.ts";
 import { chatIdFromKey, isGroupSession } from "../sessions/key.ts";
 import type { SessionLocks } from "../sessions/locks.ts";
 import type { StateStore } from "../sessions/store.ts";
-import { recordSpend } from "../spend/ledger.ts";
+import { recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { humanMs, log, snippet } from "../util/log.ts";
 import { inboundRetryAlreadyAnswered } from "./retry-marker.ts";
 import type { CronStore } from "./store.ts";
@@ -179,7 +179,7 @@ async function runAndDeliver(
   recordSpend(config.paths.data_dir, {
     sessionKey: job.sessionKey,
     subsystem: "cron",
-    costUsd: result.ok ? (result.totalCostUsd ?? null) : null,
+    ...resumedRunSpend(result),
     durMs: Date.now() - started,
     contextTokens: result.ok ? (result.contextTokens ?? null) : null,
   });

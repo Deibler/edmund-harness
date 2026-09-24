@@ -18,6 +18,14 @@ import { openDb } from "../db/open.ts";
  * Claude CLI's own result events (`total_cost_usd`) — we record, never
  * estimate.
  *
+ * `total_cost_usd` is the running total for the whole model session, and a
+ * resumed process carries it forward. For a one-shot call on a fresh session
+ * that is the call's cost. For a turn that resumes a conversation it is not:
+ * until 2026-09-24 those totals were recorded as turn costs, and the ledger
+ * summed them to 4-11x the real spend (one DM logged $99.03 for a turn that
+ * cost $0.11). Such callers pass the total through `sessionTotalUsd` and the
+ * ledger stores the rise since that session's last total (see turnCost).
+ *
  * Subsystems: turn | cron | agent | ghost | ghost-prescreen | maintainer |
  * catch-up | research-planner (open set — new callers add their own tag).
  */
@@ -26,7 +34,15 @@ export type SpendRecord = {
   sessionKey: string;
   subsystem: string;
   model?: string | null;
+  /** The call's own cost: one-shot callers on a fresh session. */
   costUsd?: number | null;
+  /** Callers that resume a conversation pass the CLI's running total here
+   *  instead of costUsd, with the model session it belongs to. */
+  sessionTotalUsd?: number | null;
+  modelSessionId?: string | null;
+  /** The CLI process was started with --resume, so a session the ledger has
+   *  never seen already had spend before this total began. */
+  resumedProcess?: boolean;
   durMs?: number | null;
   contextTokens?: number | null;
   tools?: number | null;
@@ -80,13 +96,50 @@ export class SpendLedger {
         PRIMARY KEY (day, session_key, subsystem)
       );
     `);
+    const cols = new Set(
+      (this.db.query("PRAGMA table_info(turns)").all() as { name: string }[]).map((c) => c.name),
+    );
+    if (!cols.has("model_session_id"))
+      this.db.exec("ALTER TABLE turns ADD COLUMN model_session_id TEXT");
+    if (!cols.has("session_total_usd"))
+      this.db.exec("ALTER TABLE turns ADD COLUMN session_total_usd REAL");
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS turns_model_session_idx ON turns(model_session_id, id)",
+    );
   }
 
-  record(r: SpendRecord, nowMs = Date.now()): void {
+  /**
+   * What this call cost. A running total costs its rise since the same
+   * session's last recorded total. Null when that can't be known: the total
+   * went down (a process killed mid-session restores an older total), or a
+   * resumed session has no earlier total here. A fresh session's first total
+   * is its first turn's cost.
+   */
+  turnCost(r: SpendRecord): number | null {
+    if (r.sessionTotalUsd === undefined || r.sessionTotalUsd === null) return r.costUsd ?? null;
+    if (!r.modelSessionId) return null;
+    const prev = this.db
+      .query(
+        `SELECT session_total_usd AS t FROM turns
+          WHERE model_session_id = ? AND session_total_usd IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+      )
+      .get(r.modelSessionId) as { t: number } | null;
+    if (prev) {
+      const rise = r.sessionTotalUsd - prev.t;
+      return rise >= 0 ? rise : null;
+    }
+    return r.resumedProcess ? null : r.sessionTotalUsd;
+  }
+
+  /** Record one call; returns the cost it was booked at (null = unknown). */
+  record(r: SpendRecord, nowMs = Date.now()): number | null {
+    const cost = this.turnCost(r);
     this.db
       .query(
-        `INSERT INTO turns (ts, session_key, subsystem, model, dur_ms, ctx_tokens, cost_usd, tools)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO turns (ts, session_key, subsystem, model, dur_ms, ctx_tokens, cost_usd, tools,
+                            model_session_id, session_total_usd)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         nowMs,
@@ -95,8 +148,10 @@ export class SpendLedger {
         r.model ?? null,
         r.durMs ?? null,
         r.contextTokens ?? null,
-        r.costUsd ?? null,
+        cost,
         r.tools ?? null,
+        r.modelSessionId ?? null,
+        r.sessionTotalUsd ?? null,
       );
     this.db
       .query(
@@ -107,7 +162,8 @@ export class SpendLedger {
            cost_usd = cost_usd + excluded.cost_usd,
            dur_ms = dur_ms + excluded.dur_ms`,
       )
-      .run(localDay(nowMs), r.sessionKey, r.subsystem, r.costUsd ?? 0, r.durMs ?? 0);
+      .run(localDay(nowMs), r.sessionKey, r.subsystem, cost ?? 0, r.durMs ?? 0);
+    return cost;
   }
 
   /** Lifetime cost across all sessions for one subsystem tag. The guest
@@ -221,4 +277,23 @@ export function recordSpend(dataDir: string, r: SpendRecord, nowMs = Date.now())
   } catch (err) {
     console.warn(`[spend] record failed: ${(err as Error).message}`);
   }
+}
+
+/**
+ * The spend fields for a run that resumes a conversation (a turn, a cron
+ * fire, a proactive fire). Every such caller goes through here, so none can
+ * book the session's running total as the turn's cost.
+ */
+export function resumedRunSpend(result: {
+  ok: boolean;
+  totalCostUsd?: number;
+  claudeSessionId?: string;
+  resumedProcess?: boolean;
+}): Pick<SpendRecord, "sessionTotalUsd" | "modelSessionId" | "resumedProcess"> {
+  if (!result.ok || typeof result.totalCostUsd !== "number") return { sessionTotalUsd: null };
+  return {
+    sessionTotalUsd: result.totalCostUsd,
+    modelSessionId: result.claudeSessionId ?? null,
+    resumedProcess: result.resumedProcess === true,
+  };
 }

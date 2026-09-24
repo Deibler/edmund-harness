@@ -235,7 +235,11 @@ export type RunResult =
        *  measured from streamed assistant-event usage (fallback:
        *  contextTokens(usage)). Feed THIS to shouldCompact. */
       contextTokens?: number;
+      /** The CLI's running total for the whole model session, carried across
+       *  process restarts. Not this turn's cost: see recordSpend. */
       totalCostUsd?: number;
+      /** The CLI process was started with --resume. */
+      resumedProcess?: boolean;
     }
   | { ok: false; error: string; claudeSessionId?: string };
 
@@ -819,6 +823,7 @@ function workerResultToRunResult(r: WorkerResult): RunResult {
       usage: r.usage,
       contextTokens: r.contextTokens,
       totalCostUsd: r.totalCostUsd,
+      resumedProcess: r.resumedProcess,
     };
   }
   return { ok: false, error: r.error, claudeSessionId: r.claudeSessionId };
@@ -1205,7 +1210,7 @@ function runProcess(
               ctx: humanCount(ctxTokens),
               cache_hit: `${hitPct}%`,
               ...(typeof evt.total_cost_usd === "number"
-                ? { cost_usd: evt.total_cost_usd.toFixed(4) }
+                ? { session_total_usd: evt.total_cost_usd.toFixed(4) }
                 : {}),
             });
             finish({
@@ -1215,6 +1220,7 @@ function runProcess(
               usage: u,
               contextTokens: ctxTokens,
               totalCostUsd: evt.total_cost_usd,
+              resumedProcess: args.includes("--resume"),
             });
           }
         }

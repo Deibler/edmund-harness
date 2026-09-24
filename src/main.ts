@@ -38,6 +38,7 @@ import { fireJob } from "./cron/fire.ts";
 import { Scheduler } from "./cron/scheduler.ts";
 import { CronStore } from "./cron/store.ts";
 import { maybeRunPersonaProbes, runWeeklyEvalIfDue } from "./evals/loop.ts";
+import { AddressChecker } from "./gating/address-check.ts";
 import { guestGateFor } from "./gating/allowlist.ts";
 import { intensityTable, resolveIntensity } from "./ghost/intensity.ts";
 import { GhostObserver } from "./ghost/observer.ts";
@@ -57,6 +58,7 @@ import { ChatDb } from "./imessage/db.ts";
 import { decodeMessageText } from "./imessage/decode.ts";
 import { getGroupParticipants } from "./imessage/participants.ts";
 import { configureSendVerification } from "./imessage/send.ts";
+import type { InboundMessage } from "./imessage/types.ts";
 import { startWatcher } from "./imessage/watcher.ts";
 import * as intSettings from "./integrations/settings.ts";
 import { routeForMessage, sessionKeyForOrchestrator } from "./orchestrators/registry.ts";
@@ -862,6 +864,9 @@ async function main() {
   // replaying message-by-message, which fired one reply per missed message (group-chat spam)
   // and swamped the worker pool on recovery. The live watcher then starts from the post-catch-up
   // cursor so it only handles genuinely new messages. No-op when nothing was missed.
+  // The missed-name check for groups. One instance serves both inbound paths
+  // (catch-up below, the live watcher after it) so the daily cap is shared.
+  const addressChecker = new AddressChecker({ config, chatDb });
   let watchCursor = startCursor;
   if (config.behavior.catchup_on_boot !== false) {
     try {
@@ -870,6 +875,7 @@ async function main() {
         locks,
         startCursor,
         concurrency: config.behavior.catchup_concurrency ?? 3,
+        addressChecker,
       });
       state.setCursor(CURSOR_KEY, watchCursor);
     } catch (err) {
@@ -896,6 +902,133 @@ async function main() {
     bgJobStore,
     activeSessions,
   });
+
+  // Everything after the gate: which session owns the message, durable ack,
+  // park-or-enqueue. It never moves the watcher cursor; the watcher does,
+  // once this returns. The address check calls it too, for an un-named group
+  // message Jev judged to be for the assistant, after the cursor has moved on.
+  const routeAccepted = (msg: InboundMessage): void => {
+    // Trading sub-persona routing: an eligible handle that has switched into
+    // the trading persona is keyed into the `trading:dm:` namespace, which
+    // carries the trading loadout (persona + Robinhood tools) everywhere
+    // downstream. The two-handle restriction is enforced here, before the
+    // key is computed, independent of allowlist.dm.
+    //
+    // Otherwise, named-orchestrator routing (same per-message, no-stickiness
+    // model): a message that names a configured orchestrator ("desmond, …")
+    // is keyed into that orchestrator's namespace; an un-named message goes
+    // to the primary. With no [[orchestrators]] configured this collapses
+    // to the legacy sessionKeyFor — byte-identical routing.
+    const key =
+      integrationExportSync<TradingGateFn>("trading", "index.ts", "tradingGate")?.(
+        msg,
+        config,
+        state,
+      )?.route === "trading"
+        ? tradingKeyFor(msg.fromHandle)
+        : sessionKeyForOrchestrator(routeForMessage(msg.text, config), msg, contacts);
+
+    // On-demand Cloudflare dashboard tunnel trigger for the operator DM
+    if (!msg.isGroup && msg.fromHandle && config.alerts.operator_handle) {
+      const normSender = normalizeHandle(msg.fromHandle);
+      const normOperator = normalizeHandle(config.alerts.operator_handle);
+      if (normSender === normOperator && msg.text.trim().toLowerCase() === "harness") {
+        console.log(`[harness-trigger] operator requested dashboard tunnel`);
+        void (async () => {
+          try {
+            await deliverReply(
+              {
+                to: chatIdFromKey(key),
+                isGroup: false,
+                text: "Bringing up mobile dashboard tunnel...",
+                // Pinned: an unpinned DM send resolves to note-to-self.
+                chatGuid: msg.chatGuid,
+              },
+              config,
+              echoes,
+            );
+
+            const scriptPath = resolve(REPO_ROOT, "scripts/dashboard-tunnel.sh");
+            const { stdout } = await execAsync(`bash ${scriptPath} up`);
+            const url = stdout.trim();
+
+            if (url?.startsWith("https://")) {
+              await deliverReply(
+                {
+                  to: chatIdFromKey(key),
+                  isGroup: false,
+                  text: `Dashboard is live at:\n\n${url}\n\nThis tunnel will expire in 4 hours. Use your dashboard PIN to log in.`,
+                  // Pinned: an unpinned DM send resolves to note-to-self.
+                  chatGuid: msg.chatGuid,
+                },
+                config,
+                echoes,
+              );
+            } else {
+              throw new Error(url || "No URL returned");
+            }
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error(`[harness-trigger] failed to bring up tunnel:`, err);
+            await deliverReply(
+              {
+                to: chatIdFromKey(key),
+                isGroup: false,
+                text: `Failed to bring up dashboard tunnel: ${errMsg}`,
+                // Pinned: an unpinned DM send resolves to note-to-self.
+                chatGuid: msg.chatGuid,
+              },
+              config,
+              echoes,
+            );
+          }
+        })();
+
+        return;
+      }
+    }
+
+    // Record which session owns this row so chat-scoped recovery / catch-up
+    // (which share the physical DM thread) never replay a Wolf message into
+    // edmund or vice-versa.
+    state.recordRouting(msg.rowId, key);
+    // Durable ack BEFORE the cursor can advance: until a turn answers this
+    // row (handleBatch clears acks it covered), state.db holds enough to
+    // rebuild it. A daemon killed inside the debounce window used to lose
+    // the row forever (cursor already past it, no other durable record —
+    // the 2026-07-19 10:21 incident); boot now replays ack survivors
+    // through the catch-up coalescer. Throws propagate so the cursor stays
+    // put and the watcher retries the row.
+    if (config.behavior.durable_pending_ack) {
+      state.writeInboundAck(msg.rowId, key, JSON.stringify(toPendingEntry(msg)));
+    }
+    if (activeSessions.has(key)) {
+      writePending(key, msg, config.paths.data_dir);
+      // Barge-in: a clear cancel/redirect aborts the in-flight turn NOW
+      // instead of letting doomed work finish (or a slow tool chain run
+      // minutes past a "stop"). The abort path disposes the old batch
+      // (ack-covered — user superseded it) and handleBatch's finally
+      // re-enqueues this parked message as its own fresh turn, so the
+      // model answers the cancel/pivot in seconds.
+      if (isBargeIn(msg.text)) {
+        const controller = turnControllers.get(key);
+        if (controller && !controller.signal.aborted) {
+          console.log(
+            `[barge-in] aborting in-flight turn for ${key}: "${(msg.text ?? "").slice(0, 80)}"`,
+          );
+          controller.abort(`user barge-in: ${(msg.text ?? "").slice(0, 80)}`);
+        }
+      }
+      // With the coalesce gate on, the parked message is folded into the
+      // current turn's reply (or re-enqueued by the gate if the model
+      // keeps its draft). With the gate off, fall back to legacy behavior:
+      // it becomes the next proper turn.
+      if (config.behavior.coalesce_pending) {
+        return;
+      }
+    }
+    pipeline.enqueue(key, msg);
+  };
 
   const stop = startWatcher({
     chatDb,
@@ -928,131 +1061,11 @@ async function main() {
       // and the watcher's onConsecutiveErrors alert will fire if it keeps
       // failing. Prevents the "silent message loss on enqueue failure" bug.
       if (!shouldAccept(msg, config, echoes, guestGate)) {
+        void addressChecker.consider(msg, routeAccepted);
         state.setCursor(CURSOR_KEY, msg.rowId);
         return;
       }
-      // Trading sub-persona routing: an eligible handle that has switched into
-      // the trading persona is keyed into the `trading:dm:` namespace, which
-      // carries the trading loadout (persona + Robinhood tools) everywhere
-      // downstream. The two-handle restriction is enforced here, before the
-      // key is computed, independent of allowlist.dm.
-      //
-      // Otherwise, named-orchestrator routing (same per-message, no-stickiness
-      // model): a message that names a configured orchestrator ("desmond, …")
-      // is keyed into that orchestrator's namespace; an un-named message goes
-      // to the primary. With no [[orchestrators]] configured this collapses
-      // to the legacy sessionKeyFor — byte-identical routing.
-      const key =
-        integrationExportSync<TradingGateFn>("trading", "index.ts", "tradingGate")?.(
-          msg,
-          config,
-          state,
-        )?.route === "trading"
-          ? tradingKeyFor(msg.fromHandle)
-          : sessionKeyForOrchestrator(routeForMessage(msg.text, config), msg, contacts);
-
-      // On-demand Cloudflare dashboard tunnel trigger for the operator DM
-      if (!msg.isGroup && msg.fromHandle && config.alerts.operator_handle) {
-        const normSender = normalizeHandle(msg.fromHandle);
-        const normOperator = normalizeHandle(config.alerts.operator_handle);
-        if (normSender === normOperator && msg.text.trim().toLowerCase() === "harness") {
-          console.log(`[harness-trigger] operator requested dashboard tunnel`);
-          void (async () => {
-            try {
-              await deliverReply(
-                {
-                  to: chatIdFromKey(key),
-                  isGroup: false,
-                  text: "Bringing up mobile dashboard tunnel...",
-                  // Pinned: an unpinned DM send resolves to note-to-self.
-                  chatGuid: msg.chatGuid,
-                },
-                config,
-                echoes,
-              );
-
-              const scriptPath = resolve(REPO_ROOT, "scripts/dashboard-tunnel.sh");
-              const { stdout } = await execAsync(`bash ${scriptPath} up`);
-              const url = stdout.trim();
-
-              if (url?.startsWith("https://")) {
-                await deliverReply(
-                  {
-                    to: chatIdFromKey(key),
-                    isGroup: false,
-                    text: `Dashboard is live at:\n\n${url}\n\nThis tunnel will expire in 4 hours. Use your dashboard PIN to log in.`,
-                    // Pinned: an unpinned DM send resolves to note-to-self.
-                    chatGuid: msg.chatGuid,
-                  },
-                  config,
-                  echoes,
-                );
-              } else {
-                throw new Error(url || "No URL returned");
-              }
-            } catch (err) {
-              const errMsg = err instanceof Error ? err.message : String(err);
-              console.error(`[harness-trigger] failed to bring up tunnel:`, err);
-              await deliverReply(
-                {
-                  to: chatIdFromKey(key),
-                  isGroup: false,
-                  text: `Failed to bring up dashboard tunnel: ${errMsg}`,
-                  // Pinned: an unpinned DM send resolves to note-to-self.
-                  chatGuid: msg.chatGuid,
-                },
-                config,
-                echoes,
-              );
-            }
-          })();
-
-          state.setCursor(CURSOR_KEY, msg.rowId);
-          return;
-        }
-      }
-
-      // Record which session owns this row so chat-scoped recovery / catch-up
-      // (which share the physical DM thread) never replay a Wolf message into
-      // edmund or vice-versa.
-      state.recordRouting(msg.rowId, key);
-      // Durable ack BEFORE the cursor can advance: until a turn answers this
-      // row (handleBatch clears acks it covered), state.db holds enough to
-      // rebuild it. A daemon killed inside the debounce window used to lose
-      // the row forever (cursor already past it, no other durable record —
-      // the 2026-07-19 10:21 incident); boot now replays ack survivors
-      // through the catch-up coalescer. Throws propagate so the cursor stays
-      // put and the watcher retries the row.
-      if (config.behavior.durable_pending_ack) {
-        state.writeInboundAck(msg.rowId, key, JSON.stringify(toPendingEntry(msg)));
-      }
-      if (activeSessions.has(key)) {
-        writePending(key, msg, config.paths.data_dir);
-        // Barge-in: a clear cancel/redirect aborts the in-flight turn NOW
-        // instead of letting doomed work finish (or a slow tool chain run
-        // minutes past a "stop"). The abort path disposes the old batch
-        // (ack-covered — user superseded it) and handleBatch's finally
-        // re-enqueues this parked message as its own fresh turn, so the
-        // model answers the cancel/pivot in seconds.
-        if (isBargeIn(msg.text)) {
-          const controller = turnControllers.get(key);
-          if (controller && !controller.signal.aborted) {
-            console.log(
-              `[barge-in] aborting in-flight turn for ${key}: "${(msg.text ?? "").slice(0, 80)}"`,
-            );
-            controller.abort(`user barge-in: ${(msg.text ?? "").slice(0, 80)}`);
-          }
-        }
-        // With the coalesce gate on, the parked message is folded into the
-        // current turn's reply (or re-enqueued by the gate if the model
-        // keeps its draft). With the gate off, fall back to legacy behavior:
-        // it becomes the next proper turn.
-        if (config.behavior.coalesce_pending) {
-          state.setCursor(CURSOR_KEY, msg.rowId);
-          return;
-        }
-      }
-      pipeline.enqueue(key, msg);
+      routeAccepted(msg);
       state.setCursor(CURSOR_KEY, msg.rowId);
     },
     onError: (err) => console.error("[watcher] error", err),

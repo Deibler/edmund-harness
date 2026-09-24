@@ -417,6 +417,21 @@ schedule_jitter_max_minutes = 35
 fire_defer_min_minutes = 5
 fire_defer_max_minutes = 15
 
+# Experimental: answer group messages that are for the assistant but don't say
+# his name. A message is checked when it's a swipe-reply to him, has a word
+# close to his name, or arrives soon after he spoke; Jev decides whether it is
+# for him, and he decides whether to answer. Needs [keys].openrouter, and the
+# checked message plus the eight before it go to OpenRouter. "shadow" only
+# records decisions to data/addressing.jsonl. Rerun
+# scripts/addressing-calibrate.ts after changing the model.
+[group_addressing]
+mode = "off"                     # "off" | "shadow" | "on"
+model = "typesafe/jev-1.13"
+window_minutes = 10
+reply_threshold = 0.6            # wake when "wants a reply" reaches this
+addressed_threshold = 0.7        # swipe-replies and misspelled names: "said to him" is enough
+max_wakes_per_group_per_day = 20
+
 # Semantic recall. Embeds message history locally (Transformers.js WASM by
 # default — no API key, no network) and injects the most relevant past context
 # into each turn. Disable to fall back to recent-messages-only context.

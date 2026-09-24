@@ -21,7 +21,7 @@ import { loadPortalSecret, portalUrl } from "../portal/token.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
 import { type SessionKey, chatIdFromKey, isGroupSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
-import { recordSpend } from "../spend/ledger.ts";
+import { recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { humanMs, log, snippet } from "../util/log.ts";
 import { decodeBrownNoseSystemEvent } from "./queue.ts";
 import { getSemaphore } from "./semaphore.ts";
@@ -241,7 +241,7 @@ async function fireImpl(
   recordSpend(config.paths.data_dir, {
     sessionKey,
     subsystem: "ghost-fire",
-    costUsd: result.ok ? (result.totalCostUsd ?? null) : null,
+    ...resumedRunSpend(result),
     durMs: Date.now() - started,
     contextTokens: result.ok ? (result.contextTokens ?? null) : null,
   });

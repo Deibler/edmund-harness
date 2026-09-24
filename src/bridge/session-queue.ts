@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { InboundMessage } from "../imessage/types.ts";
+import type { InboundMessage, UnnamedWake } from "../imessage/types.ts";
 
 /**
  * A parked inbound message — everything the coalesce gate needs to
@@ -28,6 +28,10 @@ export type PendingEntry = {
   chatIdentifier: string;
   chatGuid: string;
   isGroup: boolean;
+  /** Why an un-named group message was let in. Without it a parked or
+   *  replayed message would meet the group re-gate as un-named and be
+   *  dropped. */
+  unnamedWake?: UnnamedWake;
 };
 
 function pendingPath(dataDir: string, sessionKey: string): string {
@@ -67,6 +71,7 @@ export function toPendingEntry(msg: InboundMessage): PendingEntry {
     chatIdentifier: msg.chatIdentifier,
     chatGuid: msg.chatGuid,
     isGroup: msg.isGroup,
+    ...(msg.unnamedWake ? { unnamedWake: msg.unnamedWake } : {}),
   };
 }
 
@@ -103,6 +108,7 @@ export function entryToInbound(e: PendingEntry): InboundMessage | null {
     attachmentTranscripts: e.attachmentTranscripts,
     service: e.service || "iMessage",
     replyToGuid: e.replyToGuid,
+    ...(e.unnamedWake ? { unnamedWake: e.unnamedWake } : {}),
   };
 }
 
@@ -126,7 +132,19 @@ function normalizeEntry(raw: Record<string, unknown>): PendingEntry | null {
     chatIdentifier: typeof raw.chatIdentifier === "string" ? raw.chatIdentifier : "",
     chatGuid: typeof raw.chatGuid === "string" ? raw.chatGuid : "",
     isGroup: typeof raw.isGroup === "boolean" ? raw.isGroup : false,
+    ...(isUnnamedWake(raw.unnamedWake) ? { unnamedWake: raw.unnamedWake } : {}),
   };
+}
+
+function isUnnamedWake(v: unknown): v is UnnamedWake {
+  const w = v as UnnamedWake | null;
+  return (
+    !!w &&
+    typeof w === "object" &&
+    ["reply-to-assistant", "after-assistant", "name-like"].includes(w.reason) &&
+    typeof w.addressed === "number" &&
+    typeof w.wantsReply === "number"
+  );
 }
 
 function parsePending(content: string): PendingEntry[] {
@@ -169,6 +187,7 @@ export function pendingToInbound(e: PendingEntry, ref: InboundMessage): InboundM
     attachmentTranscripts: e.attachmentTranscripts,
     service: e.service || ref.service,
     replyToGuid: e.replyToGuid,
+    ...(e.unnamedWake ? { unnamedWake: e.unnamedWake } : {}),
   };
 }
 

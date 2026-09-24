@@ -136,7 +136,12 @@ export type WorkerResult =
        *  measured from streamed assistant-event usage (fallback:
        *  contextTokens(usage)). Feed THIS to shouldCompact. */
       contextTokens?: number;
+      /** The CLI's running total for the whole model session, carried across
+       *  process restarts. Not this turn's cost: see recordSpend. */
       totalCostUsd?: number;
+      /** This CLI process was started with --resume, so its running total
+       *  began from the session's earlier spend. */
+      resumedProcess: boolean;
     }
   | { ok: false; error: string; claudeSessionId: string | undefined; durationMs: number };
 
@@ -243,10 +248,12 @@ export class Worker {
   private deathHandlers: Array<(reason: string) => void> = [];
   private idleMs: number;
   private sessionKey: string;
+  private resumedProcess: boolean;
 
   constructor(args: WorkerSpawnArgs) {
     this.idleMs = args.perTurnIdleMs;
     this.sessionKey = args.sessionKey;
+    this.resumedProcess = args.argv.includes("--resume");
 
     // Spawn-line moved to DEBUG: the pool emits MISS (cold spawn) for the
     // same event immediately after, carrying mode/model. Two info lines per
@@ -713,6 +720,7 @@ export class Worker {
         usage: evt.usage,
         contextTokens: ctxTokens,
         totalCostUsd: evt.total_cost_usd,
+        resumedProcess: this.resumedProcess,
       });
     }
   }
@@ -926,7 +934,9 @@ function formatUsage(
     ctx: humanCount(ctxTokens),
     cache: `${hitPct}%`,
   };
-  if (typeof costUsd === "number") result.cost = humanCost(costUsd);
+  // The CLI's running total for the whole session, carried across restarts;
+  // it was once read as a per-turn cost. The turn's cost is in the ledger.
+  if (typeof costUsd === "number") result.session_total = humanCost(costUsd);
   return result;
 }
 

@@ -24,6 +24,18 @@ export type InboundMessage = {
   service: string;
   /** If this is a threaded reply or quote, the parent message's GUID. */
   replyToGuid: string | null;
+  /** Set when a group message that doesn't name the assistant was let in
+   *  because Jev judged it to be for him (see gating/address-check.ts). */
+  unnamedWake?: UnnamedWake;
+};
+
+/** Why an un-named group message was let in, and Jev's probabilities. */
+export type UnnamedWake = {
+  reason: "reply-to-assistant" | "after-assistant" | "name-like";
+  /** P(the message is said to the assistant). */
+  addressed: number;
+  /** P(the sender wants the assistant to reply or act). */
+  wantsReply: number;
 };
 
 /** Hydrated parent-of-reply context: the message that a new inbound replies to. */
