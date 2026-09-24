@@ -244,6 +244,7 @@ export function wake(
       sessionKey: session,
       systemEvent: render(due, session),
       schedule: { kind: "once", atMs: now },
+      harnessWritten: true,
     });
     for (const it of due) {
       const seen = ledger[it.key];

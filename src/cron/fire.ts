@@ -272,7 +272,7 @@ function classifyEvent(systemEvent: string): string {
   return "scheduled";
 }
 
-function scheduleRetry(job: CronJob, crons: CronStore): void {
+export function scheduleRetry(job: CronJob, crons: CronStore): void {
   const { attempt, base } = parseRetryMeta(job.systemEvent);
   const next = attempt + 1;
   if (next > MAX_RETRIES) {
@@ -288,6 +288,8 @@ function scheduleRetry(job: CronJob, crons: CronStore): void {
       sessionKey: job.sessionKey,
       systemEvent: retryEvent,
       schedule: { kind: "once", atMs: Date.now() + RETRY_DELAY_MS },
+      // The same text under a retry prefix, so it keeps its author.
+      harnessWritten: job.harnessWritten,
     });
     log.info("cron", "retry scheduled", {
       parent: job.id,

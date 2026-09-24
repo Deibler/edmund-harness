@@ -25,6 +25,13 @@ export type CronJob = {
    * carries the user's marked-up PNG. Null/undefined = text-only wake-up.
    */
   attachImages: string[] | null;
+  /**
+   * True only when harness code wrote every word of systemEvent (a kitchen
+   * wake). The screen's safety check hears such an event as the harness's own
+   * request. Anything a model, an agent or a relayed message could have
+   * written is false, as is every row from before the column existed.
+   */
+  harnessWritten: boolean;
 };
 
 export type JobSchedule =
@@ -40,4 +47,6 @@ export type JobInput = {
   gracePeriodMs?: number | null;
   /** See CronJob.attachImages. Omit for text-only wake-ups. */
   attachImages?: string[];
+  /** See CronJob.harnessWritten. Omit unless harness code wrote the whole event. */
+  harnessWritten?: boolean;
 };

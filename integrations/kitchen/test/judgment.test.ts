@@ -97,6 +97,8 @@ test("wake batches one turn per session and bounds retries", () => {
   expect(jobs).toHaveLength(1);
   expect(jobs[0]!.sessionKey).toBe(ALEX);
   expect(jobs[0]!.systemEvent).toContain("KEEP_QUIET");
+  // The screen's safety check trusts only events the harness wrote itself.
+  expect(jobs[0]!.harnessWritten).toBe(true);
 
   expect(wake("t", account, items, { create, now: at + 60_000 }).held).toEqual([
     { key: "one", why: "recent" },
