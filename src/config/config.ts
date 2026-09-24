@@ -759,6 +759,8 @@ export const ConfigSchema = z.object({
   trading: z.unknown().optional(),
   /** `[fishing]` — owned by integrations/fishing/config.ts. */
   fishing: z.unknown().optional(),
+  /** `[kitchen]` — owned by integrations/kitchen/config.ts. */
+  kitchen: z.unknown().optional(),
   contacts: z.array(ContactSchema).default([]),
   /**
    * Stuck-session recovery sweep. Periodically checks for sessions where
