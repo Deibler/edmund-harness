@@ -186,9 +186,11 @@ Ask for two things only: who eats there, and photographs. Everything else
 The optional `start` arguments are for what somebody volunteers later, never a
 form. Order: `start` with an id and their name, ask for one fridge photo and
 one cupboard photo, `stock` them, show the list and drop what is wrong,
-`accept`, then `kitchen_site`, share the link with `instant-share` and record
-the URL. `check` after each step says what is still missing, derived from the
-ledger itself.
+`accept`, then `kitchen_site`, which publishes their page at its permanent
+address and returns the link once the page has answered there: send that link.
+Names come from the contact book when the phone already knows them; ask only
+for the ones it does not. `check` after each step says what is still missing,
+from what actually answers rather than what is recorded.
 
 ## Writing to the ledger
 
@@ -415,14 +417,17 @@ written recipe, the shelf-check page and the chat threads into the household's
 artifact directory. Panels: **Home**, **Kitchen**, **Explore**, **History**,
 **Shopping**, **Schedule**, **Recap**.
 
-- **Re-render into the same artifact directory** to update a live link; a new
-  tunnel breaks links people already have.
+- **Every site has one permanent address**, served by the kitchen host.
+  `kitchen_site` publishes to it and returns the link only once the page has
+  answered through it. Send only that link, never one from anywhere else.
+- **A site still on an old temporary link** (a `trycloudflare.com` address)
+  keeps it until `kitchen_site host:true` moves it. That link dies whenever its
+  tunnel restarts, and moving changes it, so send the new one.
 - **One directory, one household.** Never point two at one directory.
-- **Rendered is not served.** A correct site nobody serves looks identical from
-  every log line. `kitchen_accounts action:"check"` says so; run it whenever
-  something "is not working".
-- Once served, record the URL with `kitchen_site url:...`. Taps only reach the
-  kitchen from a served site.
+- **Rendered is not served.** `kitchen_accounts action:"check"` reports a site
+  broken when the host cannot reach it through its public address; run it
+  whenever something "is not working". Taps only reach the kitchen from a
+  served site.
 
 ### What settles itself
 

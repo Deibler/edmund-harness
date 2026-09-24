@@ -14,6 +14,8 @@
 #   scripts/launchd/service.sh debug off   # disable debug logging + restart
 #   scripts/launchd/service.sh debug       # show current state
 #   scripts/launchd/service.sh dashboard {install|uninstall|start|stop|restart|status|logs}
+#   scripts/launchd/service.sh kitchen-host {install|uninstall|start|stop|restart|status|logs}
+#   scripts/launchd/service.sh sms-tunnel {install|uninstall|start|stop|restart|status|logs}
 #
 # Notes:
 #   - Uses user-level bootstrap (gui/$UID). Starts at login, not at boot.
@@ -55,6 +57,54 @@ cmd="${1:-status}"
 # machine without hand-editing absolute paths.
 render_plist() {
   sed -e "s|__HARNESS_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$1" > "$2"
+}
+
+# A sidecar with nothing special about its install: render the template, load
+# it, and manage it by label. A symlink to the template instead leaves the
+# placeholders in, and launchd exits 78 (EX_CONFIG) on every start.
+sidecar() {
+  local name="$1" sub="${2:-status}"
+  local label="com.edmund-harness.$name"
+  local src="$REPO_ROOT/scripts/launchd/$label.plist"
+  local dest="$HOME/Library/LaunchAgents/$label.plist"
+  case "$sub" in
+    install)
+      [[ -f "$src" ]] || { echo "plist not found: $src" >&2; exit 1; }
+      mkdir -p "$HOME/Library/LaunchAgents"
+      launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1 || true
+      rm -f "$dest"
+      render_plist "$src" "$dest"
+      launchctl bootstrap "$DOMAIN" "$dest"
+      launchctl enable "$DOMAIN/$label"
+      launchctl kickstart -k "$DOMAIN/$label"
+      sleep 1
+      sidecar "$name" status
+      ;;
+    uninstall)
+      launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
+      rm -f "$dest"
+      echo "→ $name uninstalled"
+      ;;
+    start)   launchctl kickstart "$DOMAIN/$label" ;;
+    stop)    launchctl kill SIGTERM "$DOMAIN/$label" || true ;;
+    restart) launchctl kickstart -k "$DOMAIN/$label" ;;
+    status)
+      if launchctl print "$DOMAIN/$label" >/dev/null 2>&1; then
+        launchctl print "$DOMAIN/$label" | grep -E "state|pid|last exit code|program" | head -5
+      else
+        echo "not loaded — run: $0 $name install"
+      fi
+      ;;
+    logs)
+      local log
+      log=$(plutil -extract StandardOutPath raw "$dest" 2>/dev/null || true)
+      [[ -n "$log" ]] && tail -F "$log" || echo "no log path in $dest" >&2
+      ;;
+    *)
+      echo "usage: $0 $name {install|uninstall|start|stop|restart|status|logs}" >&2
+      exit 2
+      ;;
+  esac
 }
 
 kill_stray_daemons() {
@@ -277,8 +327,12 @@ case "$cmd" in
     esac
     ;;
 
+  kitchen-host|sms-tunnel)
+    sidecar "$cmd" "${2:-status}"
+    ;;
+
   *)
-    echo "usage: $0 {install|uninstall|start|stop|restart|status|logs|errors|debug|dashboard|trading|fishing}" >&2
+    echo "usage: $0 {install|uninstall|start|stop|restart|status|logs|errors|debug|dashboard|trading|fishing|kitchen-host|sms-tunnel}" >&2
     exit 2
     ;;
 esac

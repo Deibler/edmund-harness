@@ -17,6 +17,7 @@ import { existsSync } from "node:fs";
 import { getAccount, householdTitle, listAccounts } from "../src/accounts.ts";
 import { sweepStale } from "../src/decay.ts";
 import { checkAccount } from "../src/doctor.ts";
+import { siteStatus } from "../src/host.ts";
 import { pruneIdeas } from "../src/ideas.ts";
 import { photographMissing } from "../src/photos.ts";
 import { cookable, loadRecipes } from "../src/recipes.ts";
@@ -55,6 +56,7 @@ async function runAccount(id: string): Promise<void> {
 
   // 4. Re-render, so the link shows today.
   const dir = acct.site?.artifact;
+  let siteDown: string | null = null;
   if (dir && existsSync(dir)) {
     const shots = await photographMissing(id, dir, { log: (l) => console.log(`  ${l}`) });
     if (shots.left) console.log(`  ${shots.left} still without a photo`);
@@ -66,19 +68,24 @@ async function runAccount(id: string): Promise<void> {
 
     // Confirm the render is what the live URL serves. A registry pointing at a
     // directory nobody serves reports success while the real page goes stale.
+    // A hosted site is checked by the kitchen host itself, through the public
+    // address, every minute; the doctor reports it below.
     const url = acct.site?.url;
-    if (url) {
+    if (acct.site?.key) {
+      const s = siteStatus({ ...acct, id });
+      if (s.state === "live") console.log(`  verified live (kitchen host, ${s.checked})`);
+    } else if (url) {
       try {
         const res = await fetch(url, { redirect: "follow" });
         const body = await res.text();
-        if (!res.ok) console.error(`  WARNING: ${url} returned ${res.status}`);
+        if (!res.ok) siteDown = `${url} returned ${res.status}`;
         else if (Math.abs(body.length - html.length) > 2048) {
           console.error(
             `  WARNING: live page is ${body.length}b but we just wrote ${html.length}b — site.artifact probably points somewhere that is not being served`,
           );
         } else console.log("  verified live");
       } catch (e) {
-        console.error(`  WARNING: could not reach ${url}: ${(e as Error).message}`);
+        siteDown = `could not reach ${url}: ${(e as Error).message}`;
       }
     }
   } else {
@@ -89,6 +96,16 @@ async function runAccount(id: string): Promise<void> {
   // doctor to report on demand.
   const rep = checkAccount(id);
   const bad = rep.findings.filter((x) => x.level === "broken");
+  // An unreachable temporary link used to print a warning and then "nothing
+  // broken"; it is broken.
+  if (siteDown) {
+    bad.push({
+      level: "broken",
+      what: "site",
+      detail: siteDown,
+      fix: "kitchen_site host:true moves it to the permanent address",
+    });
+  }
   if (bad.length) {
     console.error(`  ${bad.length} thing(s) BROKEN on this household:`);
     for (const b of bad) console.error(`    ${b.what}: ${b.detail}\n      -> ${b.fix}`);

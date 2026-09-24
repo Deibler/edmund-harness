@@ -214,3 +214,98 @@ check(
     return s.ready && !s.steps.find((x) => x.id === "cooked")!.done;
   })(),
 );
+
+/* ── names the phone already knows ───────────────────────────────────────── */
+
+section("names from contacts");
+
+check(
+  "a member with no name gets the first name the contact book has, and set names stay",
+  (() => {
+    const { joinAccount, nameMembers, updateAccount } = require("../src/accounts.ts");
+    const PARTNER = "imessage:dm:+15551239999";
+    const STRANGER = "imessage:dm:+15551238888";
+    joinAccount("morgan", PARTNER);
+    joinAccount("morgan", STRANGER);
+    joinAccount("morgan", "imessage:group:any;+;kitchen-group");
+    updateAccount("morgan", { people: { [NEW]: "Morgan" } });
+    const book: Record<string, string> = {
+      "+15551230000": "Morgana Whoever",
+      "+15551239999": "Heather  Example",
+      "+15551238888": "+1 (555) 123-8888",
+    };
+    const added = nameMembers("morgan", (h: string) => book[h]);
+    const people = getAccount("morgan")!.people!;
+    return (
+      JSON.stringify(added) === JSON.stringify({ [PARTNER]: "Heather" }) &&
+      people[NEW] === "Morgan" &&
+      people[PARTNER] === "Heather" &&
+      people[STRANGER] === undefined
+    );
+  })(),
+);
+
+check(
+  "and the checklist is not done while anybody who eats there is still unnamed",
+  (() => {
+    const people = state("morgan").steps.find((s) => s.id === "people")!;
+    return !people.done && people.next.includes("(555) 123-8888") && !state("morgan").ready;
+  })(),
+);
+
+/* ── a site counts once it answers ───────────────────────────────────────── */
+
+section("the site step, with a permanent address");
+
+check(
+  "a recorded URL is not a site: with the kitchen host set up, only a fresh check through it is",
+  (() => {
+    const { applyKitchenConfig } = require("../src/settings.ts");
+    const { updateAccount } = require("../src/accounts.ts");
+    const { writeStatus } = require("../src/host.ts");
+    process.env.EDMUND_DATA_DIR = BASE;
+    applyKitchenConfig({
+      paths: { data_dir: BASE },
+      kitchen: { dir: BASE, site_origin: "https://kitchen.example.com" },
+    });
+    updateAccount("morgan", {
+      people: { ...getAccount("morgan")!.people, "imessage:dm:+15551238888": "Sam" },
+    });
+    const site = () => state("morgan").steps.find((s) => s.id === "site")!;
+    // A quick-tunnel URL from before: recorded, not hosted.
+    const recordedOnly = !site().done;
+    updateAccount("morgan", {
+      site: {
+        artifact: BASE,
+        key: "morgan-key",
+        port: 4801,
+        url: "https://kitchen.example.com/?key=morgan-key",
+      },
+    });
+    const now = new Date().toISOString();
+    const status = (lastOk: string | null) =>
+      writeStatus({
+        updatedAt: now,
+        origin: "https://kitchen.example.com",
+        tunnel: { pid: 1, restarts: 0 },
+        households: {
+          morgan: {
+            port: 4801,
+            pid: 2,
+            lastOk,
+            lastError: lastOk ? null : { at: now, why: "HTTP 530" },
+          },
+        },
+      });
+    status(null);
+    const down = site();
+    status(now);
+    return (
+      recordedOnly &&
+      !down.done &&
+      down.next.includes("HTTP 530") &&
+      site().done &&
+      state("morgan").ready
+    );
+  })(),
+);

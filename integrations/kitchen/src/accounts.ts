@@ -251,6 +251,32 @@ export function leaveAccount(id: string, who: string): Account {
 }
 
 /** Shallow-merge settings. Absent keys stay absent, so derived values stay derived. */
+/**
+ * Give every member without a name the first name the contact book has for
+ * them. A household page titled "(717) 951-1380" reads as a mistake, and
+ * nobody should be asked a name their phone already knows. Names already set
+ * are never changed. Returns what it added.
+ */
+export function nameMembers(
+  id: string,
+  lookup: (handle: string) => string | null | undefined,
+): Record<string, string> {
+  const acct = getAccount(id);
+  if (!acct) return {};
+  const added: Record<string, string> = {};
+  for (const m of acct.members) {
+    if (m.startsWith("imessage:group:") || acct.people?.[m]) continue;
+    const first = lookup(m.split(":").pop() ?? "")
+      ?.trim()
+      .split(/\s+/)[0];
+    if (first && !/^[+\d(]/.test(first)) added[m] = first;
+  }
+  if (Object.keys(added).length) {
+    updateAccount(id, { people: { ...(acct.people ?? {}), ...added } });
+  }
+  return added;
+}
+
 export function updateAccount(id: string, patch: Partial<Account>): Account {
   const reg = loadRegistry();
   const acct = reg.tenants[id];
