@@ -39,7 +39,8 @@ export class CronStore {
         last_fired_ms INTEGER,
         status TEXT NOT NULL DEFAULT 'active',
         grace_period_ms INTEGER,
-        attach_images_json TEXT
+        attach_images_json TEXT,
+        harness_written INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS jobs_fire_idx ON jobs(status, next_fire_ms);
     `);
@@ -52,6 +53,12 @@ export class CronStore {
     // Migration: add attach_images_json for wake-ups that carry images.
     try {
       this.db.exec("ALTER TABLE jobs ADD COLUMN attach_images_json TEXT");
+    } catch {
+      // Column already exists.
+    }
+    // Migration: who wrote the event. Older rows default to "not the harness".
+    try {
+      this.db.exec("ALTER TABLE jobs ADD COLUMN harness_written INTEGER NOT NULL DEFAULT 0");
     } catch {
       // Column already exists.
     }
@@ -75,10 +82,11 @@ export class CronStore {
       status: "active",
       gracePeriodMs,
       attachImages,
+      harnessWritten: input.harnessWritten === true,
     };
     this.db
       .query(
-        "INSERT INTO jobs(id, session_key, system_event, schedule_json, next_fire_ms, created_at, last_fired_ms, status, grace_period_ms, attach_images_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO jobs(id, session_key, system_event, schedule_json, next_fire_ms, created_at, last_fired_ms, status, grace_period_ms, attach_images_json, harness_written) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       )
       .run(
         job.id,
@@ -91,6 +99,7 @@ export class CronStore {
         job.status,
         gracePeriodMs,
         attachImages ? JSON.stringify(attachImages) : null,
+        job.harnessWritten ? 1 : 0,
       );
     return job;
   }
@@ -186,17 +195,21 @@ export class CronStore {
       changes.gracePeriodMs !== undefined ? changes.gracePeriodMs : job.gracePeriodMs;
     const newNext = nextFire(newSchedule, Date.now());
     if (!newNext) throw new Error("updated schedule would never fire");
+    // Only the updater's code knows who wrote new text, and today every
+    // caller is a model tool, so rewritten text is never the harness's.
+    const harnessWritten = job.harnessWritten && newEvent === job.systemEvent;
     this.db
       .query(
-        "UPDATE jobs SET system_event=?, schedule_json=?, next_fire_ms=?, grace_period_ms=? WHERE id=? AND status='active'",
+        "UPDATE jobs SET system_event=?, schedule_json=?, next_fire_ms=?, grace_period_ms=?, harness_written=? WHERE id=? AND status='active'",
       )
-      .run(newEvent, JSON.stringify(newSchedule), newNext, newGrace, id);
+      .run(newEvent, JSON.stringify(newSchedule), newNext, newGrace, harnessWritten ? 1 : 0, id);
     return {
       ...job,
       systemEvent: newEvent,
       schedule: newSchedule,
       nextFireMs: newNext,
       gracePeriodMs: newGrace,
+      harnessWritten,
     };
   }
 
@@ -319,6 +332,7 @@ type RawRow = {
   status: CronJob["status"];
   grace_period_ms: number | null;
   attach_images_json: string | null;
+  harness_written: number | null;
 };
 
 /** Hydrate a DB row into a CronJob, or `null` if its schedule blob is
@@ -353,5 +367,6 @@ function rowToJob(r: RawRow): CronJob | null {
     status: r.status,
     gracePeriodMs: r.grace_period_ms,
     attachImages,
+    harnessWritten: r.harness_written === 1,
   };
 }

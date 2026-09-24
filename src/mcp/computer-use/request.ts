@@ -59,19 +59,23 @@ export function requestReader(config: Config, sessionKey: string): () => string[
 }
 
 /**
- * What started this turn, when it was not somebody's message: the scheduled
- * event (a kitchen wake asking for a household's note to be brought up to
- * date, a morning review, a reminder) that fired for this session after its
+ * What started this turn, when it was not somebody's message: an event the
+ * harness itself wrote (a kitchen wake asking for a household's note to be
+ * brought up to date, a morning review) that fired for this session after its
  * latest message, within the last TURN_MS. Null when the latest thing to
- * happen was a person writing.
+ * happen was a person writing, and null for an event anyone else wrote: the
+ * classifier is told this text is the harness's own request, so a reminder the
+ * model scheduled must not reach it that way, or the model could write itself
+ * a permission.
  */
 export function startedBy(
-  job: Pick<CronJob, "systemEvent" | "lastFiredMs"> | null,
+  job: Pick<CronJob, "systemEvent" | "lastFiredMs" | "harnessWritten"> | null,
   latestMessageMs: number | null,
   now: number,
 ): string | null {
   const fired = job?.lastFiredMs;
   if (!job || !fired || now - fired > TURN_MS) return null;
+  if (!job.harnessWritten) return null;
   if (latestMessageMs !== null && latestMessageMs > fired) return null;
   const event =
     job.systemEvent.length > EVENT_CHARS
@@ -83,8 +87,11 @@ export function startedBy(
 /**
  * `startedBy` against the real sources: the daemon's cron store, which marks
  * a job fired before its turn begins, and chat.db for the latest message
- * anybody sent. Both are records the model cannot write to, so the
- * classifier hears why the turn is running from the harness, not the model.
+ * anybody sent. The model's tools can add jobs to the cron store
+ * (schedule_reminder), but none marks a job harness-written, so the classifier
+ * hears why the turn is running from the harness, not the model. A session
+ * with host Bash (`model_host_access = "full"`) could edit cron.db itself, but
+ * it could as easily drive the screen without these tools at all.
  */
 export function triggerReader(
   config: Config,
