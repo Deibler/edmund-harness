@@ -1,7 +1,0 @@
----
-"edmund-harness": patch
----
-
-The kitchen now records which lines of a household's Apple Note Edmund wrote, and only those can be deleted. Before, a line counted as his by where it sat: a scheduled note sync was told to delete anything above the sentinel that was not on the list, and the screen check was told to allow it, so an item somebody typed between two list lines was deleted and never reached the list, and a reworded line was overwritten. Now `kitchen_shopping noteWritten:true` takes the `noteVersion` printed with the lines Edmund worked from, records those lines, and later wakes name only his own lines that have left the list. Any other line is treated as the household's and goes onto the list. The screen check allows a scheduled deletion only for lines listed under that heading. A household with no record yet starts from the old sync's `notes.json`, and with no record at all nothing above the sentinel is deleted.
-
-A confirmation now records the version Edmund was shown, so a list that changed while he was editing stays behind and is woken for again, where before the change was marked as written. The watch pass does not spend a note wake while the Mac is locked: it waits and wakes once it can. A tap on the site's Apple Notes button now gets a new wake even after the list's three attempts ran out, and it makes the note due once, so later list changes wait the usual two minutes. `canEditNotes` uses the screen server's own app matching, so an entry like "Notes.app" counts.
