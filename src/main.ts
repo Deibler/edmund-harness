@@ -59,7 +59,7 @@ import { configureSendVerification } from "./imessage/send.ts";
 import { startWatcher } from "./imessage/watcher.ts";
 import * as intSettings from "./integrations/settings.ts";
 import { routeForMessage, sessionKeyForOrchestrator } from "./orchestrators/registry.ts";
-import { sweepGroupArchives, sweepPersonArchives } from "./persona/archive.ts";
+import { sweepAllArchives } from "./persona/archive.ts";
 import { PersonMaintainer } from "./persona/maintainer-observer.ts";
 import { reapSandboxCaches } from "./persona/sandbox-reaper.ts";
 import { initSemaphore } from "./proactive/semaphore.ts";
@@ -691,17 +691,16 @@ async function main() {
     console.log(`[triggers] data-trigger watcher started (${armed} armed)`);
   }
 
-  // Person-file size gate: shrink any oversized live profile by moving
-  // its oldest history bullets to the append-only archive (indexed +
-  // searchable — nothing deleted). Runs once at boot; the maintainer
-  // re-runs it per file after each append.
+  // Size gate for person files, group files and SOUL.md: shrink any
+  // oversized live file by moving its oldest dated bullets to the
+  // append-only archive (indexed + searchable — nothing deleted). Runs once
+  // at boot; the maintainer re-runs it per file after each append, and
+  // appendSelfNote after each self-note.
   try {
-    const swept = sweepPersonArchives();
-    const sweptGroups = sweepGroupArchives();
-    const files = swept.files + sweptGroups.files;
-    if (files > 0) {
+    const swept = sweepAllArchives();
+    if (swept.files > 0) {
       console.log(
-        `[persona-archive] archived ${swept.moved + sweptGroups.moved} aged bullets from ${files} oversized file(s)`,
+        `[persona-archive] archived ${swept.moved} aged bullets from ${swept.files} oversized file(s)`,
       );
     }
   } catch (err) {

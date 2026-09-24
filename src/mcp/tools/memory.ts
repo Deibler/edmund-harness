@@ -19,7 +19,6 @@ const SELF_FILES: SelfFile[] = ["SOUL.md", "IDENTITY.md", "AGENTS.md"];
 const RememberSelfInput = z.object({
   section: z
     .enum(SELF_SECTIONS as [SelfSection, ...SelfSection[]])
-    .default("other")
     .describe(
       [
         "Which evolving-character section to append under in SOUL.md:",
@@ -27,9 +26,9 @@ const RememberSelfInput = z.object({
         "  • running-bits  — inside jokes, recurring shorthand built up across threads",
         "  • tastes        — specific aesthetic preferences (authors, coffee, bands, movies)",
         "  • annoyances    — real, specific irritations Edmund has pushed back on",
-        "  • other         — durable context not fitting the above (dates, project facts)",
+        "  • other         — facts about your own life that fit none of the above",
         "",
-        "Defaults to `other` when omitted.",
+        "Choose deliberately; there is no default. It used to be `other`, and 101 of 106 self-notes landed there as recipes and incident write-ups while the four character sections stood still.",
       ].join("\n"),
     ),
   note: z
@@ -213,6 +212,8 @@ export function memoryTools(_ctx: ToolContext): ToolDef[] {
         "",
         "When to use: you reasoned something out and it held up, you gave advice and watched what happened, or a piece of conventional wisdom failed in practice. Record REJECTIONS and FAILURES too — 'told a runner to drop lifting, ignored every time' is worth more than a citation, because no article will tell you that.",
         "",
+        'This is also where working know-how goes: a recipe that finally worked, a tool or API that behaves differently from its docs, a mistake you made and the check that would have caught it. Name the subject as the job ("video editing", "music generation", "verification"), not the tool.',
+        "",
         "NOT for facts about one person (use remember_about_person) or about yourself (remember_about_self). The test: would this still be useful with a different person, next year? Then it belongs here.",
         "",
         "Indexed globally, so it surfaces by recall in any conversation, not just the one it came from.",
@@ -254,6 +255,8 @@ export function memoryTools(_ctx: ToolContext): ToolDef[] {
         "Append a dated note to one of the evolving-character sections of SOUL.md. This is how you accrete identity over time — opinions you've held publicly, running bits, tastes, things that bug you, durable facts.",
         "",
         "When to use: a position you've stated more than once, a recurring joke that landed, a preference you keep coming back to, a real irritation you've pushed back on. NOT for one-off observations or things specific to one person (use `remember_about_person` for those).",
+        "",
+        "NOT for how to do a job: recipes, tool or API quirks, workarounds, or the write-up of a mistake and the check that prevents it. SOUL.md is read on every turn of every conversation, so a note about ffmpeg there is paid for in every chat that never touches video. Those go in `remember_about_subject` (or a skill), where recall brings them back when the job comes up.",
         "",
         "The bullet is dated automatically. Re-running with the same text under the same section is a no-op (idempotent), so it's safe to restate if you're not sure. Hot-read: takes effect on the next turn, no restart needed.",
       ].join("\n"),

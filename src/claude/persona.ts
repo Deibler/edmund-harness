@@ -151,7 +151,7 @@ export function personaFingerprint(): string {
  *  to force every session to cold-spawn on next turn. The actual content
  *  of those rules isn't in the fingerprint (it lives in source, not files),
  *  so this version stamp is how code changes propagate. */
-const SHARED_PROMPT_VERSION = "v2026.05.17.b";
+const SHARED_PROMPT_VERSION = "v2026.09.24.a";
 
 /**
  * @public Imported by src/persona/{crud,write-note,ensure,maintainer}.ts.
