@@ -5,7 +5,7 @@ import { findTopicShifts, pickActiveSegment, segmentByGaps } from "../imessage/s
 import type { InboundMessage, ReplyContext } from "../imessage/types.ts";
 import { makeHistoryFilter, viewerForSession } from "../orchestrators/visibility.ts";
 import { copyAttachments } from "../persona/copy-received.ts";
-import { chatIdFromKey, isSmsSession } from "../sessions/key.ts";
+import { chatIdFromKey, isMirrorSession, isSmsSession, isTradingSession } from "../sessions/key.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import type { Deps } from "./deps.ts";
@@ -235,6 +235,34 @@ export function buildHistoryBundle(
       : undefined;
 
   return { lines: renderedLines, scope, invocation, catchUpNudge };
+}
+
+/**
+ * The recent thread for a turn no message started: a scheduled event or a
+ * proactive fire. Those turns resume the session's model conversation when
+ * there is one. When there is none (first contact, a cleared or re-anchored
+ * session, a provider switch) the model woke knowing only the event text: a
+ * reminder landing in a live conversation it could not see, or a proactive
+ * fire whose own rubric asks whether the person just wrote, with no way to
+ * tell. This is the window an inbound cold start carries, read the same way:
+ * SMS from its own store, orchestrator visibility applied, nothing for the
+ * mirror or trading sessions, which have no chat.
+ */
+export function recentThreadLines(
+  sessionKey: SessionKey,
+  chatGuid: string,
+  deps: Pick<Deps, "config" | "chatDb" | "contacts" | "state" | "sms">,
+): string[] {
+  const { config, chatDb, contacts } = deps;
+  const limit = config.behavior.history_messages;
+  if (limit <= 0 || isMirrorSession(sessionKey) || isTradingSession(sessionKey)) return [];
+  if (isSmsSession(sessionKey)) {
+    if (!deps.sms) return [];
+    return formatHistoryLines(deps.sms.history(chatIdFromKey(sessionKey), limit), contacts);
+  }
+  const visible = makeHistoryFilter(viewerForSession(sessionKey), chatGuid, config, deps.state);
+  const lines = getRecentMessages(chatDb, chatGuid, Number.MAX_SAFE_INTEGER, limit).filter(visible);
+  return formatHistoryLines(lines, contacts);
 }
 
 /**

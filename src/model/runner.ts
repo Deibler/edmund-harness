@@ -6,6 +6,7 @@ import type { Config } from "../config/config.ts";
 import { endScreenHold, screenLockPath } from "../mcp/computer-use/lock.ts";
 import { noteTurnStart } from "../mcp/computer-use/turn.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
+import type { SessionKey } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { log } from "../util/log.ts";
 import { type ModelBackend, backendForModel, transitionModelSession } from "./backend.ts";
@@ -99,6 +100,40 @@ export function noteScreenTurn(config: Config, sessionKey: string, cronJob: stri
   }
 }
 
+/** The model a session runs on, and which CLI that model belongs to. */
+function sessionModel(sessionKey: SessionKey, config: Config) {
+  const orchestrator = orchestratorForSession(sessionKey, config);
+  const override =
+    orchestrator && !orchestrator.builtin && orchestrator.model ? orchestrator.model : null;
+  const profile = modelProfileForSession(sessionKey, config, override);
+  return { profile, backend: backendForModel(profile.model) };
+}
+
+/** What runModel will do with this session's stored model conversation. */
+function sessionTransition(sessionKey: SessionKey, config: Config, store: StateStore) {
+  const { profile, backend } = sessionModel(sessionKey, config);
+  const existing = store.getSession(sessionKey);
+  const transition = transitionModelSession(
+    {
+      sessionId: existing?.claudeSessionId ?? null,
+      backend: existing?.sessionBackend ?? null,
+    },
+    backend,
+  );
+  return { profile, backend, transition };
+}
+
+/**
+ * Whether runModel will start this session without its model conversation:
+ * nothing stored, or a provider switch that drops it. The inbound pipeline
+ * decides this for itself before it builds its envelope. Turns that build
+ * their own envelope (scheduled events, proactive fires) ask here, so a cold
+ * start carries the recent thread instead of only the event text.
+ */
+export function startsCold(sessionKey: SessionKey, config: Config, store: StateStore): boolean {
+  return sessionTransition(sessionKey, config, store).transition.sessionId === null;
+}
+
 /**
  * Shared turn entry point. Model selection remains where it always was in
  * config; only the effective model name decides which installed CLI runs it.
@@ -108,19 +143,7 @@ export async function runModel(
   config: Config,
   store: StateStore,
 ): Promise<ModelRunResult> {
-  const orchestrator = orchestratorForSession(rawInput.sessionKey, config);
-  const override =
-    orchestrator && !orchestrator.builtin && orchestrator.model ? orchestrator.model : null;
-  const profile = modelProfileForSession(rawInput.sessionKey, config, override);
-  const backend = backendForModel(profile.model);
-  const existing = store.getSession(rawInput.sessionKey);
-  const transition = transitionModelSession(
-    {
-      sessionId: existing?.claudeSessionId ?? null,
-      backend: existing?.sessionBackend ?? null,
-    },
-    backend,
-  );
+  const { profile, backend, transition } = sessionTransition(rawInput.sessionKey, config, store);
 
   let input = rawInput;
   if (transition.switched) {

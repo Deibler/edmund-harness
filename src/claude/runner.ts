@@ -181,13 +181,10 @@ export type RunInput = {
   /** Cancels this exact turn, including its active Claude/tool process tree. */
   signal?: AbortSignal;
   /**
-   * Force a truly fresh cold spawn — use a random session id instead of
-   * the deterministic `deriveSessionId(sessionKey)`. Set by the turn
-   * pipeline right after consuming a pending compaction so the new turn
-   * starts with an empty JSONL instead of colliding on the derived id
-   * (whose old, full JSONL is still on disk) and getting silently fed
-   * back into `--resume` by the collision fallback — which defeats the
-   * entire point of compaction.
+   * Start a new model session instead of resuming the stored one (see
+   * resumeIdFor). runModel sets it on a provider switch, whose stored thread
+   * belongs to the other CLI. Nothing else starts fresh: a persona edit
+   * resumes, and compaction runs in place on the warm worker.
    */
   freshSession?: boolean;
   /**
@@ -205,6 +202,18 @@ export type RunInput = {
     campaignContextPath: string | null;
   };
 };
+
+/**
+ * The stored session to resume, or null for a fresh one. Only an explicit
+ * `freshSession` request starts fresh; a persona edit resumes, because the
+ * new prompt arrives with the next process either way.
+ */
+export function resumeIdFor(
+  existing: { claudeSessionId: string | null } | null | undefined,
+  freshSession: boolean,
+): string | null {
+  return freshSession ? null : (existing?.claudeSessionId ?? null);
+}
 
 export type RunUsage = {
   input_tokens?: number;
@@ -254,39 +263,35 @@ export async function runClaude(
     if (derived) input = { ...input, guest: derived };
   }
   const existing = store.getSession(input.sessionKey);
-  // Persona-edit auto-invalidation. The system prompt of a `--resume`d
-  // session is whatever was baked in at first cold-spawn; later
-  // --append-system-prompt content is concatenated but the model's
-  // attention stays on the original. So when the operator (or the model
-  // itself) edits IDENTITY/SOUL/VENUE_*, those changes don't actually
-  // take effect on warm/resumed sessions until something forces a
-  // cold-spawn. We track a fingerprint per session and trigger a fresh
-  // spawn whenever it drifts. The old JSONL is orphaned (just a cache);
-  // the model picks up the new prompt cleanly. `effectiveFreshSession`
-  // OR's the caller's explicit request (post-compact) with this auto
-  // detector — either path takes the freshSession code path below.
+  // Persona edits. The system prompt is a spawn argument
+  // (--append-system-prompt) and the CLI rebuilds it every time a process
+  // starts, including on --resume: one session resumed on 2026-09-21 and
+  // 2026-09-23 carries each day's SOUL.md in its prompt_snapshot records. So
+  // an edit reaches a session the next time its worker process starts, and
+  // the conversation carries on. A warm worker keeps the prompt it started
+  // with until the pool recycles it.
   //
-  // Steady-state: when a recorded hash exists and differs from the
-  // current one, force a cold-spawn this turn. Sessions with no
-  // recorded hash yet (pre-feature or brand-new) just get the current
-  // hash stamped as their baseline below — no migration spawn-storm.
+  // This used to log "cold-spawn this turn" and "fresh session id", and clear
+  // the stored id, on the theory that a resumed session kept its first
+  // prompt. The spawn below still resumed the id it had read before the clear
+  // (all 636 logged events resumed or reused a warm worker), so the log
+  // described a fresh start that never happened; a real one would only have
+  // dropped the thread. Now it records what does happen.
   const currentFingerprint = personaFingerprint();
-  const personaChanged =
-    existing?.claudeSessionId != null &&
+  if (
+    existing?.claudeSessionId &&
     existing.systemPromptHash != null &&
-    existing.systemPromptHash !== currentFingerprint;
-  if (personaChanged) {
-    log.info("claude", "persona edit detected → cold-spawn this turn", {
+    existing.systemPromptHash !== currentFingerprint
+  ) {
+    const warm = getPool(config)?.currentRebindKey(input.sessionKey) != null;
+    log.info("claude", "persona edited since this session last ran", {
       session: input.sessionKey,
-      old_hash: existing?.systemPromptHash?.slice(0, 8),
+      resumes: existing.claudeSessionId.slice(0, 8),
+      new_prompt: warm ? "when the warm worker is recycled" : "this turn",
+      old_hash: existing.systemPromptHash.slice(0, 8),
       new_hash: currentFingerprint.slice(0, 8),
     });
-    // Drop the stale session id so the spawn path uses a fresh cohort
-    // and doesn't get pulled back into the old JSONL by the collision
-    // fallback. The fresh cold-spawn re-bakes the new system prompt.
-    store.setClaudeSessionId(input.sessionKey, null);
   }
-  const effectiveFreshSession = input.freshSession === true || personaChanged;
   // Stamp the current fingerprint as the baseline for next turn. For
   // brand-new sessions where the row doesn't exist yet, this is a no-op
   // (UPDATE finds nothing); the row will be created by upsertSession in
@@ -294,6 +299,10 @@ export async function runClaude(
   if (existing && existing.systemPromptHash !== currentFingerprint) {
     store.setSystemPromptHash(input.sessionKey, currentFingerprint);
   }
+  // A fresh session is started only when the caller asks for one (runModel
+  // does on a provider switch). Everything below resumes this id, so it is
+  // the one place that decides.
+  const resumeId = resumeIdFor(existing, input.freshSession === true);
   const mcpConfigs = ensureMcpConfig(config);
   // Pick the lighter mcp config (no chrome-devtools) by default; switch to
   // the browser-enabled one only when the turn looks like it'll need it.
@@ -443,11 +452,11 @@ export async function runClaude(
   // Random UUIDs avoid the collision entirely; resume-ability comes from
   // the claude_session_id we persist after a successful cold spawn.
   const derivedId = crypto.randomUUID();
-  if (effectiveFreshSession) {
+  if (input.freshSession === true) {
     log.info("claude", "fresh session id (cold start)", {
       session: input.sessionKey,
       new_id: derivedId.slice(0, 8),
-      reason: input.freshSession ? "post-compact" : "persona-edit",
+      reason: "fresh session requested",
     });
   }
 
@@ -469,7 +478,7 @@ export async function runClaude(
       useStreamJsonInput,
       needsBrowser,
       derivedId,
-      existingSessionId: existing?.claudeSessionId ?? null,
+      existingSessionId: resumeId,
     });
   }
 
@@ -521,8 +530,8 @@ export async function runClaude(
   // user-visible latency path — the current turn succeeds even at the soft
   // limit; only the *next* turn risks hitting the hard limit, and the
   // post-turn pass takes care of that. See `schedulePostTurnCompact` below.
-  if (existing?.claudeSessionId) {
-    const result = await attempt(["--resume", existing.claudeSessionId]);
+  if (resumeId) {
+    const result = await attempt(["--resume", resumeId]);
     if (result.ok) {
       store.clearError(input.sessionKey);
       // Fire-and-forget: the next turn won't start until handleBatchInner
@@ -559,7 +568,7 @@ export async function runClaude(
           return coldStartWithCollisionFallback(attempt, derivedId);
         }
         if (heal.ok && heal.changed) {
-          const retry = await attempt(["--resume", existing.claudeSessionId]);
+          const retry = await attempt(["--resume", resumeId]);
           if (retry.ok) {
             store.clearError(input.sessionKey);
             return retry;

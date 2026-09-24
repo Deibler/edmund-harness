@@ -17,6 +17,7 @@ import { humanMs, log, snippet } from "../util/log.ts";
 import { inboundRetryAlreadyAnswered } from "./retry-marker.ts";
 import type { CronStore } from "./store.ts";
 import type { CronJob } from "./types.ts";
+import { type RecentThread, wakeThreadBlock } from "./wake-thread.ts";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 5 * 60 * 1000;
@@ -46,6 +47,7 @@ export async function fireJob(
   locks: SessionLocks,
   crons: CronStore,
   ghostPrefs: GhostPrefsStore,
+  recentThread: RecentThread,
 ): Promise<void> {
   // Brown-nose route: cron rows enqueued by the ghost have a tagged
   // systemEvent. They use a different envelope shape (no "scheduled
@@ -53,8 +55,15 @@ export async function fireJob(
   // concurrency semaphore.
   if (isBrownNoseEvent(job.systemEvent)) {
     await locks.withLock(job.sessionKey, async () => {
-      await fireBrownNose(job, config, state, echoes, crons, ghostPrefs, () =>
-        locks.touch(job.sessionKey),
+      await fireBrownNose(
+        job,
+        config,
+        state,
+        echoes,
+        crons,
+        ghostPrefs,
+        () => locks.touch(job.sessionKey),
+        recentThread,
       );
     });
     return;
@@ -100,8 +109,16 @@ export async function fireJob(
   }
 
   await locks.withLock(job.sessionKey, async () => {
-    await runAndDeliver(job, config, state, echoes, alert, crons, session.chatGuid, () =>
-      locks.touch(job.sessionKey),
+    await runAndDeliver(
+      job,
+      config,
+      state,
+      echoes,
+      alert,
+      crons,
+      session.chatGuid,
+      () => locks.touch(job.sessionKey),
+      recentThread,
     );
   });
 }
@@ -114,15 +131,18 @@ async function runAndDeliver(
   alert: OperatorAlert,
   crons: CronStore,
   chatGuid: string,
-  onHeartbeat?: () => void,
+  onHeartbeat: (() => void) | undefined,
+  recentThread: RecentThread,
 ): Promise<void> {
   const now = Date.now();
   const latenessMs = now - job.nextFireMs;
   const latenessNote = latenessMs > 90_000 ? ` · ${Math.round(latenessMs / 60_000)}m late` : "";
+  const thread = wakeThreadBlock(job.sessionKey, chatGuid, config, state, recentThread);
   const envelope = [
     `[Scheduled event · scheduled=${new Date(job.nextFireMs).toISOString()} fired=${new Date(now).toISOString()}${latenessNote}]`,
     "",
     job.systemEvent,
+    ...(thread ? ["", thread] : []),
   ].join("\n");
 
   const kind = classifyEvent(job.systemEvent);
