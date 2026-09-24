@@ -11,10 +11,26 @@
  * A holder whose process has died loses the lock at once. One that is alive
  * but has not acted for HOLD_IDLE_MS is presumed stuck and loses it too, and
  * a holder that notices it has been idle that long lets go on its own.
+ *
+ * Every read-then-change of the lock file (taking it, refreshing it, taking
+ * it from a dead or idle holder, letting it go, clearing it for the daemon)
+ * happens under a kernel lock on a sibling file (`guarded`), so no two
+ * processes act on the same reading. Without it, two servers that both read a
+ * dead holder's lock could both end up holding the screen: one removed the
+ * dead lock and wrote its own, and the other then removed that.
  */
 
 import { spawnSync } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  constants,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 /**
@@ -62,31 +78,25 @@ export class ScreenLock {
    */
   acquire(): string | null {
     mkdirSync(dirname(this.path), { recursive: true });
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const outcome = guarded(this.path, () => {
       const current = readHolder(this.path);
       if (current && current.pid === this.pid) {
-        this.write({ ...current, touched: this.now() });
-        this.held = true;
+        writeHolder(this.path, { ...current, touched: this.now() });
         return null;
       }
       if (current && this.alive(current.pid) && this.now() - current.touched < HOLD_IDLE_MS) {
         const secs = Math.round((this.now() - current.since) / 1000);
         return `Another conversation has been using the screen for ${secs}s.`;
       }
-      if (current) this.remove();
-      try {
-        const fd = openSync(this.path, "wx");
-        closeSync(fd);
-        const t = this.now();
-        this.write({ pid: this.pid, session: this.session, since: t, touched: t });
-        this.held = true;
-        return null;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-        // Another process created it between our read and our create.
-      }
-    }
-    return "Another conversation just started using the screen.";
+      // Free, or its holder is dead or idle: nobody else can be between this
+      // reading and this write.
+      const t = this.now();
+      writeHolder(this.path, { pid: this.pid, session: this.session, since: t, touched: t });
+      return null;
+    });
+    if (!outcome) return "Another conversation just started using the screen.";
+    if (outcome.value === null) this.held = true;
+    return outcome.value;
   }
 
   /** Whether another conversation holds the screen right now. */
@@ -98,18 +108,57 @@ export class ScreenLock {
   release(): void {
     if (!this.held) return;
     this.held = false;
-    if (readHolder(this.path)?.pid === this.pid) this.remove();
+    guarded(this.path, () => {
+      if (readHolder(this.path)?.pid === this.pid) removeFile(this.path);
+    });
   }
+}
 
-  private write(h: Holder): void {
-    writeFileSync(this.path, JSON.stringify(h));
-  }
+/** Darwin's open(2) flag that takes an exclusive flock on the file as it opens. */
+const O_EXLOCK = 0x20;
+/** How long to wait for another process to leave its guarded section, which takes microseconds. */
+const GUARD_WAIT_MS = 250;
+const GUARD_RETRY_MS = 2;
 
-  private remove(): void {
+/**
+ * Run `fn` holding the guard for the lock file at `path`: an exclusive flock
+ * on `path.guard`, taken as the file opens and dropped when it closes or its
+ * process dies, so a crash can never leave it held. The guard file is never
+ * deleted: a process waiting on a deleted file's lock would hold a lock
+ * nobody else checks. Null when another process kept the guard for longer
+ * than GUARD_WAIT_MS. macOS only, like the rest of this server.
+ */
+function guarded<T>(path: string, fn: () => T): { value: T } | null {
+  const flags = constants.O_RDWR | constants.O_CREAT | constants.O_NONBLOCK | O_EXLOCK;
+  for (let waited = 0; waited <= GUARD_WAIT_MS; waited += GUARD_RETRY_MS) {
+    let fd: number;
     try {
-      unlinkSync(this.path);
-    } catch {}
+      fd = openSync(`${path}.guard`, flags, 0o600);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EAGAIN") throw err;
+      Bun.sleepSync(GUARD_RETRY_MS);
+      continue;
+    }
+    try {
+      return { value: fn() };
+    } finally {
+      closeSync(fd);
+    }
   }
+  return null;
+}
+
+/** Replace the lock file whole, so a reader outside the guard never sees half of it. */
+function writeHolder(path: string, h: Holder): void {
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(h));
+  renameSync(tmp, path);
+}
+
+function removeFile(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {}
 }
 
 /**
@@ -136,10 +185,15 @@ export function endScreenHold(
     (deps.signal ?? ((pid) => process.kill(pid, END_HOLD_SIGNAL)))(holder.pid);
     return "signalled";
   }
-  try {
-    unlinkSync(path);
-  } catch {}
-  return "cleared";
+  // Only if it is still that holder's: another server may have taken the
+  // screen from it since it was read.
+  const cleared = guarded(path, () => {
+    const now = readHolder(path);
+    if (now?.pid !== holder.pid || now.since !== holder.since) return false;
+    removeFile(path);
+    return true;
+  });
+  return cleared?.value ? "cleared" : "none";
 }
 
 function readHolder(path: string): Holder | null {

@@ -150,6 +150,7 @@ async function runAndDeliver(
       // bridge/relay.ts), carry the depth forward so the receiving
       // session-bot can't relay back beyond MAX_RELAY_DEPTH.
       inboundDepth: parseInboundDepth(job.systemEvent),
+      cronJob: job.id,
       onHeartbeat,
     },
     config,

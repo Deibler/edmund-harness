@@ -148,7 +148,12 @@ export type JevGuardOptions = {
   apiKey: string;
   model: string;
   threshold: number;
-  mode: GuardMode;
+  /**
+   * Enforce or shadow. A function is asked on every check, so switching
+   * [computer_use] classifier reaches a session that is already running; if
+   * it throws, the check enforces.
+   */
+  mode: GuardMode | (() => GuardMode);
   session: string;
   /**
    * What holds for every action in this session: who is asking, the
@@ -186,11 +191,22 @@ export class JevGuard implements Guard {
    * recorded when it arrives.
    */
   async check(c: Check): Promise<Verdict> {
-    if (this.o.mode === "enforce") return this.judge(c);
-    const recorded = this.judge(c).catch(() => {});
+    const mode = this.mode();
+    if (mode === "enforce") return this.judge(c, mode);
+    const recorded = this.judge(c, mode).catch(() => {});
     this.pending.add(recorded);
     void recorded.finally(() => this.pending.delete(recorded));
     return { allowed: true, flagged: [], scores: {}, ms: 0 };
+  }
+
+  private mode(): GuardMode {
+    const { mode } = this.o;
+    if (typeof mode === "string") return mode;
+    try {
+      return mode() === "shadow" ? "shadow" : "enforce";
+    } catch {
+      return "enforce";
+    }
   }
 
   /** Wait, at most `ms`, for shadow verdicts still on their way to the audit log. */
@@ -203,7 +219,7 @@ export class JevGuard implements Guard {
     await Promise.race([all, new Promise((r) => setTimeout(r, ms))]);
   }
 
-  private async judge(c: Check): Promise<Verdict> {
+  private async judge(c: Check, mode: GuardMode): Promise<Verdict> {
     const started = Date.now();
     const request = safely(this.o.request);
     const startedBy = startedSafely(this.o.startedBy);
@@ -258,8 +274,7 @@ export class JevGuard implements Guard {
         attempts,
       };
     }
-    if (this.o.mode === "shadow")
-      verdict = { ...verdict, wouldDeny: !verdict.allowed, allowed: true };
+    if (mode === "shadow") verdict = { ...verdict, wouldDeny: !verdict.allowed, allowed: true };
 
     this.o.audit?.({
       ...c,
@@ -269,7 +284,7 @@ export class JevGuard implements Guard {
       request,
       ...(startedBy ? { startedBy } : {}),
       verdict,
-      mode: this.o.mode,
+      mode,
     });
     return verdict;
   }

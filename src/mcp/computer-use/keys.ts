@@ -4,6 +4,9 @@
  * Names are case-insensitive and accept both xdotool spellings (BackSpace,
  * Page_Up, KP_Enter) and the Mac key labels (delete, option, command).
  * Codes are macOS virtual key codes on the ANSI layout.
+ *
+ * Also what a chord does: its macOS meaning, whether it edits text, and the
+ * chords (and the menu items they are shortcuts for) refused outright.
  */
 
 import type { Chord } from "./native.ts";
@@ -237,6 +240,48 @@ export function chordMeaning(chord: Chord, app: string): string | null {
   return MEANING_BY_KEY.get(chordKey(chord))?.(app) ?? null;
 }
 
+/** Keys that type a character: the ANSI positions with one, and Space. */
+const TYPING = new Set([
+  ...[...ANSI].flatMap((ch, code) => (ch === "\0" ? [] : [code])),
+  keyOf("space")!.code,
+]);
+const DELETING = new Set([keyOf("delete")!.code, keyOf("forward_delete")!.code]);
+/** Return, keypad Enter and Tab: text in a note, but submit or move on in a one-line field. */
+const LINE_KEYS = new Set([keyOf("return")!.code, keyOf("kp_enter")!.code, keyOf("tab")!.code]);
+/** With cmd: Paste (and its match-style variants), Cut, Undo and Redo. */
+const CMD_EDITS = new Set(["v", "x", "z"].map((k) => keyOf(k)!.code));
+const CMD = MODIFIERS.cmd[0];
+
+/**
+ * Whether a chord would enter, replace or delete text in the focused field:
+ * a character (with shift or option, which type other characters, or with
+ * control, whose Emacs bindings delete, transpose and yank), Delete and
+ * forward-delete with any modifier, and cmd with Paste, Cut, Undo or Redo.
+ * Return and Tab count only in `multiLine` text, where they insert; in a
+ * one-line field they submit or move on. Everything else (arrows, Escape,
+ * Home and End, function keys, cmd+a, cmd+c, app shortcuts) edits nothing.
+ */
+export function editsText(chord: Chord, multiLine: boolean): boolean {
+  const cmd = chord.modifiers.some(([code]) => code === CMD);
+  return chord.keys.some((k) => {
+    if (DELETING.has(k)) return true;
+    if (cmd) return CMD_EDITS.has(k);
+    return TYPING.has(k) || (multiLine && LINE_KEYS.has(k));
+  });
+}
+
+/** Keys that move the caret without extending the selection: arrows, Home, End, Page Up and Down. */
+const CARET_KEYS = new Set(
+  ["left", "right", "up", "down", "home", "end", "page_up", "page_down"].map((k) => keyOf(k)!.code),
+);
+const SHIFT = MODIFIERS.shift[0];
+
+/** Whether a chord moves the caret and so drops a selection (shift would extend it instead). */
+export function movesCaret(chord: Chord): boolean {
+  if (chord.modifiers.some(([code]) => code === SHIFT)) return false;
+  return chord.keys.length > 0 && chord.keys.every((k) => CARET_KEYS.has(k));
+}
+
 /**
  * Chords refused outright, with no classifier: nothing a person asks of
  * Edmund needs the session ended, and Messages is the process Edmund talks
@@ -255,6 +300,40 @@ export function blockedChord(chord: Chord, frontmostBundleId: string): string | 
     (key === chordKey("cmd+shift+delete") || key === chordKey("cmd+alt+shift+delete"))
   ) {
     return "empties the Trash";
+  }
+  return null;
+}
+
+const MESSAGES = "com.apple.MobileSMS";
+const DOCK = "com.apple.dock";
+
+/**
+ * The same refusals for the pointer: a click can choose the menu item a
+ * refused chord is the shortcut for. The Apple menu's session items appear in
+ * every app's menu bar. The Dock's Quit cannot be told apart from quitting
+ * Messages (its menu item does not say which app it is for), so it is refused
+ * for every app; an app can still be quit from its own menu, or with cmd+q.
+ * Matched on the whole title, so "Restart Playback" in some app is not
+ * "Restart…" in the Apple menu.
+ */
+export function blockedMenuItem(target: {
+  bundleId: string;
+  role: string;
+  label?: string;
+}): string | null {
+  if (target.role !== "AXMenuItem") return null;
+  const title = (target.label ?? "").trim();
+  if (/^Log Out\b/i.test(title)) return "logs out";
+  if (/^Lock Screen$/i.test(title)) return "locks the screen";
+  if (/^(Restart|Shut Down)(…|\.\.\.)?$/i.test(title)) return "restarts or shuts down the Mac";
+  if (/^Sleep$/i.test(title)) return "puts the Mac to sleep";
+  if (/^Force Quit\b/i.test(title)) return "force-quits an app";
+  if (/^Empty Trash\b/i.test(title)) return "empties the Trash";
+  if (target.bundleId === MESSAGES && /^Quit\b/i.test(title)) {
+    return "quits Messages, which Edmund talks through";
+  }
+  if (target.bundleId === DOCK && /^Quit$/i.test(title)) {
+    return "quits an app from the Dock, which cannot be told apart from quitting Messages";
   }
   return null;
 }

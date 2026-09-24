@@ -350,8 +350,11 @@ function windowRedactions(scope: Scope, app: string, w: InspectedWindow): Rect[]
     // A note opened in its own window has a body and no list.
     if (!list?.frame && !body?.frame) return [frame];
     const out = (list?.rows ?? []).filter((r) => !isOwnNote(scope, r.text)).map((r) => r.frame);
-    if (body?.frame && !isOwnNote(scope, openNoteTitle(w))) out.push(body.frame);
-    return out;
+    if (isOwnNote(scope, openNoteTitle(w))) return out;
+    // Someone else's note is open, or it cannot be told whose. Without the
+    // body's frame (a layout change, or the search stopped short of it) there
+    // is nothing smaller to cover it with.
+    return body?.frame ? [...out, body.frame] : [frame];
   }
   return [];
 }

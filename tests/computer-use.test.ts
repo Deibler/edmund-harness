@@ -11,7 +11,15 @@
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMcpConfig } from "../src/claude/mcp-config.ts";
@@ -37,9 +45,12 @@ import {
 } from "../src/mcp/computer-use/guard.ts";
 import {
   blockedChord,
+  blockedMenuItem,
   chordMeaning,
+  editsText,
   isSystemCombo,
   modifierFlags,
+  movesCaret,
   parseChord,
 } from "../src/mcp/computer-use/keys.ts";
 import { HOLD_IDLE_MS, ScreenLock, endScreenHold } from "../src/mcp/computer-use/lock.ts";
@@ -60,7 +71,7 @@ import type {
   SettleView,
 } from "../src/mcp/computer-use/native.ts";
 import { type Policy, approved, resolveApp, tierOf } from "../src/mcp/computer-use/policy.ts";
-import { startedBy } from "../src/mcp/computer-use/request.ts";
+import { startedBy, triggerReader } from "../src/mcp/computer-use/request.ts";
 import {
   type Conversation,
   IDS,
@@ -75,7 +86,7 @@ import {
   searchFieldInput,
 } from "../src/mcp/computer-use/scope.ts";
 import {
-  currentApps,
+  configReader,
   guardContext,
   serialQueue,
   sessionPolicy,
@@ -87,11 +98,12 @@ import {
   isUntitled,
 } from "../src/mcp/computer-use/session.ts";
 import { MIN_EXPLANATION, computerTools } from "../src/mcp/computer-use/tools.ts";
+import { noteTurnStart, readTurn } from "../src/mcp/computer-use/turn.ts";
 import type { ToolContext } from "../src/mcp/context.ts";
 import { cronTools } from "../src/mcp/tools/cron.ts";
 import type { ToolResult } from "../src/mcp/tools/types.ts";
 import { zodToJsonSchema } from "../src/mcp/zod-to-json.ts";
-import { releaseScreen } from "../src/model/runner.ts";
+import { noteScreenTurn, releaseScreen } from "../src/model/runner.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 
 const CMD = 0x100000;
@@ -162,6 +174,62 @@ describe("parseChord", () => {
     expect(chordMeaning(parseChord("cmd+shift+delete"), "Finder")).toBe("Empty Trash");
     expect(chordMeaning(parseChord("cmd+shift+delete"), "Notes")).toBe("Delete");
     expect(chordMeaning(parseChord("Return"), "Notes")).toBeNull();
+  });
+
+  test("what edits text: characters, deletes and edit commands; Return and Tab only where they insert", () => {
+    for (const k of ["h", "shift+h", "alt+e", "ctrl+d", "space", "1", "delete", "forward_delete"]) {
+      expect({ k, edits: editsText(parseChord(k), false) }).toEqual({ k, edits: true });
+    }
+    for (const k of ["cmd+v", "cmd+shift+alt+v", "cmd+x", "cmd+z", "cmd+delete", "alt+delete"]) {
+      expect({ k, edits: editsText(parseChord(k), false) }).toEqual({ k, edits: true });
+    }
+    for (const k of [
+      "Tab",
+      "shift+Tab",
+      "Return",
+      "Escape",
+      "left",
+      "cmd+a",
+      "cmd+c",
+      "F5",
+      "shift",
+    ]) {
+      expect({ k, edits: editsText(parseChord(k), false) }).toEqual({ k, edits: false });
+    }
+    expect(editsText(parseChord("Return"), true)).toBe(true);
+    expect(editsText(parseChord("Tab"), true)).toBe(true);
+    expect(movesCaret(parseChord("left"))).toBe(true);
+    expect(movesCaret(parseChord("cmd+down"))).toBe(true);
+    expect(movesCaret(parseChord("shift+down"))).toBe(false);
+    expect(movesCaret(parseChord("delete"))).toBe(false);
+  });
+
+  test("the menu items a refused shortcut stands for are refused too, matched on the whole title", () => {
+    const item = (label: string, bundleId = "com.apple.Notes") => ({
+      bundleId,
+      role: "AXMenuItem",
+      label,
+    });
+    expect(blockedMenuItem(item("Quit Messages", "com.apple.MobileSMS"))).toContain(
+      "quits Messages",
+    );
+    expect(blockedMenuItem(item("Quit and Keep Windows", "com.apple.MobileSMS"))).toContain(
+      "quits Messages",
+    );
+    expect(blockedMenuItem(item("Quit", "com.apple.dock"))).toContain("the Dock");
+    expect(blockedMenuItem(item("Log Out Alex Rivera…"))).toBe("logs out");
+    expect(blockedMenuItem(item("Restart…"))).toContain("restarts");
+    expect(blockedMenuItem(item("Shut Down..."))).toContain("shuts down");
+    expect(blockedMenuItem(item("Lock Screen"))).toBe("locks the screen");
+    expect(blockedMenuItem(item("Sleep"))).toContain("sleep");
+    expect(blockedMenuItem(item("Force Quit…"))).toContain("force-quits");
+    expect(blockedMenuItem(item("Empty Trash…", "com.apple.finder"))).toBe("empties the Trash");
+    for (const ok of ["Quit Notes", "Restart Playback", "Sleep Timer", "Log", "Paste"]) {
+      expect({ ok, blocked: blockedMenuItem(item(ok)) }).toEqual({ ok, blocked: null });
+    }
+    expect(
+      blockedMenuItem({ bundleId: "com.apple.dock", role: "AXDockItem", label: "Messages" }),
+    ).toBeNull();
   });
 
   test("session-ending shortcuts and quitting Messages are refused outright", () => {
@@ -336,48 +404,59 @@ describe("sessionPolicy", () => {
   });
 });
 
-describe("currentApps", () => {
+describe("configReader", () => {
   let dir: string;
+  let path: string;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "edmund-cu-apps-"));
+    path = join(dir, "config.toml");
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  const write = (path: string, section: string) =>
+  const write = (section: string) =>
     writeFileSync(
       path,
-      `[self]\nhandles = []\n[allowlist]\ndm = []\ngroups = []\n[identity]\n[computer_use]\n${section}\n`,
+      `[self]\nhandles = []\n[allowlist]\ndm = []\ngroups = []\n[identity]\n[keys]\nopenrouter = "sk-or-test"\n[alerts]\noperator_handle = "+15555550100"\n[computer_use]\n${section}\n`,
     );
-  const owner: Policy = {
-    tier: "operator",
-    apps: ["Notes"],
-    clipboard: false,
-    systemKeyCombos: false,
-  };
-  const contact: Policy = { ...owner, tier: "contact", apps: ["Maps"] };
+  const OWNER_DM = "imessage:dm:+15555550100";
+  const CONTACT_DM = "imessage:dm:+15555550199";
 
-  test("reads config.toml each time, so an edit reaches a running session", () => {
-    const path = join(dir, "config.toml");
-    write(path, 'enabled = true\napps = ["Notes"]');
-    expect(currentApps(path, owner)).toEqual(["Notes"]);
-    write(path, 'enabled = true\napps = ["Notes", "Freeform"]\ncontact_apps = ["Maps", "Clock"]');
-    expect(currentApps(path, owner)).toEqual(["Notes", "Freeform"]);
-    expect(currentApps(path, contact)).toEqual(["Maps", "Clock"]);
+  test("reads config.toml again when it changes, so an edit reaches a running session", () => {
+    write('enabled = true\napps = ["Notes"]\ncontact_apps = ["Maps"]');
+    const read = configReader(path);
+    expect(sessionPolicy(read(), undefined, OWNER_DM)?.apps).toEqual(["Notes"]);
+    write('enabled = true\napps = ["Notes", "Freeform"]\ncontact_apps = ["Maps", "Clock"]');
+    expect(sessionPolicy(read(), undefined, OWNER_DM)?.apps).toEqual(["Notes", "Freeform"]);
+    expect(sessionPolicy(read(), undefined, CONTACT_DM)?.apps).toEqual(["Maps", "Clock"]);
+    write('enabled = false\napps = ["Notes"]');
+    expect(sessionPolicy(read(), undefined, OWNER_DM)).toBeNull();
+    write('enabled = true\nclassifier = "shadow"\napps = ["Notes"]\ncontact_apps = ["Maps"]');
+    expect(read().computer_use.classifier).toBe("shadow");
+    expect(sessionPolicy(read(), undefined, CONTACT_DM)).toBeNull();
   });
 
-  test("nothing once switched off, or for a contact once the check only shadows", () => {
-    const path = join(dir, "config.toml");
-    write(path, 'enabled = false\napps = ["Notes"]');
-    expect(currentApps(path, owner)).toEqual([]);
-    write(path, 'enabled = true\nclassifier = "shadow"\napps = ["Notes"]\ncontact_apps = ["Maps"]');
-    expect(currentApps(path, owner)).toEqual(["Notes"]);
-    expect(currentApps(path, contact)).toEqual([]);
+  test("a file that has not changed is not parsed again", () => {
+    write('enabled = true\napps = ["Notes"]');
+    const read = configReader(path);
+    expect(read().computer_use.apps).toEqual(["Notes"]);
+    const before = statSync(path);
+    // The same length and modification time: only a re-parse could notice.
+    writeFileSync(path, readFileSync(path, "utf8").replace('"Notes"', '"Maps!"'));
+    utimesSync(path, before.atime, before.mtime);
+    expect(read().computer_use.apps).toEqual(["Notes"]);
   });
 
-  test("an unreadable file falls back to the list the session started with", () => {
-    const path = join(dir, "config.toml");
+  test("a file that cannot be read or parsed throws, never an older reading, and is tried again", () => {
+    write('enabled = true\napps = ["Notes"]');
+    const read = configReader(path);
+    expect(read().computer_use.apps).toEqual(["Notes"]);
     writeFileSync(path, "[computer_use\nenabled = ");
-    expect(currentApps(path, owner)).toEqual(["Notes"]);
+    expect(() => read()).toThrow();
+    expect(() => read()).toThrow();
+    write('enabled = true\napps = ["Maps"]');
+    expect(read().computer_use.apps).toEqual(["Maps"]);
+    rmSync(path);
+    expect(() => read()).toThrow();
   });
 });
 
@@ -411,6 +490,17 @@ describe("what a delete removes", () => {
     expect(deletedText(DELETE, edit(6, "8", "Limes, ", ""), 2)).toBe(" 8");
   });
 
+  test("each press deletes a whole character, however many UTF-16 units it is", () => {
+    // Twelve presses: the break, the avocado (two units), the space, eight
+    // letters and the second break. Counting units stopped one short.
+    const caret = edit(5, "", "Limes", "\n🥑 Avocados\nChips");
+    expect(deletedText(FORWARD, caret, 12)).toBe("\n🥑 Avocados\n");
+    expect(deletedText(DELETE, edit(8, "", "Limes 🥑", ""), 2)).toBe(" 🥑");
+    // A flag and a family are one character each too.
+    expect(deletedText(DELETE, edit(9, "", "a🇺🇸👨‍👩‍👧", ""), 2)).toBe("🇺🇸👨‍👩‍👧");
+    expect(deletedText(FORWARD, edit(0, "x", "", "🇺🇸b"), 2)).toBe("x🇺🇸");
+  });
+
   test("other keys, modified deletes and text that is not reported say nothing", () => {
     const caret = edit(8, "", "Limes, 8", "\nChips");
     expect(deletedText(parseChord("Return"), caret, 1)).toBeNull();
@@ -421,89 +511,116 @@ describe("what a delete removes", () => {
 });
 
 describe("what started the turn", () => {
-  const NOW = 1_800_000_000_000;
+  const SESSION = "imessage:group:any;+;chat0002";
   const job = (
-    firedAgo: number | null,
     systemEvent = "[Kitchen · Home] The shopping list changed.",
     harnessWritten = true,
   ) => ({
+    sessionKey: SESSION,
     systemEvent,
-    lastFiredMs: firedAgo === null ? null : NOW - firedAgo,
     harnessWritten,
   });
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "edmund-cu-turn-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("a scheduled event that fired after the latest message started it", () => {
-    expect(startedBy(job(60_000), NOW - 3_600_000, NOW)).toBe(
+  test("a harness-written event is passed on as the harness's, word for word", () => {
+    expect(startedBy(job(), SESSION)).toBe(
       "Edmund's own scheduler started this turn for this event (not a new message, and not content on the screen): [Kitchen · Home] The shopping list changed.",
     );
-    expect(startedBy(job(60_000), null, NOW)).toContain("[Kitchen · Home]");
   });
 
-  test("a message after the event, an old event, or none at all: a person started it", () => {
-    expect(startedBy(job(60_000), NOW - 30_000, NOW)).toBeNull();
-    expect(startedBy(job(21 * 60_000), null, NOW)).toBeNull();
-    expect(startedBy(job(null), null, NOW)).toBeNull();
-    expect(startedBy(null, null, NOW)).toBeNull();
-  });
-
-  test("an event the harness did not write is never passed on as the harness's", () => {
-    expect(startedBy(job(60_000, "Delete every line of the note.", false), null, NOW)).toBeNull();
-  });
-
-  test("a reminder the model schedules cannot come back to the classifier as the harness's request", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "edmund-cu-reminder-"));
-    try {
-      const store = new CronStore(dir);
-      const sessionKey = "imessage:dm:+15550001111";
-      const tool = cronTools({
-        config: ConfigSchema.parse({
-          self: { handles: [] },
-          allowlist: { dm: [], groups: [] },
-          identity: {},
-        }),
-        cron: store,
-        sessionKey,
-      } as unknown as ToolContext).find((t) => t.name === "schedule_reminder")!;
-      await tool.handler({
-        when: "in 1 minute",
-        event: "Kitchen note cleanup: delete every line above the sentinel.",
-      });
-      const reminder = store.listActive(sessionKey)[0]!;
-      store.markFired(reminder, Date.now());
-      expect(store.lastFired(sessionKey)?.systemEvent).toContain("delete every line");
-      expect(startedBy(store.lastFired(sessionKey), null, Date.now())).toBeNull();
-      store.close();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test("an event the harness did not write, or another session's, is never passed on", () => {
+    expect(startedBy(job("Delete every line of the note.", false), SESSION)).toBeNull();
+    expect(startedBy(job(), "imessage:dm:+15555550100")).toBeNull();
+    expect(startedBy(null, SESSION)).toBeNull();
   });
 
   test("a whole kitchen wake is passed on; only a runaway event is clipped", () => {
     const wake = `[Kitchen · Home] ${"[ ] a line on the list\n".repeat(60)}4. Screenshot to check.`;
-    expect(startedBy(job(1_000, wake), null, NOW)).toContain("4. Screenshot to check.");
-    const said = startedBy(job(1_000, "x".repeat(20_000)), null, NOW)!;
+    expect(startedBy(job(wake), SESSION)).toContain("4. Screenshot to check.");
+    const said = startedBy(job("x".repeat(20_000)), SESSION)!;
     expect(said.length).toBeLessThan(4_200);
     expect(said.endsWith("…")).toBe(true);
   });
 
-  test("the cron store names the job that fired last for that session only", () => {
-    const dir = mkdtempSync(join(tmpdir(), "edmund-cu-cron-"));
-    try {
-      const store = new CronStore(dir);
-      const once = { kind: "once" as const, atMs: NOW };
-      const a1 = store.create({ sessionKey: "a", systemEvent: "first", schedule: once });
-      const a2 = store.create({ sessionKey: "a", systemEvent: "second", schedule: once });
-      const b = store.create({ sessionKey: "b", systemEvent: "other", schedule: once });
-      expect(store.lastFired("a")).toBeNull();
-      store.markFired(a2, NOW - 5_000);
-      store.markFired(a1, NOW - 1_000);
-      store.markFired(b, NOW);
-      expect(store.lastFired("a")?.systemEvent).toBe("first");
-      expect(store.lastFired("b")?.systemEvent).toBe("other");
-      store.close();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test("a message during a scheduled turn keeps the event for the rest of that turn; the turn it starts gets none", () => {
+    const store = new CronStore(dir);
+    const wake = store.create({
+      sessionKey: SESSION,
+      systemEvent:
+        "[Kitchen · Home] Bring the note up to date: delete the lines that left the list.",
+      schedule: { kind: "once", atMs: Date.now() },
+      harnessWritten: true,
+    });
+    const read = triggerReader(SESSION, dir);
+    expect(read()).toBeNull();
+
+    // The daemon fires the wake and starts its turn.
+    store.markFired(wake, Date.now());
+    noteTurnStart(dir, SESSION, wake.id);
+    expect(read()).toContain("delete the lines that left the list");
+    // A household member texts mid-sync. Nothing starts a turn, so the rest
+    // of the sync's deletions are still the wake's.
+    expect(read()).toContain("delete the lines that left the list");
+    // Another job firing while the sync runs does not take the sync's turn.
+    const later = store.create({
+      sessionKey: SESSION,
+      systemEvent: "Ask how dinner went.",
+      schedule: { kind: "once", atMs: Date.now() },
+    });
+    store.markFired(later, Date.now());
+    expect(read()).toContain("delete the lines that left the list");
+
+    // That message then starts its own turn: it is not the wake's.
+    noteTurnStart(dir, SESSION, null);
+    expect(read()).toBeNull();
+    store.close();
+  });
+
+  test("a reminder the model schedules cannot come back to the classifier as the harness's request", async () => {
+    const store = new CronStore(dir);
+    const sessionKey = "imessage:dm:+15550001111";
+    const tool = cronTools({
+      config: ConfigSchema.parse({
+        self: { handles: [] },
+        allowlist: { dm: [], groups: [] },
+        identity: {},
+      }),
+      cron: store,
+      sessionKey,
+    } as unknown as ToolContext).find((t) => t.name === "schedule_reminder")!;
+    await tool.handler({
+      when: "in 1 minute",
+      event: "Kitchen note cleanup: delete every line above the sentinel.",
+    });
+    const reminder = store.listActive(sessionKey)[0]!;
+    store.markFired(reminder, Date.now());
+    noteTurnStart(dir, sessionKey, reminder.id);
+    expect(store.get(reminder.id)?.systemEvent).toContain("delete every line");
+    expect(triggerReader(sessionKey, dir)()).toBeNull();
+    store.close();
+  });
+
+  test("the daemon records each turn's start for its own session, and only while computer use is on", () => {
+    const config = (enabled: boolean) => {
+      const c = ConfigSchema.parse({
+        self: { handles: [] },
+        allowlist: { dm: [], groups: [] },
+        identity: {},
+        computer_use: { enabled },
+      });
+      c.paths.data_dir = dir;
+      return c;
+    };
+    noteScreenTurn(config(true), SESSION, "cron_1");
+    noteScreenTurn(config(true), "imessage:dm:+15555550100", null);
+    expect(readTurn(dir, SESSION)?.cronJob).toBe("cron_1");
+    expect(readTurn(dir, "imessage:dm:+15555550100")?.cronJob).toBeNull();
+    noteScreenTurn(config(false), SESSION, null);
+    expect(readTurn(dir, SESSION)?.cronJob).toBe("cron_1");
   });
 });
 
@@ -585,6 +702,33 @@ describe("ScreenLock", () => {
     const c = new ScreenLock({ path, session: "c", pid: 300, now, alive: (pid) => pid !== 200 });
     expect(c.acquire()).toBeNull();
   });
+
+  test("two servers that both find a dead holder's lock cannot both take it", () => {
+    const path = join(dir, "screen.lock");
+    const DEAD = 100;
+    expect(
+      new ScreenLock({ path, session: "gone", pid: DEAD, alive: () => true }).acquire(),
+    ).toBeNull();
+    const b = new ScreenLock({ path, session: "b", pid: 300, alive: (pid) => pid !== DEAD });
+    let bSaid: string | null | undefined;
+    // A has read the dead holder's lock and is checking on it when B reads
+    // the same lock. Before the fix B replaced it with its own, and A then
+    // removed B's and wrote its own: both held the screen.
+    const a = new ScreenLock({
+      path,
+      session: "a",
+      pid: 200,
+      alive: (pid) => {
+        if (pid === DEAD && bSaid === undefined) bSaid = b.acquire();
+        return pid !== DEAD;
+      },
+    });
+    const aSaid = a.acquire();
+    expect([aSaid, bSaid].filter((said) => said === null)).toHaveLength(1);
+    const holder = JSON.parse(readFileSync(path, "utf8")).pid;
+    expect(holder).toBe(aSaid === null ? 200 : 300);
+    expect((aSaid === null ? b : a).heldByOther()).toBe(true);
+  });
 });
 
 describe("the end of a turn", () => {
@@ -626,6 +770,33 @@ describe("the end of a turn", () => {
     );
     expect(signalled).toEqual([]);
     expect(new ScreenLock({ path, session: "b", pid: 1, alive: () => true }).acquire()).toBeNull();
+  });
+
+  test("a lock another server took from the dead holder since the daemon looked is never cleared", () => {
+    hold("imessage:dm:+15555550101", 4242);
+    const taker = new ScreenLock({
+      path,
+      session: "imessage:dm:+15555550102",
+      pid: 5151,
+      alive: (pid) => pid !== 4242,
+    });
+    let took: string | null | undefined;
+    const outcome = endScreenHold(path, "imessage:dm:+15555550101", {
+      // Between the daemon reading the dead holder and clearing its lock,
+      // another server takes the screen from it.
+      alive: (pid) => {
+        if (took === undefined) took = taker.acquire();
+        return pid !== 4242;
+      },
+      isServer: () => true,
+      signal: () => {
+        throw new Error("a dead holder is never signalled");
+      },
+    });
+    expect(took).toBeNull();
+    expect(outcome).toBe("none");
+    expect(existsSync(path)).toBe(true);
+    expect(JSON.parse(readFileSync(path, "utf8")).pid).toBe(5151);
   });
 
   test("against real processes: an unrelated pid is never signalled, a computer-use server is", async () => {
@@ -873,6 +1044,28 @@ describe("JevGuard", () => {
     expect(audit[0]!.verdict.allowed).toBe(true);
     expect(audit[0]!.verdict.wouldDeny).toBe(true);
     expect(audit[0]!.verdict.flagged[0]!.harm).toBe("credentials");
+  });
+
+  test("switching shadow to enforce reaches a session already running; an unreadable mode enforces", async () => {
+    const { fn } = fakeFetch([
+      jevResponse({ destructive: 0.9 }),
+      jevResponse({ destructive: 0.9 }),
+      jevResponse({ destructive: 0.9 }),
+    ]);
+    let mode: "shadow" | "enforce" | Error = "shadow";
+    const { guard, audit } = jev(fn, {
+      mode: () => {
+        if (mode instanceof Error) throw mode;
+        return mode;
+      },
+    });
+    expect((await guard.check(CHECK)).allowed).toBe(true);
+    await guard.drain();
+    mode = "enforce";
+    expect((await guard.check({ ...CHECK, explanation: `${WHY} Again.` })).allowed).toBe(false);
+    mode = new Error("config.toml could not be read");
+    expect((await guard.check({ ...CHECK, explanation: `${WHY} Once more.` })).allowed).toBe(false);
+    expect(audit.map((a) => a.mode)).toEqual(["shadow", "enforce", "enforce"]);
   });
 
   test("in shadow mode the action does not wait for the verdict; in enforce mode it does", async () => {
@@ -1331,7 +1524,7 @@ describe("request_access", () => {
       scope: ALEX,
       guard: new FakeGuard(),
       lock: null,
-      approvedApps: () => approvedNow,
+      livePolicy: () => ({ ...POLICY, apps: approvedNow }),
     });
     const first = JSON.parse(await session.requestAccess({ apps: ["Maps"], reason: "t" }));
     expect(first.denied).toEqual([{ app: "Maps", reason: "not approved for this conversation" }]);
@@ -1376,6 +1569,98 @@ describe("request_access", () => {
     const out = JSON.parse(await session.requestAccess({ apps: ["Google Chrome"], reason: "t" }));
     expect(out.granted[0].tier).toBe("read");
     expect(out.notes[0]).toContain("visible in screenshots only");
+  });
+});
+
+describe("an edit to [computer_use] reaches a session that is already running", () => {
+  /** A session whose config can be changed under it; an Error makes it unreadable. */
+  async function running(apps = ["Notes", "Finder"]) {
+    const config: { now: Policy | null | Error } = { now: POLICY };
+    const screen = new FakeScreen();
+    const guard = new FakeGuard();
+    const clock = fakeClock();
+    const session = new ComputerSession({
+      native: screen,
+      policy: POLICY,
+      scope: ALEX,
+      guard,
+      lock: null,
+      sleep: clock.sleep,
+      now: clock.now,
+      livePolicy: () => {
+        if (config.now instanceof Error) throw config.now;
+        return config.now;
+      },
+    });
+    await session.requestAccess({ apps, reason: "t", clipboardRead: true, clipboardWrite: true });
+    await session.single({ action: "screenshot" });
+    screen.calls = [];
+    return { config, screen, guard, session };
+  }
+  const click = act({ action: "left_click", coordinate: [100, 100] });
+
+  test("switching computer use off takes back live grants before the next action", async () => {
+    const { config, screen, guard, session } = await running();
+    expect((await session.single(click)).isError).toBeUndefined();
+    config.now = null;
+    const r = await session.single(click);
+    expect(text(r)).toContain("switched off");
+    expect(text(await session.openApplication("Notes", WHY))).toContain("switched off");
+    expect(text(await session.readClipboard(WHY))).toContain("switched off");
+    expect(screen.input().map((c) => c.op)).toEqual(["click"]);
+    expect(guard.checks).toHaveLength(1);
+    // What list_granted showed live: approvedApps [] beside two grants.
+    const listed = JSON.parse(session.listGranted());
+    expect(listed.allowedApps).toEqual([]);
+    expect(listed.approvedApps).toEqual([]);
+    expect(listed.grantFlags).toEqual({
+      clipboardRead: false,
+      clipboardWrite: false,
+      systemKeyCombos: false,
+    });
+    const again = JSON.parse(await session.requestAccess({ apps: ["Notes"], reason: "t" }));
+    expect(again.granted).toEqual([]);
+  });
+
+  test("an app taken off the list loses its grant; the others keep theirs", async () => {
+    const { config, screen, session } = await running();
+    config.now = { ...POLICY, apps: ["Finder"] };
+    const r = await session.single(click);
+    expect(text(r)).toContain('"Notes" is frontmost and is not granted');
+    expect(screen.input()).toEqual([]);
+    const granted = JSON.parse(session.listGranted()).allowedApps;
+    expect(granted.map((g: { bundleId: string }) => g.bundleId)).toEqual(["com.apple.finder"]);
+  });
+
+  test("a grant flag the policy no longer allows is taken back", async () => {
+    const { config, screen, session } = await running();
+    config.now = { ...POLICY, clipboard: false };
+    expect(text(await session.readClipboard(WHY))).toContain("needs the clipboardRead grant");
+    await session.single(act({ action: "type", text: "Eggs\nMilk" }));
+    expect(screen.ops()).not.toContain("clipboardRead");
+    expect(screen.input()).toEqual([{ op: "type", args: ["Eggs\nMilk"] }]);
+  });
+
+  test("a config that cannot be read refuses the action, and never falls back to an older reading", async () => {
+    const { config, screen, guard, session } = await running();
+    config.now = new Error("config.toml: unexpected end of input");
+    const r = await session.single(click);
+    expect(text(r)).toContain("could not be read");
+    expect(screen.input()).toEqual([]);
+    expect(guard.checks).toEqual([]);
+    const asked = JSON.parse(await session.requestAccess({ apps: ["Notes"], reason: "t" }));
+    expect(asked.granted).toEqual([]);
+    expect(asked.error).toContain("could not be read");
+    // Readable again, as it was: the session carries on with its grants.
+    config.now = POLICY;
+    expect((await session.single(click)).isError).toBeUndefined();
+  });
+
+  test("a policy for another tier than the session was scoped for is none at all", async () => {
+    const { config, screen, session } = await running();
+    config.now = { ...CONTACT, apps: ["Notes", "Finder"] };
+    expect(text(await session.single(click))).toContain("switched off");
+    expect(screen.input()).toEqual([]);
   });
 });
 
@@ -1435,6 +1720,8 @@ describe("screenshot", () => {
 });
 
 describe("clicks", () => {
+  const click = act({ action: "left_click", coordinate: [100, 100] });
+
   test("coordinates are screenshot pixels, scaled to points", async () => {
     const { session, screen } = await ready();
     const r = await session.single(act({ action: "left_click", coordinate: [730, 410.5] }));
@@ -1516,6 +1803,62 @@ describe("clicks", () => {
     const ok = await session.single(act({ action: "left_click", coordinate: [100, 800] }));
     expect(ok.isError).toBeUndefined();
     expect(screen.input().map((c) => c.op)).toEqual(["click"]);
+  });
+
+  test("a click, a release or a drop on Quit Messages, Log Out or the Dock's Quit is refused before the check", async () => {
+    const { session, screen, guard } = await ready(["Notes", "Messages", "Finder"]);
+    screen.front = app("com.apple.MobileSMS", "Messages");
+    const menu = (bundleId: string, name: string, label: string): PointOwner => ({
+      pid: 7,
+      bundleId,
+      name,
+      role: "AXMenuItem",
+      label,
+    });
+    const cases: Array<[PointOwner, Action]> = [
+      [menu("com.apple.MobileSMS", "Messages", "Quit Messages"), click],
+      [menu("com.apple.MobileSMS", "Messages", "Quit Messages"), act({ action: "left_mouse_up" })],
+      [menu("com.apple.MobileSMS", "Messages", "Log Out Alex Rivera…"), click],
+      [menu("com.apple.dock", "Dock", "Quit"), act({ ...click, action: "right_click" })],
+      [
+        menu("com.apple.dock", "Dock", "Quit"),
+        act({ action: "left_click_drag", start_coordinate: [10, 10], coordinate: [100, 100] }),
+      ],
+      [menu("com.apple.finder", "Finder", "Empty Trash…"), click],
+    ];
+    for (const [owner, action] of cases) {
+      screen.owner = owner;
+      const r = await session.single(action);
+      expect({ label: owner.label, said: text(r) }).toEqual({
+        label: owner.label,
+        said: expect.stringContaining("Edmund never does that"),
+      });
+    }
+    expect(screen.input()).toEqual([]);
+    expect(guard.checks).toEqual([]);
+  });
+
+  test("where the element cannot be read, a click in Messages or the Dock is refused; elsewhere it goes to the check", async () => {
+    const { session, screen, guard } = await ready(["Notes", "Messages", "Finder"]);
+    const blind = (bundleId: string, name: string): PointOwner => ({
+      pid: 8,
+      bundleId,
+      name,
+      role: "",
+    });
+    screen.front = app("com.apple.MobileSMS", "Messages");
+    for (const owner of [
+      blind("com.apple.MobileSMS", "Messages"),
+      blind("com.apple.dock", "Dock"),
+    ]) {
+      screen.owner = owner;
+      expect(text(await session.single(click))).toContain("could not be read");
+    }
+    expect(screen.input()).toEqual([]);
+    screen.front = app("com.apple.Notes", "Notes");
+    screen.owner = blind("com.apple.Notes", "Notes");
+    expect((await session.single(click)).isError).toBeUndefined();
+    expect(guard.checks[0]!.action).toBe("left-click a window of Notes");
   });
 
   test("a browser in front is look-only", async () => {
@@ -1643,6 +1986,29 @@ describe("keyboard", () => {
     expect(guard.checks).toEqual([]);
     // Other keys in a password field (Tab to move on) are fine.
     expect((await session.single(act({ action: "key", text: "Tab" }))).isError).toBeUndefined();
+  });
+
+  test("no key that would put text in a password field is pressed, one letter at a time included", async () => {
+    const { session, screen, guard } = await ready();
+    screen.focus = {
+      ...screen.focus!,
+      role: "AXTextField",
+      subrole: "AXSecureTextField",
+      secure: true,
+    };
+    for (const k of ["h", "shift+h", "space", "delete", "cmd+x", "alt+e"]) {
+      const r = await session.single(act({ action: "key", text: k }));
+      expect({ k, said: text(r) }).toEqual({ k, said: expect.stringContaining("password field") });
+    }
+    const held = await session.single(act({ action: "hold_key", text: "h", duration: 2 }));
+    expect(text(held)).toContain("password field");
+    expect(screen.input()).toEqual([]);
+    expect(guard.checks).toEqual([]);
+    // Moving on or submitting enters nothing; the check still sees them.
+    for (const k of ["Tab", "Return", "Escape"]) {
+      expect((await session.single(act({ action: "key", text: k }))).isError).toBeUndefined();
+    }
+    expect(guard.checks).toHaveLength(3);
   });
 
   test("typed text goes to the check", async () => {
@@ -2277,6 +2643,25 @@ describe("what a contact's screenshot hides", () => {
     expect(other[2]).toEqual(NOTE_BODY);
   });
 
+  test("another household's note is still covered when its body is not found: the whole window is", () => {
+    const withoutBody = (open: string): Inspection => {
+      const view = notesView(open);
+      delete view.windows[0]!.found[IDS.noteBodyScroll];
+      return view;
+    };
+    expect(redactions(SAM, "com.apple.Notes", withoutBody("Jordan's Kitchen list"))).toEqual([
+      NOTES_WINDOW,
+    ]);
+    // Nor when it cannot be told whose note is open.
+    const unknown = withoutBody("Jordan's Kitchen list");
+    delete unknown.windows[0]!.found[IDS.noteBody];
+    expect(redactions(SAM, "com.apple.Notes", unknown)).toEqual([NOTES_WINDOW]);
+    // Their own note needs no cover; the other rows still get theirs.
+    expect(
+      redactions(SAM, "com.apple.Notes", withoutBody("Sam and Alex's Kitchen list")),
+    ).toHaveLength(2);
+  });
+
   test("a window it cannot make sense of is hidden whole", () => {
     const odd: Inspection = {
       running: true,
@@ -2779,6 +3164,101 @@ describe("Notes is scoped to the requester's household list", () => {
     };
     await session.single(act({ action: "type", text: "Limes, 6" }));
     expect(guard.checks.at(-1)!.action).toContain('replacing the selected text "Limes, 8"');
+  });
+
+  test("after Select All, nothing replaces or deletes the whole note until an arrow key", async () => {
+    const { session, screen, guard } = await inNotesAs(SAM, "Sam and Alex's Kitchen list");
+    await session.requestAccess({ apps: [], reason: "t", clipboardWrite: true });
+    const key = (k: string) => session.single(act({ action: "key", text: k }));
+    expect((await key("cmd+a")).isError).toBeUndefined();
+    for (const k of ["cmd+v", "delete", "forward_delete", "cmd+x", "Return", "x"]) {
+      expect({ k, said: text(await key(k)) }).toEqual({
+        k,
+        said: expect.stringContaining("would replace or delete the whole note"),
+      });
+    }
+    // The paste that stacked a shared list: Cmd+A, then a multi-line paste.
+    const paste = await session.single(act({ action: "type", text: "Eggs\nMilk\nLimes" }));
+    expect(text(paste)).toContain("the whole note");
+    expect(text(await session.single(act({ action: "type", text: "Eggs" })))).toContain(
+      "the whole note",
+    );
+    // Copying edits nothing; an arrow key puts the caret back, and then a
+    // one-line edit is an ordinary edit.
+    expect((await key("cmd+c")).isError).toBeUndefined();
+    expect((await key("down")).isError).toBeUndefined();
+    expect((await key("delete")).isError).toBeUndefined();
+    expect(screen.input().map((c) => c.op)).toEqual(["chord", "chord", "chord", "chord"]);
+    expect(guard.checks.map((c) => c.action.split(" (")[0])).toEqual([
+      "press key chord cmd+a",
+      "press key chord cmd+c",
+      'press key chord down with focus on text area "Note body" in Notes, window "Notes"',
+      'press key chord delete with focus on text area "Note body" in Notes, window "Notes"',
+    ]);
+  });
+
+  test("a click in the note drops Select All too; the Edit menu's Paste does not", async () => {
+    const { session, screen } = await inNotesAs(SAM, "Sam and Alex's Kitchen list");
+    await session.single(act({ action: "key", text: "cmd+a" }));
+    screen.owner = {
+      pid: 1,
+      bundleId: "com.apple.Notes",
+      name: "Notes",
+      role: "AXMenuItem",
+      label: "Paste",
+    };
+    const menuPaste = await session.single(act({ action: "left_click", coordinate: [100, 100] }));
+    expect(text(menuPaste)).toContain("the whole note");
+    screen.owner = { ...screen.owner, role: "AXTextArea", label: "Note body" };
+    expect(
+      (await session.single(act({ action: "left_click", coordinate: [100, 100] }))).isError,
+    ).toBeUndefined();
+    expect((await session.single(act({ action: "type", text: "Eggs" }))).isError).toBeUndefined();
+    expect(screen.input().map((c) => c.op)).toEqual(["chord", "click", "type"]);
+  });
+
+  test("a selection the note reports as all of its text is refused, however it was made", async () => {
+    const { session, screen } = await inNotesAs(ALEX, "Sam and Alex's Kitchen list", POLICY);
+    const everything = "Sam and Alex's Kitchen list\nEggs\nMilk";
+    screen.focus = {
+      ...screen.focus!,
+      selection: { location: 0, length: everything.length },
+      selectedText: everything,
+      textBefore: "",
+      textAfter: "",
+    };
+    expect(text(await session.single(act({ action: "key", text: "delete" })))).toContain(
+      "the whole note",
+    );
+    // One line of it selected is an ordinary edit.
+    screen.focus = {
+      ...screen.focus!,
+      selection: { location: 28, length: 4 },
+      selectedText: "Eggs",
+      textBefore: "Sam and Alex's Kitchen list\n",
+      textAfter: "\nMilk",
+    };
+    expect(
+      (await session.single(act({ action: "type", text: "Eggs, 12" }))).isError,
+    ).toBeUndefined();
+    expect(screen.input().map((c) => c.op)).toEqual(["type"]);
+  });
+
+  test("Select All in the search field is not the note", async () => {
+    const { session, screen } = await inNotesAs(SAM, "Sam and Alex's Kitchen list");
+    screen.focus = {
+      pid: 1,
+      bundleId: "com.apple.Notes",
+      name: "Notes",
+      role: "AXTextField",
+      subrole: "AXSearchField",
+      label: "Search",
+      window: "Notes",
+    };
+    await session.single(act({ action: "key", text: "cmd+a" }));
+    expect(
+      (await session.single(act({ action: "type", text: "Kitchen" }))).isError,
+    ).toBeUndefined();
   });
 
   test("nothing is typed when Notes cannot say which note is open", async () => {
