@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2
+
+### Patch Changes
+
+- 078c0e4: Run the SOUL.md size gate, and send know-how to subject notes instead of SOUL.md.
+  
+  The gate for SOUL.md was written on 2026-08-28 and never called by the daemon, so the file grew from 31 KB back to 43 KB of every system prompt. It now runs in the boot sweep and after every self-note. `remember_about_self` requires a section and is limited to character and facts about Edmund's life; recipes, tool quirks and mistakes go to `remember_about_subject`, which is now in the tool catalog. The output contract states once that everything in the final text ships and that `KEEP_QUIET` is the only way to send nothing.
+- e2d7027: A standing dinner text asks for a written recipe page on the day's first send again. The check read "any stored receipt" as a retry, and stored receipts still hold the last day it fired, so the page was requested once (2026-08-17) while the text promised it on 17 more days.
+- b07d6ed: Scheduled and proactive wake-ups that start without the session's model conversation now carry the recent thread, as inbound cold starts do. The runner's persona-edit log says what happens (the session resumes and picks up the new prompt when its worker next starts) instead of announcing a fresh start that never happened.
+
 ## 0.3.1
 
 ### Patch Changes

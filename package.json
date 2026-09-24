@@ -1,6 +1,6 @@
 {
   "name": "edmund-harness",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "An iMessage assistant for your Mac that runs on Claude Code or Codex CLI, with persistent memory for every conversation, a skill catalog, and optional integrations.",
   "keywords": [
     "imessage",
