@@ -5,6 +5,7 @@ import type { Config } from "../config/config.ts";
 import { nextFire } from "../cron/next-fire.ts";
 import type { CronStore } from "../cron/store.ts";
 import type { CronJob } from "../cron/types.ts";
+import { type RecentThread, wakeThreadBlock } from "../cron/wake-thread.ts";
 import {
   checkActiveHours,
   checkEnabled,
@@ -64,7 +65,8 @@ export async function fireBrownNose(
   echoes: EchoCache,
   crons: CronStore,
   prefs: GhostPrefsStore,
-  onHeartbeat?: () => void,
+  onHeartbeat: (() => void) | undefined,
+  recentThread: RecentThread,
 ): Promise<void> {
   const payload = decodeBrownNoseSystemEvent(job.systemEvent);
   if (!payload) {
@@ -151,7 +153,17 @@ export async function fireBrownNose(
   }
 
   try {
-    await fireImpl(job, payload, config, state, echoes, prefs, sessionKey, onHeartbeat);
+    await fireImpl(
+      job,
+      payload,
+      config,
+      state,
+      echoes,
+      prefs,
+      sessionKey,
+      onHeartbeat,
+      recentThread,
+    );
   } finally {
     acq.release();
   }
@@ -165,7 +177,8 @@ async function fireImpl(
   echoes: EchoCache,
   prefs: GhostPrefsStore,
   sessionKey: SessionKey,
-  onHeartbeat?: () => void,
+  onHeartbeat: (() => void) | undefined,
+  recentThread: RecentThread,
 ): Promise<void> {
   const session = state.getSession(sessionKey);
   if (!session) {
@@ -193,6 +206,7 @@ async function fireImpl(
     tags: payload.tags,
     localTimeLabel,
     portalUrl: portalLink,
+    recentThread: wakeThreadBlock(sessionKey, session.chatGuid, config, state, recentThread),
   });
 
   const started = Date.now();

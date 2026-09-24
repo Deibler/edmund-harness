@@ -1178,8 +1178,8 @@ async function handleBatchInner(
         browserHint: cleaned.some((m) => envelopeNeedsBrowser(m.text)),
         images: inboundImagePaths.length > 0 ? inboundImagePaths : undefined,
         // /compact runs in-place against the warm worker now, so we no
-        // longer need a forced cold-spawn from the channel side. Leave
-        // runClaude to make the call (e.g. on persona-fingerprint drift).
+        // longer need a forced cold-spawn from the channel side. Only a
+        // provider switch starts fresh, and runModel sets that itself.
         freshSession: false,
         // Typing bubble: latch ON the moment the model emits its first
         // user-facing text block (or starts a send_message), and ignore

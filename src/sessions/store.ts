@@ -28,9 +28,10 @@ export type SessionRecord = {
    *  at most one notice — a fresh inbound after the notice re-arms it. */
   lastFallbackMs: number;
   /** SHA fingerprint of the shared persona surface (IDENTITY/SOUL/VENUE_*
-   *  + code version stamp) as of the last successful cold-spawn. When the
-   *  current fingerprint diverges from this, runClaude force-cold-spawns
-   *  so persona edits propagate to resumed sessions automatically. */
+   *  + code version stamp) as of this session's last turn. runClaude logs
+   *  when it has drifted; the edit itself reaches the session the next time
+   *  its worker process starts, which resumes the conversation. Codex starts
+   *  a fresh thread on drift. */
   systemPromptHash: string | null;
 };
 

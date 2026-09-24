@@ -22,6 +22,7 @@ import { toPendingEntry, writePending } from "./bridge/session-queue.ts";
 import { isBargeIn } from "./channels/barge-in.ts";
 import { deliverReply, setSmsDeliverer } from "./channels/deliver.ts";
 import type { Deps } from "./channels/deps.ts";
+import { recentThreadLines } from "./channels/history.ts";
 import { SessionPipeline } from "./channels/pipeline.ts";
 import { handleBatch, shouldAccept } from "./channels/turn.ts";
 import { checkLoadout, formatLoadoutReport } from "./claude/loadout-check.ts";
@@ -578,7 +579,10 @@ async function main() {
 
   const scheduler = new Scheduler({
     store: crons,
-    onFire: (job) => fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs),
+    onFire: (job) =>
+      fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs, (key, guid) =>
+        recentThreadLines(key, guid, deps),
+      ),
   });
   scheduler.start();
 

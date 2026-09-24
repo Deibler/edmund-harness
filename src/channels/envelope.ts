@@ -329,6 +329,9 @@ export function buildProactiveEnvelope(args: {
    *  the model must close the message with a one-sentence note about the
    *  proactive feature + this link. */
   portalUrl?: string;
+  /** Recent-thread block for a fire that starts without the session's model
+   *  conversation (see wakeThreadBlock); empty when the session resumes. */
+  recentThread?: string;
 }): string {
   const sections: string[] = [];
   const header: string[] = [
@@ -341,6 +344,8 @@ export function buildProactiveEnvelope(args: {
   sections.push(header.join("\n"));
 
   sections.push(`Brief from the ghost:\n${args.brief}`);
+  // Before the rubric: its first question is whether the person just wrote.
+  if (args.recentThread) sections.push(args.recentThread);
 
   if (args.contextFiles && args.contextFiles.length > 0) {
     sections.push(
