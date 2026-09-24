@@ -4,6 +4,7 @@ import { type RunInput, type RunResult, evictWarmWorker, runClaude } from "../cl
 import { runCodex } from "../codex/runner.ts";
 import type { Config } from "../config/config.ts";
 import { endScreenHold, screenLockPath } from "../mcp/computer-use/lock.ts";
+import { noteTurnStart } from "../mcp/computer-use/turn.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { log } from "../util/log.ts";
@@ -82,6 +83,23 @@ export function releaseScreen(config: Config, sessionKey: string): void {
 }
 
 /**
+ * A turn is starting: record what started it for the computer-use safety
+ * check (mcp/computer-use/turn.ts), which cannot otherwise tell a message that
+ * arrived during a scheduled turn from one that started a turn of its own.
+ */
+export function noteScreenTurn(config: Config, sessionKey: string, cronJob: string | null): void {
+  if (!config.computer_use?.enabled) return;
+  try {
+    noteTurnStart(resolve(config.paths.data_dir), sessionKey, cronJob);
+  } catch (err) {
+    log.warn("computer", "could not record what started the turn", {
+      session: sessionKey,
+      err: (err as Error).message,
+    });
+  }
+}
+
+/**
  * Shared turn entry point. Model selection remains where it always was in
  * config; only the effective model name decides which installed CLI runs it.
  */
@@ -119,6 +137,7 @@ export async function runModel(
     });
   }
 
+  noteScreenTurn(config, rawInput.sessionKey, rawInput.cronJob ?? null);
   let result: RunResult;
   try {
     result =

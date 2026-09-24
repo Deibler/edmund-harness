@@ -144,6 +144,12 @@ export type RunInput = {
    */
   inboundDepth?: number;
   /**
+   * The cron job whose firing started this turn, when one did. Recorded as
+   * the turn starts, so the computer-use safety check knows the whole turn
+   * was the job's even after a message arrives during it (runModel).
+   */
+  cronJob?: string;
+  /**
    * Browser-intent hint computed by the caller from the INBOUND BODY
    * only (the user's actual new messages). When set, it replaces the
    * envelope-wide regex — which matched URLs in history lines and the

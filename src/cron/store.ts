@@ -155,20 +155,6 @@ export class CronStore {
     return res.changes > 0;
   }
 
-  /**
-   * The job that fired most recently for a session, whatever its status now.
-   * `markFired` runs before the turn it starts, so during a scheduled turn
-   * this is the event that started it.
-   */
-  lastFired(sessionKey: string): CronJob | null {
-    const row = this.db
-      .query(
-        "SELECT * FROM jobs WHERE session_key = ? AND last_fired_ms IS NOT NULL ORDER BY last_fired_ms DESC LIMIT 1",
-      )
-      .get(sessionKey) as RawRow | null;
-    return row ? this.hydrate(row) : null;
-  }
-
   /** A session's jobs in active OR paused state — the user-portal view. */
   listForPortal(sessionKey: string): CronJob[] {
     const rows = this.db

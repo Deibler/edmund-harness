@@ -74,6 +74,10 @@ const FORWARD_DELETE = 0x75;
  * beside the caret per further press. Null for any other key, with a modifier
  * (a word or a line at a time, whose reach is not worked out here), or when
  * the focused element does not report its text.
+ *
+ * A character is what a press deletes: a grapheme, not a UTF-16 unit. 🥑 is
+ * two units and one press, so counting units described twelve deletes across
+ * "⏎🥑 Avocados⏎" without the last line break, less than they removed.
  */
 export function deletedText(chord: Chord, focus: PointOwner | null, repeat: number): string | null {
   if (chord.modifiers.length || chord.keys.length !== 1) return null;
@@ -82,9 +86,18 @@ export function deletedText(chord: Chord, focus: PointOwner | null, repeat: numb
   if (!focus?.selection) return null;
   const selected = focus.selectedText ?? "";
   const more = Math.max(0, focus.selection.length > 0 ? repeat - 1 : repeat);
-  if (key === FORWARD_DELETE) return selected + (focus.textAfter ?? "").slice(0, more);
-  const before = focus.textBefore ?? "";
-  return before.slice(Math.max(0, before.length - more)) + selected;
+  if (key === FORWARD_DELETE) {
+    const after = graphemes(focus.textAfter ?? "");
+    return selected + after.slice(0, more).join("");
+  }
+  const before = graphemes(focus.textBefore ?? "");
+  return before.slice(Math.max(0, before.length - more)).join("") + selected;
+}
+
+const SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function graphemes(text: string): string[] {
+  return Array.from(SEGMENTER.segment(text), (s) => s.segment);
 }
 
 /** Delete or forward-delete with no modifier, or Cut: a key that removes what is selected. */

@@ -357,6 +357,9 @@ participant_roster = true
 # household's list, and a contact's screenshots black out everything else.
 # Every action is checked by Jev (typesafe/jev-1.13) through OpenRouter with
 # [keys].openrouter before it runs; without that key nobody gets the tools.
+# Edits to this section reach conversations already using the screen before
+# their next action: grants it no longer allows are taken back, and a
+# classifier change applies at once.
 # The process that launches the daemon (for the launchd job, /bin/bash) needs
 # Screen Recording and Accessibility in System Settings > Privacy & Security,
 # and the Mac must be unlocked for input. Building the native helper needs

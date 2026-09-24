@@ -25,13 +25,16 @@
  * The owner's own DM gets `apps`; every other DM and group gets
  * `contact_apps`, only while the safety check enforces. Guests, sessions
  * that are not a conversation, and any session without an OpenRouter key for
- * the check see an empty list (sessionPolicy).
+ * the check see an empty list (sessionPolicy). That policy, and the check's
+ * enforce or shadow mode, are read again before every action (configReader),
+ * so an edit to [computer_use] reaches a session that is already running and
+ * grants the policy no longer allows are taken back.
  *
  * One conversation drives the screen at a time. It holds the screen until
  * its turn ends, and then quits the apps it launched (lock.ts).
  */
 
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -46,7 +49,7 @@ import { zodToJsonSchema } from "../zod-to-json.ts";
 import { type AuditEntry, JevGuard } from "./guard.ts";
 import { END_HOLD_SIGNAL, HOLD_IDLE_MS, ScreenLock, screenLockPath } from "./lock.ts";
 import { NativeHelper } from "./native.ts";
-import { type Policy, sessionPolicy } from "./policy.ts";
+import { sessionPolicy } from "./policy.ts";
 import { requestReader, triggerReader } from "./request.ts";
 import { type Scope, describeConversation, loadScope } from "./scope.ts";
 import { ComputerSession } from "./session.ts";
@@ -55,24 +58,20 @@ import { INSTRUCTIONS, computerTools } from "./tools.ts";
 export { sessionPolicy };
 
 /**
- * The apps this session may be granted, read from config.toml when asked, so
- * an edit reaches sessions that are already running. Nothing once computer
- * use is switched off (or, for a contact, once the check only shadows); the
- * list from startup if the file cannot be read right now, mid-edit say.
+ * config.toml as it stands, parsed again only when the file has changed (its
+ * inode, size or modification time), so every action can afford to ask.
+ * Throws when it cannot be read or parsed, and never answers with an older
+ * reading: the caller refuses instead. A failed parse is tried again on the
+ * next call, since what failed may be a file the config points to.
  */
-export function currentApps(configPath: string, policy: Policy): string[] {
-  let section: Config["computer_use"];
-  try {
-    section = loadConfig(configPath).computer_use;
-  } catch (err) {
-    log.warn("computer", "could not re-read the approved apps; using the list from startup", {
-      err: (err as Error).message,
-    });
-    return policy.apps;
-  }
-  if (!section.enabled) return [];
-  if (policy.tier === "operator") return section.apps;
-  return section.classifier === "enforce" ? section.contact_apps : [];
+export function configReader(path: string): () => Config {
+  let last: { stamp: string; config: Config } | null = null;
+  return () => {
+    const st = statSync(path);
+    const stamp = `${st.ino}:${st.size}:${st.mtimeMs}`;
+    if (last?.stamp !== stamp) last = { stamp, config: loadConfig(path) };
+    return last.config;
+  };
 }
 
 async function main() {
@@ -97,15 +96,16 @@ async function main() {
   if (policy && config) {
     initRegistryFromConfig(config);
     const scope = await loadScope(config, sessionKey, policy.tier);
+    const current = configReader(configPath);
     guard = new JevGuard({
       apiKey: config.keys.openrouter,
       model: config.computer_use.classifier_model,
       threshold: config.computer_use.classifier_threshold,
-      mode: config.computer_use.classifier,
+      mode: () => current().computer_use.classifier,
       session: sessionKey,
       context: guardContext(scope),
       request: requestReader(config, sessionKey),
-      startedBy: triggerReader(config, sessionKey, dataDir),
+      startedBy: triggerReader(sessionKey, dataDir),
       audit: auditTo(join(dataDir, "computer-use", "verdicts.jsonl")),
     });
     session = new ComputerSession({
@@ -114,7 +114,7 @@ async function main() {
       scope,
       guard,
       lock: new ScreenLock({ path: screenLockPath(dataDir), session: sessionKey }),
-      approvedApps: () => currentApps(configPath, policy),
+      livePolicy: () => sessionPolicy(current(), process.env.EDMUND_SESSION_TIER, sessionKey),
     });
   }
   const tools: ToolDef[] = session ? computerTools(session) : [];

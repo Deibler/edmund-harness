@@ -3,15 +3,19 @@
  * coordinates refer to, and every action behind the gates.
  *
  * The gates, in the order an action meets them:
- *  1. something is granted at all;
+ *  1. the [computer_use] policy, read again now, still covers this session,
+ *     and something is granted under it (grants it no longer allows are
+ *     taken back);
  *  2. this conversation holds the screen lock (waiting while another
  *     conversation finishes), and the Mac is not locked;
  *  3. the frontmost app is granted, and its tier allows the action;
  *  4. for anything aimed at a point, the app that owns that point is granted
  *     too, since a click reaches whatever is under it, not the frontmost app.
  *     The desktop and the Dock count as Finder;
- *  5. fixed refusals that need no judgment: session-ending shortcuts,
- *     quitting Messages, typing into a password field;
+ *  5. fixed refusals that need no judgment: ending the session or quitting
+ *     Messages, by shortcut or by the menu item it stands for (keys.ts);
+ *     entering text in a password field, by typing or by key; and replacing
+ *     a whole note in Notes after Select All;
  *  6. scope: in Messages, only the conversation the request came from; in
  *     Notes, never another household's list, and for a contact only their
  *     own (scope.ts);
@@ -31,11 +35,21 @@ import type { ToolResult } from "../tools/types.ts";
 import { clip, deletedText, describeElement, quoted, removesSelection } from "./describe.ts";
 import { type Frame, frameFor, inFrame, toImage, toScreen, zoomRegion } from "./geometry.ts";
 import { type Check, type Guard, refusalText } from "./guard.ts";
-import { blockedChord, chordMeaning, isSystemCombo, modifierFlags, parseChord } from "./keys.ts";
+import {
+  blockedChord,
+  blockedMenuItem,
+  chordMeaning,
+  editsText,
+  isSystemCombo,
+  modifierFlags,
+  movesCaret,
+  parseChord,
+} from "./keys.ts";
 import type { ScreenLock } from "./lock.ts";
 import type {
   Button,
   Capture,
+  Chord,
   Display,
   InstalledApp,
   Native,
@@ -144,11 +158,12 @@ export type SessionDeps = {
   guard: Guard;
   lock: ScreenLock | null;
   /**
-   * The apps this conversation may be granted, as the config has them right
-   * now. Read on every request_access, so an edit to [computer_use] reaches a
-   * session that is already running. Defaults to `policy.apps`.
+   * This session's policy as the config has it right now: null once it gets
+   * no tools, a throw when the config cannot be read. Asked before every
+   * grant, listing and action, so an edit to [computer_use] reaches a session
+   * that is already running. Defaults to `policy`.
    */
-  approvedApps?: () => string[];
+  livePolicy?: () => Policy | null;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 };
@@ -168,6 +183,8 @@ export class ComputerSession {
   private markNext = false;
   /** What the last input marked, for the `wait` right after it. */
   private marked: SettleView | null = null;
+  /** Select All went to Notes, and nothing has moved the caret since (gateWholeNote). */
+  private noteSelectedAll = false;
   /**
    * Set while this conversation holds the screen: the pids already running
    * when it took the screen (never quit when it lets go) and when it last
@@ -188,7 +205,7 @@ export class ComputerSession {
   private readonly scope: Scope;
   private readonly guard: Guard;
   private readonly lock: ScreenLock | null;
-  private readonly approvedApps: () => string[];
+  private readonly livePolicy: () => Policy | null;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
 
@@ -198,12 +215,46 @@ export class ComputerSession {
     this.scope = deps.scope;
     this.guard = deps.guard;
     this.lock = deps.lock;
-    this.approvedApps = deps.approvedApps ?? (() => deps.policy.apps);
+    this.livePolicy = deps.livePolicy ?? (() => deps.policy);
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = deps.now ?? Date.now;
   }
 
   // ─── Access ────────────────────────────────────────────────────────────
+
+  /**
+   * The policy as the config has it now, after taking back every grant and
+   * grant flag it no longer allows. Null when this session gets nothing any
+   * more: computer use switched off, a contact's check back in shadow, or the
+   * session no longer on the tier it was scoped for. A config that cannot be
+   * read refuses whatever was asked; it never falls back to an older reading.
+   */
+  private refresh(): Policy | null {
+    let live: Policy | null;
+    try {
+      live = this.livePolicy();
+    } catch (err) {
+      throw new Refusal(
+        `The computer-use settings could not be read right now (${message(err)}), so nothing was done. Try again in a minute.`,
+      );
+    }
+    if (live && live.tier !== this.policy.tier) live = null;
+    for (const [bundleId, grant] of this.grants) {
+      const app = this.installed?.find((a) => a.bundleId === bundleId) ?? {
+        bundleId,
+        name: grant.displayName,
+        displayName: grant.displayName,
+        path: "",
+      };
+      if (!live || !approved(live.apps, app)) this.grants.delete(bundleId);
+    }
+    this.flags = {
+      clipboardRead: this.flags.clipboardRead && !!live?.clipboard,
+      clipboardWrite: this.flags.clipboardWrite && !!live?.clipboard,
+      systemKeyCombos: this.flags.systemKeyCombos && !!live?.systemKeyCombos,
+    };
+    return live;
+  }
 
   async requestAccess(req: {
     apps: string[];
@@ -213,7 +264,13 @@ export class ComputerSession {
     systemKeyCombos?: boolean;
   }): Promise<string> {
     this.installed ??= await this.native.installedApps();
-    const approvedNow = this.approvedApps();
+    let live: Policy | null;
+    try {
+      live = this.refresh();
+    } catch (err) {
+      return JSON.stringify({ granted: [], denied: [], error: message(err) });
+    }
+    const approvedNow = live?.apps ?? [];
     const denied: Array<{ app: string; reason: string }> = [];
     for (const name of req.apps) {
       const app = resolveApp(this.installed, name);
@@ -236,11 +293,10 @@ export class ComputerSession {
     }
     const ask = (flag: boolean | undefined) => Boolean(flag);
     this.flags = {
-      clipboardRead: this.flags.clipboardRead || (ask(req.clipboardRead) && this.policy.clipboard),
-      clipboardWrite:
-        this.flags.clipboardWrite || (ask(req.clipboardWrite) && this.policy.clipboard),
+      clipboardRead: this.flags.clipboardRead || (ask(req.clipboardRead) && !!live?.clipboard),
+      clipboardWrite: this.flags.clipboardWrite || (ask(req.clipboardWrite) && !!live?.clipboard),
       systemKeyCombos:
-        this.flags.systemKeyCombos || (ask(req.systemKeyCombos) && this.policy.systemKeyCombos),
+        this.flags.systemKeyCombos || (ask(req.systemKeyCombos) && !!live?.systemKeyCombos),
     };
     const limited = [...this.grants.values()]
       .filter((g) => g.tier !== "full")
@@ -256,10 +312,16 @@ export class ComputerSession {
   }
 
   listGranted(): string {
+    let approvedApps: string[] | string;
+    try {
+      approvedApps = this.refresh()?.apps ?? [];
+    } catch (err) {
+      approvedApps = message(err);
+    }
     return JSON.stringify({
       allowedApps: [...this.grants.values()],
       grantFlags: this.flags,
-      approvedApps: this.approvedApps(),
+      approvedApps,
       coordinateMode: "pixels",
     });
   }
@@ -348,6 +410,7 @@ export class ComputerSession {
     this.launched.clear();
     this.untitledBefore.clear();
     this.hold = null;
+    this.noteSelectedAll = false;
     // Quitting changes the screen, so old coordinates must not be reused.
     this.frame = null;
     this.lock?.release();
@@ -547,6 +610,15 @@ export class ComputerSession {
     await this.approve(a, front, target, `${verb} ${describeElement(target)}`, at);
     await this.beforeInput();
     await this.native.click(at.x, at.y, button, count, flags);
+    if (target.bundleId === NOTES) {
+      // Select All from the menu selects everything; a plain click anywhere
+      // else in Notes (the text, the list of notes) puts the caret down.
+      if (target.role === "AXMenuItem" && /^Select All$/i.test(target.label ?? "")) {
+        this.noteSelectedAll = true;
+      } else if (button === "left" && !flags && target.role && !target.role.startsWith("AXMenu")) {
+        this.noteSelectedAll = false;
+      }
+    }
     const done =
       count === 3
         ? "Triple-clicked"
@@ -693,15 +765,17 @@ export class ComputerSession {
     );
     await this.beforeInput();
     await this.native.chord(chord, { repeat });
+    this.afterNoteKey(front, focus, chord, meaning);
     return { text: "Key pressed." };
   }
 
   private async holdKey(a: Action): Promise<Step> {
     const secs = Math.min(Math.max(a.duration ?? 0, 0), MAX_WAIT_SECONDS);
-    const { chord, focus, front, words } = await this.prepareChord(a);
+    const { chord, focus, front, words, meaning } = await this.prepareChord(a);
     await this.approve(a, front, focus, `hold ${words} for ${secs}s`);
     await this.beforeInput();
     await this.native.chord(chord, { holdMs: secs * 1000 });
+    this.afterNoteKey(front, focus, chord, meaning);
     return { text: `Held for ${secs}s.` };
   }
 
@@ -724,9 +798,56 @@ export class ComputerSession {
     }
     const focus = await this.native.focused();
     const meaning = chordMeaning(chord, front.name);
-    if (focus?.secure && meaning === "Paste") throw new Refusal(PASSWORD_FIELD);
+    // Any key that would put text in a password field, not just Paste: a
+    // letter at a time is typing it. Tab and Return (move on, submit) are not.
+    if (focus?.secure && editsText(chord, false)) throw new Refusal(PASSWORD_FIELD);
+    this.gateWholeNote(front.bundleId, focus, editsText(chord, true));
     const words = `key chord ${a.text}${meaning ? ` (macOS shortcut: ${meaning})` : ""}${focus ? ` with focus on ${describeElement(focus)}` : ""}`;
     return { chord, focus, front, words, meaning };
+  }
+
+  /**
+   * After a key reaches Notes: Select All means the next edit would replace
+   * the whole note, until a key moves the caret.
+   */
+  private afterNoteKey(
+    front: RunningApp,
+    focus: PointOwner | null,
+    chord: Chord,
+    meaning: string | null,
+  ): void {
+    if (front.bundleId !== NOTES) return;
+    // A one-line field (the search field, a folder name) holds no note.
+    if (meaning === "Select All" && focus?.role !== "AXTextField") this.noteSelectedAll = true;
+    else if (movesCaret(chord)) this.noteSelectedAll = false;
+  }
+
+  /**
+   * Refuses an edit that would replace or delete everything in a note: the
+   * paste that stacked a shared shopping list, since every other device puts
+   * its own copy of each deleted line back. Everything counts as selected when
+   * the focused text reports a selection from its very start to its very end,
+   * or, when it reports none, from Select All until a plain click in Notes or
+   * a key that moves the caret. Ordinary edits (a line selected, a caret in
+   * the middle) are untouched.
+   */
+  private gateWholeNote(app: string, focus: PointOwner | null, edits: boolean): void {
+    if (app !== NOTES || !edits) return;
+    const reported = focus?.selection && focus.role !== "AXTextField" ? focus : null;
+    if (reported) {
+      const whole =
+        reported.selection!.location === 0 &&
+        reported.selection!.length > 0 &&
+        !reported.textBefore &&
+        !reported.textAfter;
+      if (!whole) {
+        this.noteSelectedAll = false;
+        return;
+      }
+    } else if (!this.noteSelectedAll) {
+      return;
+    }
+    throw new Refusal(WHOLE_NOTE);
   }
 
   /**
@@ -740,6 +861,7 @@ export class ComputerSession {
     const front = await this.gateFrontmost("type");
     const focus = await this.native.focused();
     if (focus?.secure) throw new Refusal(PASSWORD_FIELD);
+    this.gateWholeNote(front.bundleId, focus, text.length > 0);
     const into = focus ? describeElement(focus) : `whatever has focus in ${front.name}`;
     const replacing = focus?.selectedText
       ? `, replacing the selected text ${quoted(focus.selectedText)}`
@@ -777,6 +899,7 @@ export class ComputerSession {
   async openApplication(name: string, explanation: string): Promise<ToolResult> {
     return this.respond(async () => {
       this.installed ??= await this.native.installedApps();
+      this.gateAccess();
       const app = resolveApp(this.installed, name);
       if (!app) throw new Refusal(`No installed application matches "${name}".`);
       if (!this.isGranted(app.bundleId)) {
@@ -819,6 +942,7 @@ export class ComputerSession {
 
   async readClipboard(explanation: string): Promise<ToolResult> {
     return this.respond(async () => {
+      this.gateAccess();
       if (!this.flags.clipboardRead)
         throw new Refusal("Reading the clipboard needs the clipboardRead grant.");
       await this.enter("clipboard");
@@ -836,6 +960,7 @@ export class ComputerSession {
 
   async writeClipboard(text: string, explanation: string): Promise<ToolResult> {
     return this.respond(async () => {
+      this.gateAccess();
       if (!this.flags.clipboardWrite)
         throw new Refusal("Writing the clipboard needs the clipboardWrite grant.");
       await this.enter("clipboard");
@@ -860,8 +985,7 @@ export class ComputerSession {
    * unlocked, or it would reach the login window.
    */
   private async enter(kind: "screen" | "input" | "clipboard") {
-    if (this.grants.size === 0)
-      throw new Refusal("No apps are granted yet. Call request_access first.");
+    this.gateAccess();
     await this.takeScreen();
     const perms = await this.native.permissions();
     if (kind === "clipboard") return perms;
@@ -878,6 +1002,17 @@ export class ComputerSession {
       );
     }
     return perms;
+  }
+
+  /** Gate 1: the policy as it stands now, and something granted under it. */
+  private gateAccess(): void {
+    if (!this.refresh()) {
+      throw new Refusal(
+        "Screen control is switched off for this conversation now, and every grant was taken back. Nothing was done.",
+      );
+    }
+    if (this.grants.size === 0)
+      throw new Refusal("No apps are granted yet. Call request_access first.");
   }
 
   /**
@@ -979,7 +1114,33 @@ export class ComputerSession {
       );
     }
     this.gateTier(bundleId, name, kind);
+    // Scrolling over a menu item does not choose it; everything else here
+    // can, on the press, the release or the drop.
+    if (kind !== "scroll") await this.gateMenuItem(owner);
     return owner;
+  }
+
+  /**
+   * The fixed refusals for what is under the pointer: the menu items a
+   * refused shortcut stands for (Quit Messages, the Apple menu's Log Out, the
+   * Dock's Quit), and in Notes an edit menu item while the whole note is
+   * selected. An element the accessibility tree cannot read is refused in
+   * Messages and the Dock, where it could be one of those Quits; elsewhere it
+   * goes to the check, since a busy app's window falls back to the same.
+   */
+  private async gateMenuItem(owner: PointOwner): Promise<void> {
+    const blocked = blockedMenuItem(owner);
+    if (blocked) {
+      throw new Refusal(`That menu item ${blocked}. Edmund never does that; nothing was clicked.`);
+    }
+    if (!owner.role && (owner.bundleId === MESSAGES || owner.bundleId === DOCK)) {
+      throw new Refusal(
+        `What is under that point in ${owner.bundleId === DOCK ? "the Dock" : "Messages"} could not be read, and a click there could quit Messages. Nothing was clicked; take a screenshot and try again.`,
+      );
+    }
+    if (owner.role === "AXMenuItem" && NOTE_EDIT_ITEM.test(owner.label ?? "")) {
+      this.gateWholeNote(owner.bundleId, await this.native.focused(), true);
+    }
   }
 
   private gateTier(bundleId: string, name: string, kind: ActionKind): void {
@@ -1340,6 +1501,12 @@ function withheldNote(apps: string[]): string {
 
 const PASSWORD_FIELD =
   "The focused field is a password field. Edmund never types or pastes into one; nothing was sent. Ask the person to enter it themselves.";
+
+/** Notes' edit menu items that replace or remove the selection. */
+const NOTE_EDIT_ITEM = /^(Paste|Cut|Delete)\b/i;
+
+const WHOLE_NOTE =
+  "Everything in the note is selected, so this would replace or delete the whole note. Edmund never rewrites a whole note: every other device puts its own copy of each removed line back, and the list ends up with every line several times. Nothing was done. Click in the note or press an arrow key to drop the selection, then change only the lines that need changing.";
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
