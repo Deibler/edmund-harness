@@ -35,6 +35,7 @@ import { blockedChord, chordMeaning, isSystemCombo, modifierFlags, parseChord } 
 import type { ScreenLock } from "./lock.ts";
 import type {
   Button,
+  Capture,
   Display,
   InstalledApp,
   Native,
@@ -61,7 +62,6 @@ import {
   NOTES,
   type Scope,
   describeConversation,
-  isConversation,
   isConversationRow,
   isOwnNote,
   keyWindow,
@@ -69,6 +69,8 @@ import {
   openNoteTitle,
   redactions,
   rowAt,
+  searchFieldInput,
+  whoseTitle,
   windowAt,
 } from "./scope.ts";
 
@@ -115,6 +117,25 @@ const SETTLE_MAX_SECONDS = 10;
 const MENU_BAR_POINTS = 40;
 /** Never quit at the end of a hold, whoever launched them: the bridge lives in Messages. */
 const NEVER_QUIT = new Set([MESSAGES, FINDER]);
+/** The apps whose windows a contact's capture blacks out in part. */
+const SCOPED_APPS = new Set([MESSAGES, NOTES]);
+/** Captures taken before a contact's gets every list blacked out whole. */
+const CAPTURE_TRIES = 3;
+const MOVED_NOTE =
+  "The conversation and note lists kept changing while this was taken, so they are blacked out whole in this image; take another screenshot to see them.";
+
+/**
+ * What a capture shows: the apps it takes or leaves out, what it blacks out,
+ * the apps it had to leave out because their windows could not be read, and
+ * the frames of every sidebar list in the ones it could.
+ */
+type View = {
+  exclude: string[];
+  include?: string[];
+  redact: Rect[];
+  withheld: string[];
+  lists: Rect[];
+};
 
 export type SessionDeps = {
   native: Native;
@@ -456,15 +477,14 @@ export class ComputerSession {
     );
     const hidden = toHide.length ? await this.native.hide(toHide.map((a) => a.bundleId)) : [];
     const frame = frameFor(display);
-    const { withheld, ...view } = await this.view(running);
-    const shot = await this.native.capture({
+    const { shot, withheld, moved } = await this.scopedCapture(running, {
       display: display.id,
-      ...view,
       width: frame.width,
       height: frame.height,
     });
     const notes = [`Screenshot of ${display.name} (${shot.width}x${shot.height}).`];
     if (withheld.length) notes.push(withheldNote(withheld));
+    if (moved) notes.push(MOVED_NOTE);
     if (perms.locked) {
       notes.push("The Mac is locked: you can look, but input would reach the login window.");
     }
@@ -488,16 +508,14 @@ export class ComputerSession {
     if (!region || region.length !== 4) throw new Refusal("zoom needs region: [x0, y0, x1, y1]");
     await this.enter("screen");
     const { rect, width, height } = zoomRegion(ref, region as [number, number, number, number]);
-    const { withheld, ...view } = await this.view(await this.native.running());
-    const shot = await this.native.capture({
+    const { shot, withheld, moved } = await this.scopedCapture(await this.native.running(), {
       display: ref.display.id,
-      ...view,
       width,
       height,
       rect,
     });
     return {
-      text: `Zoomed (${shot.width}x${shot.height}). Coordinates still refer to the full screenshot.${withheld.length ? ` ${withheldNote(withheld)}` : ""}`,
+      text: `Zoomed (${shot.width}x${shot.height}). Coordinates still refer to the full screenshot.${withheld.length ? ` ${withheldNote(withheld)}` : ""}${moved ? ` ${MOVED_NOTE}` : ""}`,
       image: { type: "image", data: shot.data, mimeType: "image/jpeg" },
     };
   }
@@ -983,7 +1001,7 @@ export class ComputerSession {
     at: Point | null = null,
     waive?: Check["waive"],
   ) {
-    const facts = await this.gateScope(front, target, at);
+    const facts = await this.gateScope(a, front, target, at);
     await this.check(a.action, a.explanation ?? "", front, target, words, facts, waive);
   }
 
@@ -1016,17 +1034,24 @@ export class ComputerSession {
    * shows, for the safety check.
    */
   private async gateScope(
+    a: Action,
     front: RunningApp,
     target: PointOwner | null,
     at: Point | null,
   ): Promise<Record<string, string>> {
     const app = target?.bundleId || front.bundleId;
-    if (app === MESSAGES) return this.gateConversation(target, at);
+    if (app === MESSAGES) return this.gateConversation(a, target, at);
     if (app === NOTES) return this.gateNote(target, at);
     return {};
   }
 
+  /**
+   * A click is judged by the window under it; a key by the window holding
+   * the focused element, which may be a conversation opened in a window of
+   * its own. When Messages cannot say which window that is, nothing is sent.
+   */
   private async gateConversation(
+    a: Action,
     target: PointOwner | null,
     at: Point | null,
   ): Promise<Record<string, string>> {
@@ -1037,27 +1062,52 @@ export class ComputerSession {
       );
     }
     const inspection = await this.native.inspect(MESSAGES, [IDS.conversationList]);
-    const window = at
-      ? windowAt(inspection, at)
-      : keyWindow(inspection, target, IDS.conversationList);
+    const window = at ? windowAt(inspection, at) : keyWindow(inspection, target, (w) => w.title);
     const showing = window?.title ?? "";
     const own = `${showing}: the requester's own conversation, checked against chat.db`;
     const row = rowAt(window, IDS.conversationList, at);
     if (row) {
-      if (isConversationRow(mine, row.text)) {
+      if (isConversationRow(this.scope, row.text)) {
         return {
           messages_showing: showing || "(no conversation open)",
           row_clicked: "the requester's own conversation, in the sidebar",
         };
       }
       throw new Refusal(
-        `That row is a different conversation. Only ${describeConversation(mine)} can be opened from here; nothing was done.`,
+        `That row is a different conversation, or could be. Only ${describeConversation(mine)} can be opened from here; nothing was done.`,
       );
     }
     if (target?.subrole === "AXSearchField") {
-      return { messages_showing: showing || "(no conversation open)", focus: "the search field" };
+      const input = searchFieldInput(a.action, a.text);
+      if (input === "edit") {
+        return {
+          messages_showing: window
+            ? showing || "(no conversation open)"
+            : "(not known: Messages did not say which window has focus)",
+          focus: "the search field",
+        };
+      }
+      if (input === "pick") {
+        const what = a.action === "type" ? "A line break" : `"${a.text}"`;
+        throw new Refusal(
+          `${what} in the Messages search field opens whichever result is selected, and which conversation that is cannot be checked first. Nothing was done. Click the requester's own conversation among the results instead.`,
+        );
+      }
     }
-    if (!isConversation(mine, showing)) {
+    if (!window) {
+      throw new Refusal(
+        `Messages did not say which window has the keyboard focus, so where this would land cannot be checked. Nothing was done. Click in ${describeConversation(mine)} first, then try again.`,
+      );
+    }
+    const whose = whoseTitle(this.scope, showing);
+    if (whose === "shared") {
+      throw new Refusal(
+        this.scope.otherTitles
+          ? `Messages is showing "${showing}", a title another conversation has too, so it cannot be told apart from ${describeConversation(mine)}. Nothing was done.`
+          : `Messages is showing "${showing}", but the list of conversations could not be read to tell it apart from any other. Nothing was done.`,
+      );
+    }
+    if (whose !== "own") {
       throw new Refusal(
         `Messages is showing "${showing || "no conversation"}", which is not ${describeConversation(mine)}. Nothing was done. Open this conversation first by clicking its row in the sidebar.`,
       );
@@ -1070,7 +1120,7 @@ export class ComputerSession {
     at: Point | null,
   ): Promise<Record<string, string>> {
     const inspection = await this.native.inspect(NOTES, [IDS.noteBody, IDS.noteList]);
-    const window = at ? windowAt(inspection, at) : keyWindow(inspection, target, IDS.noteBody);
+    const window = at ? windowAt(inspection, at) : keyWindow(inspection, target, openNoteTitle);
     if (!window?.frame || !window.found[IDS.noteBody]) {
       throw new Refusal(
         "Notes did not say which note is open (its windows cannot be read right now), so nothing was done. Take a screenshot and try again.",
@@ -1115,27 +1165,74 @@ export class ComputerSession {
    * out of Messages and Notes. An app whose windows cannot be read is left
    * out of their capture altogether, since nothing in it can be redacted.
    */
-  private async view(
-    running: RunningApp[],
-  ): Promise<{ exclude: string[]; include?: string[]; redact: Rect[]; withheld: string[] }> {
+  private async view(running: RunningApp[]): Promise<View> {
     if (this.policy.tier !== "contact") {
-      return { ...this.captureFilter(running), redact: [], withheld: [] };
+      return { ...this.captureFilter(running), redact: [], withheld: [], lists: [] };
     }
     const redact: Rect[] = [];
+    const lists: Rect[] = [];
     const left: RunningApp[] = [];
     for (const app of [MESSAGES, NOTES]) {
       const shown = running.find((r) => r.bundleId === app && !r.hidden);
       if (!this.isGranted(app) || !shown) continue;
-      const ids =
-        app === MESSAGES
-          ? [IDS.conversationList]
-          : [IDS.noteList, IDS.noteBody, IDS.noteBodyScroll];
-      const rects = redactions(this.scope, app, await this.native.inspect(app, ids));
-      if (rects) redact.push(...rects);
-      else left.push(shown);
+      const list = app === MESSAGES ? IDS.conversationList : IDS.noteList;
+      const ids = app === MESSAGES ? [list] : [list, IDS.noteBody, IDS.noteBodyScroll];
+      const inspection = await this.native.inspect(app, ids);
+      const rects = redactions(this.scope, app, inspection);
+      if (!rects) {
+        left.push(shown);
+        continue;
+      }
+      redact.push(...rects);
+      for (const w of inspection.windows) {
+        const frame = w.found[list]?.frame;
+        if (w.frame && frame) lists.push(frame);
+      }
     }
     const include = [...this.grants.keys()].filter((id) => !left.some((a) => a.bundleId === id));
-    return { exclude: [], include, redact, withheld: left.map((a) => a.name) };
+    return { exclude: [], include, redact, withheld: left.map((a) => a.name), lists };
+  }
+
+  /**
+   * One capture of what this session may see. A contact's black-outs go
+   * where the accessibility tree put everyone else's conversations and lists
+   * just before the capture, and a message arriving in between moves another
+   * conversation into the sidebar slot left clear for theirs. So the tree is
+   * read again after the capture, and the image is kept only if the
+   * black-outs are still where they belong. Otherwise it is taken again, up
+   * to CAPTURE_TRIES times, then once more with every list blacked out whole
+   * (`moved`). If even that did not hold, Messages and Notes are left out.
+   */
+  private async scopedCapture(
+    running: RunningApp[],
+    shape: { display: number; width: number; height: number; rect?: Rect },
+  ): Promise<{ shot: Capture; withheld: string[]; moved: boolean }> {
+    const take = ({ withheld: _w, lists: _l, ...v }: View) =>
+      this.native.capture({ ...shape, ...v });
+    let view = await this.view(running);
+    if (this.policy.tier !== "contact") {
+      return { shot: await take(view), withheld: view.withheld, moved: false };
+    }
+    const seen = [view];
+    for (let i = 0; i < CAPTURE_TRIES; i++) {
+      const shot = await take(view);
+      const after = await this.view(running);
+      if (sameView(view, after)) return { shot, withheld: view.withheld, moved: false };
+      seen.push(after);
+      view = after;
+    }
+    const strict = strictest(seen);
+    const shot = await take(strict);
+    if (covers(strict, await this.view(running))) {
+      return { shot, withheld: strict.withheld, moved: true };
+    }
+    const out = running.filter(
+      (r) => SCOPED_APPS.has(r.bundleId) && !r.hidden && !!strict.include?.includes(r.bundleId),
+    );
+    const withheld = [...strict.withheld, ...out.map((r) => r.name)];
+    const include = (strict.include ?? []).filter((id) => !SCOPED_APPS.has(id));
+    const bare = await take({ exclude: [], include, redact: [], withheld, lists: [] });
+    return { shot: bare, withheld, moved: false };
   }
 
   /**
@@ -1185,6 +1282,45 @@ export class ComputerSession {
       return { content: [{ type: "text", text: message(err) }], isError: true };
     }
   }
+}
+
+const rectKey = (r: Rect) => `${r.x},${r.y},${r.width},${r.height}`;
+
+/** Whether two readings black out the same places and leave out the same apps. */
+function sameView(a: View, b: View): boolean {
+  const key = (v: View) =>
+    JSON.stringify([
+      v.redact.map(rectKey).sort(),
+      [...v.withheld].sort(),
+      [...(v.include ?? [])].sort(),
+    ]);
+  return key(a) === key(b);
+}
+
+/**
+ * Everything any reading blacked out or left out, and every list whole: an
+ * image taken with this hides what each reading said to hide.
+ */
+function strictest(seen: View[]): View {
+  const unique = (rects: Rect[]) => [...new Map(rects.map((r) => [rectKey(r), r])).values()];
+  return {
+    exclude: [],
+    include: seen
+      .map((v) => v.include ?? [])
+      .reduce((kept, next) => kept.filter((id) => next.includes(id))),
+    redact: unique(seen.flatMap((v) => [...v.redact, ...v.lists])),
+    withheld: [...new Set(seen.flatMap((v) => v.withheld))],
+    lists: unique(seen.flatMap((v) => v.lists)),
+  };
+}
+
+/** Whether an image taken with `taken` hides everything a later reading says to. */
+function covers(taken: View, now: View): boolean {
+  const hidden = new Set(taken.redact.map(rectKey));
+  return (
+    [...now.redact, ...now.lists].every((r) => hidden.has(rectKey(r))) &&
+    now.withheld.every((name) => taken.withheld.includes(name))
+  );
 }
 
 /**

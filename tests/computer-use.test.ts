@@ -9,6 +9,7 @@
  * reached the native layer, not just that an error came back.
  */
 
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +17,7 @@ import { join } from "node:path";
 import { ensureMcpConfig } from "../src/claude/mcp-config.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
+import { ChatDb } from "../src/imessage/db.ts";
 import { deletedText, describeElement } from "../src/mcp/computer-use/describe.ts";
 import {
   fitImage,
@@ -52,6 +54,7 @@ import type {
   Native,
   PointOwner,
   QuitResult,
+  Rect,
   RunningApp,
   SettleResult,
   SettleView,
@@ -59,12 +62,17 @@ import type {
 import { type Policy, approved, resolveApp, tierOf } from "../src/mcp/computer-use/policy.ts";
 import { startedBy } from "../src/mcp/computer-use/request.ts";
 import {
+  type Conversation,
   IDS,
   type Scope,
+  conversationKeys,
   isConversation,
   isConversationRow,
   noteRefusal,
+  otherTitles,
+  readOtherTitles,
   redactions,
+  searchFieldInput,
 } from "../src/mcp/computer-use/scope.ts";
 import {
   currentApps,
@@ -84,6 +92,7 @@ import { cronTools } from "../src/mcp/tools/cron.ts";
 import type { ToolResult } from "../src/mcp/tools/types.ts";
 import { zodToJsonSchema } from "../src/mcp/zod-to-json.ts";
 import { releaseScreen } from "../src/model/runner.ts";
+import { ContactBook } from "../src/sessions/contacts.ts";
 
 const CMD = 0x100000;
 const SHIFT = 0x20000;
@@ -1007,8 +1016,8 @@ function notesView(open: string): Inspection {
   };
 }
 
-/** Messages with one conversation open. */
-function messagesView(showing: string): Inspection {
+/** Messages with one conversation open, and these rows in its sidebar. */
+function messagesView(showing: string, rows = CONVERSATION_ROWS): Inspection {
   return {
     running: true,
     windows: [
@@ -1019,7 +1028,7 @@ function messagesView(showing: string): Inspection {
           [IDS.conversationList]: {
             value: "",
             frame: CONVERSATION_LIST,
-            rows: CONVERSATION_ROWS.map((text, i) => ({
+            rows: rows.map((text, i) => ({
               text,
               frame: { x: 385, y: 200 + 80 * i, width: 317, height: 80 },
             })),
@@ -1047,13 +1056,14 @@ class FakeScreen implements Native {
     label: "Eggs",
     window: "Kitchen list",
   };
+  /** Its window is the title of a window `inspect` reports, as the helper reads both. */
   focus: PointOwner | null = {
     pid: 1,
     bundleId: "com.apple.Notes",
     name: "Notes",
     role: "AXTextArea",
     label: "Note body",
-    window: "Kitchen list",
+    window: "Notes",
   };
   apps: RunningApp[] = [
     app("com.apple.Notes", "Notes"),
@@ -1229,27 +1239,37 @@ const POLICY: Policy = {
 };
 
 const OTHER_LISTS = ["Jordan's Kitchen list", "Casey's shopping list"];
-const ALEX: Scope = {
+/** The conversations in the fake sidebar (CONVERSATION_ROWS), as chat.db has them. */
+const SIDEBAR: Conversation[] = [
+  { kind: "dm", name: "Alex Rivera", handle: "+15555550100" },
+  { kind: "dm", name: "Sam", handle: "+15555550101" },
+  { kind: "group", name: null, members: ["Alex Rivera", "Sam", "Casey Lin", "Morgan"] },
+  { kind: "dm", name: "Jordan Rivera", handle: "+15555550103" },
+];
+/** A scope whose other conversations are the rest of the sidebar, as loadScope reads them. */
+function inSidebar(s: Omit<Scope, "otherTitles">, extra: Conversation[] = []): Scope {
+  const others = [...SIDEBAR, ...extra].filter(
+    (c) => JSON.stringify(c) !== JSON.stringify(s.conversation),
+  );
+  return { ...s, otherTitles: new Set(others.flatMap(conversationKeys)) };
+}
+const ALEX: Scope = inSidebar({
   requester: "Alex Rivera, the owner of this Mac",
-  conversation: { kind: "dm", name: "Alex Rivera", handle: "+15555550100" },
+  conversation: SIDEBAR[0]!,
   ownNotes: ["Sam and Alex's Kitchen list"],
   otherNotes: OTHER_LISTS,
-};
-const SAM: Scope = {
+});
+const SAM: Scope = inSidebar({
   requester: "Sam, a contact who texts Edmund (not the owner of this Mac)",
-  conversation: { kind: "dm", name: "Sam", handle: "+15555550101" },
+  conversation: SIDEBAR[1]!,
   ownNotes: ["Sam and Alex's Kitchen list"],
   otherNotes: OTHER_LISTS,
-};
-const HOUSE_GROUP: Scope = {
+});
+const HOUSE_GROUP: Scope = inSidebar({
   ...SAM,
   requester: "a member of the group chat",
-  conversation: {
-    kind: "group",
-    name: null,
-    members: ["Alex Rivera", "Sam", "Casey Lin", "Morgan"],
-  },
-};
+  conversation: SIDEBAR[2]!,
+});
 const CONTACT: Policy = {
   tier: "contact",
   apps: ["Messages", "Notes", "Maps"],
@@ -1573,7 +1593,7 @@ describe("keyboard", () => {
     await session.requestAccess({ apps: [], reason: "t", systemKeyCombos: true });
     await session.single(act({ action: "key", text: "cmd+q" }));
     expect(guard.checks[0]!.action).toBe(
-      'press key chord cmd+q (macOS shortcut: Quit Notes) with focus on text area "Note body" in Notes, window "Kitchen list"',
+      'press key chord cmd+q (macOS shortcut: Quit Notes) with focus on text area "Note body" in Notes, window "Notes"',
     );
   });
 
@@ -1629,7 +1649,7 @@ describe("keyboard", () => {
     const { session, guard } = await ready();
     await session.single(act({ action: "type", text: "Milk" }));
     expect(guard.checks[0]!.action).toBe(
-      'type text "Milk" into text area "Note body" in Notes, window "Kitchen list"',
+      'type text "Milk" into text area "Note body" in Notes, window "Notes"',
     );
   });
 
@@ -2018,33 +2038,205 @@ const inMessages = (o: Partial<PointOwner> = {}): PointOwner => ({
 });
 
 describe("scope matching", () => {
+  /** A conversation with nothing else in chat.db to confuse it with. */
+  const alone = (c: Conversation | null) => ({ conversation: c, otherTitles: new Set<string>() });
+
   test("a DM is known by the contact's name, or by the number when there is no card", () => {
-    const dm = { kind: "dm" as const, name: "Jordan  Rivera", handle: "+15555550100" };
+    const dm = alone({ kind: "dm", name: "Jordan  Rivera", handle: "+15555550100" });
     expect(isConversation(dm, "Jordan Rivera")).toBe(true);
     expect(isConversation(dm, "jordan rivera")).toBe(true);
     expect(isConversation(dm, "+1 (555) 555-0100")).toBe(true);
     expect(isConversation(dm, "Jordan")).toBe(false);
     expect(isConversation(dm, "Sam")).toBe(false);
-    expect(isConversation(null, "Sam")).toBe(false);
+    expect(isConversation(dm, "Call +1 (555) 555-0100")).toBe(false);
+    expect(isConversation(alone(null), "Sam")).toBe(false);
   });
 
   test("an unnamed group is known by exactly its members' first names", () => {
-    const group = HOUSE_GROUP.conversation;
+    const group = alone(HOUSE_GROUP.conversation);
     expect(isConversation(group, "Alex,  Sam,  Casey & Morgan")).toBe(true);
     expect(isConversation(group, "Sam, Morgan, Alex & Casey")).toBe(true);
     expect(isConversation(group, "Alex & Sam")).toBe(false);
     expect(isConversation(group, "Alex, Sam, Casey, Morgan & Jocelyn")).toBe(false);
-    const named = { kind: "group" as const, name: "The House", members: ["Sam"] };
+    expect(isConversation(group, "Alex, Sam, Casey, Morgan")).toBe(false);
+    const named = alone({ kind: "group", name: "The House", members: ["Sam"] });
     expect(isConversation(named, "The House")).toBe(true);
   });
 
   test("a sidebar row is matched on its title, whatever the preview says", () => {
-    expect(isConversationRow(SAM.conversation, "Sam, Unread, draw us a heart")).toBe(true);
-    expect(isConversationRow(SAM.conversation, "Alex Rivera, Sam said hi")).toBe(false);
-    expect(
-      isConversationRow(HOUSE_GROUP.conversation, "Alex,  Sam,  Casey & Morgan, Seven for seven"),
-    ).toBe(true);
-    expect(isConversationRow(HOUSE_GROUP.conversation, "Sam, Unread, draw us a heart")).toBe(false);
+    expect(isConversationRow(SAM, "Sam, Unread, draw us a heart")).toBe(true);
+    expect(isConversationRow(SAM, "Sam, Mac & cheese tonight?")).toBe(true);
+    expect(isConversationRow(SAM, "Alex Rivera, Sam said hi")).toBe(false);
+    expect(isConversationRow(HOUSE_GROUP, "Alex,  Sam,  Casey & Morgan, Seven for seven")).toBe(
+      true,
+    );
+    expect(isConversationRow(HOUSE_GROUP, "Sam, Unread, draw us a heart")).toBe(false);
+  });
+
+  // Review finding, 2026-09-24: {Alex Rivera, Sam Lee} matched any other
+  // unnamed group titled "Alex & Sam", whose messages were then shown to the
+  // contact and could be typed into.
+  test("a title another conversation in chat.db could have identifies neither", () => {
+    const ours: Conversation = { kind: "group", name: null, members: ["Alex Rivera", "Sam Lee"] };
+    const theirs: Conversation = { kind: "group", name: null, members: ["Alex Kim", "Sam Park"] };
+    const scope = inSidebar({ ...SAM, conversation: ours }, [theirs]);
+    expect(isConversation(alone(ours), "Alex & Sam")).toBe(true);
+    expect(isConversation(scope, "Alex & Sam")).toBe(false);
+    expect(isConversationRow(scope, "Alex & Sam, see you there")).toBe(false);
+    // A group named the way Messages could list these members counts too.
+    const named = inSidebar({ ...SAM, conversation: ours }, [
+      { kind: "group", name: "Sam & Alex", members: ["Jordan Rivera"] },
+    ]);
+    expect(isConversation(named, "Sam & Alex")).toBe(false);
+    expect(isConversation(named, "Alex & Sam")).toBe(true);
+    // With chat.db unread, no title identifies anything.
+    expect(isConversation({ ...scope, otherTitles: null }, "Alex & Sam")).toBe(false);
+    expect(isConversation({ conversation: SAM.conversation, otherTitles: null }, "Sam")).toBe(
+      false,
+    );
+  });
+
+  // Review finding, 2026-09-24: a one-word contact name matched the first
+  // comma of a group's row, so the group's names and preview showed.
+  test("a DM's row is not a group's row that starts with the same name", () => {
+    expect(isConversationRow(SAM, "Sam, Alex & Jordan, see you at 6")).toBe(false);
+    expect(isConversationRow(SAM, "Sam, Alex, Casey & Jordan, Unread, see you at 6")).toBe(false);
+    expect(isConversationRow(SAM, "Sam, +1 (555) 555-0199 & Jordan, see you")).toBe(false);
+    expect(isConversationRow(SAM, "Sam, see you at 6")).toBe(true);
+    // A name another conversation has is not taken as the start of this one's row.
+    const withAlex = inSidebar(HOUSE_GROUP, [{ kind: "dm", name: "Alex", handle: "+15555550198" }]);
+    expect(isConversationRow(withAlex, "Alex, Sam, Casey & Morgan, Seven for seven")).toBe(false);
+  });
+
+  test("the other conversations are read from chat.db, leaving out this one's own rows", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cu-chatdb-"));
+    try {
+      const path = join(dir, "chat.db");
+      const raw = new Database(path);
+      raw.exec("PRAGMA journal_mode = WAL");
+      raw.exec(`
+        CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, style INTEGER, display_name TEXT, chat_identifier TEXT);
+        CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
+        CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
+        INSERT INTO handle VALUES (1, '+15555550110'), (2, '+15555550111'), (3, '+15555550112'),
+          (4, '+15555550113'), (5, 'sam.lee@example.com'), (6, '+15555550114'), (7, '+15555550115'),
+          (8, '+15555550116'), (9, 'p:+15555550116');
+        INSERT INTO chat VALUES
+          (1, 'iMessage;+;chat100', 43, '', 'chat100'),
+          (2, 'SMS;+;chat100', 43, NULL, 'chat100'),
+          (3, 'iMessage;+;chat200', 43, NULL, 'chat200'),
+          (4, 'iMessage;-;+15555550111', 45, NULL, '+15555550111'),
+          (5, 'iMessage;-;sam.lee@example.com', 45, NULL, 'sam.lee@example.com'),
+          (6, 'iMessage;+;chat300', 43, 'Book Club', 'chat300'),
+          (7, 'iMessage;+;chat400', 43, NULL, 'chat400'),
+          (8, 'SMS;+;chat400', 43, NULL, 'chat400'),
+          (9, 'iMessage;-;+15555550116', 45, NULL, '+15555550116'),
+          (10, 'iMessage;-;p:+15555550116', 45, NULL, 'p:+15555550116');
+        INSERT INTO chat_handle_join VALUES (1, 1), (1, 2), (2, 1), (2, 2), (3, 3), (3, 4),
+          (4, 2), (5, 5), (6, 1), (7, 6), (7, 7), (8, 6), (8, 7), (9, 8), (10, 9);
+      `);
+      raw.close();
+      const names: Record<string, string> = {
+        "+15555550110": "Alex Rivera",
+        "+15555550111": "Sam Lee",
+        "+15555550112": "Alex Kim",
+        "+15555550113": "Sam Park",
+        "sam.lee@example.com": "Sam Lee",
+        "+15555550114": "Casey Lin",
+        "+15555550115": "Morgan Bell",
+      };
+      const people = {
+        name: (h: string) => names[h] ?? null,
+        same: (a: string, b: string) => a === b,
+      };
+      const db = new ChatDb(path);
+      try {
+        const group: Conversation = {
+          kind: "group",
+          name: null,
+          members: ["Alex Rivera", "Sam Lee"],
+        };
+        const forGroup = otherTitles(db, group, "iMessage;+;chat100", people);
+        // chat100 is this group, under two services; chat200 is another Alex and Sam.
+        expect([...forGroup].sort()).toEqual(
+          [
+            "members:alex|sam",
+            "members:casey|morgan",
+            "number:5555550111",
+            "number:5555550116",
+            "title:+15555550116",
+            "title:book club",
+            "title:p:+15555550116",
+            "title:sam lee",
+          ].sort(),
+        );
+        expect(isConversation({ conversation: group, otherTitles: forGroup }, "Alex & Sam")).toBe(
+          false,
+        );
+
+        const dm: Conversation = { kind: "dm", name: "Sam Lee", handle: "+15555550111" };
+        const forDm = otherTitles(db, dm, null, people);
+        // Both of Sam Lee's DMs are this one; every group is someone else's.
+        expect([...forDm].sort()).toEqual(
+          [
+            "members:alex|sam",
+            "members:casey|morgan",
+            "number:5555550116",
+            "title:+15555550116",
+            "title:book club",
+            "title:p:+15555550116",
+          ].sort(),
+        );
+        expect(isConversation({ conversation: dm, otherTitles: forDm }, "Sam Lee")).toBe(true);
+
+        // chat400 is one group under two services, and nothing else is called "Casey & Morgan".
+        const pair: Conversation = {
+          kind: "group",
+          name: null,
+          members: ["Casey Lin", "Morgan Bell"],
+        };
+        const forPair = otherTitles(db, pair, "iMessage;+;chat400", people);
+        expect(forPair.has("members:casey|morgan")).toBe(false);
+        expect(isConversation({ conversation: pair, otherTitles: forPair }, "Casey & Morgan")).toBe(
+          true,
+        );
+      } finally {
+        db.close();
+      }
+
+      // As loadScope reads it: names and people from the contact book, and
+      // nothing at all when chat.db cannot be opened.
+      const book = new ContactBook(
+        [
+          { name: "Sam Lee", handles: ["+15555550111", "sam.lee@example.com"] },
+          ...["+15555550110", "+15555550112", "+15555550113", "+15555550114", "+15555550115"].map(
+            (h) => ({ name: names[h], handles: [h] }),
+          ),
+        ],
+        null,
+      );
+      const dm: Conversation = { kind: "dm", name: "Sam Lee", handle: "+15555550111" };
+      expect([...readOtherTitles(path, dm, null, book)!].sort()).toEqual(
+        [
+          "members:alex|sam",
+          "members:casey|morgan",
+          "number:5555550116",
+          "title:+15555550116",
+          "title:book club",
+          "title:p:+15555550116",
+        ].sort(),
+      );
+      // A number with no card, and IMCore's type-prefixed second row for it: one person.
+      const bare: Conversation = { kind: "dm", name: "+15555550116", handle: "+15555550116" };
+      const forBare = readOtherTitles(path, bare, null, book)!;
+      expect(forBare.has("number:5555550116")).toBe(false);
+      expect(
+        isConversation({ conversation: bare, otherTitles: forBare }, "+1 (555) 555-0116"),
+      ).toBe(true);
+      expect(readOtherTitles(join(dir, "missing.db"), dm, null, book)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("nobody edits another household's list; a contact edits only their own", () => {
@@ -2105,6 +2297,106 @@ describe("what a contact's screenshot hides", () => {
     const shot = contact.screen.calls.find((c) => c.op === "capture")!.args[0] as CaptureOptions;
     expect(shot.include).toEqual(["com.apple.Maps"]);
     expect(text(r)).toContain("Notes could not be checked");
+  });
+
+  describe("when the sidebar moves between reading it and capturing it", () => {
+    /** A contact with Messages open, whose tree reads `reads` in turn (the last one after that). */
+    async function reordering(reads: Inspection[]) {
+      const contact = setup(CONTACT, null, SAM);
+      await contact.session.requestAccess({ apps: ["Messages", "Notes"], reason: "t" });
+      contact.screen.apps.push(messagesApp);
+      const queue = [...reads];
+      contact.screen.inspect = async (id: string, ids: string[]) =>
+        id !== "com.apple.MobileSMS"
+          ? notesView("Sam and Alex's Kitchen list")
+          : !ids.includes(IDS.conversationList)
+            ? { running: true, windows: [] }
+            : queue.length > 1
+              ? queue.shift()!
+              : queue[0]!;
+      let n = 0;
+      const capture = contact.screen.capture.bind(contact.screen);
+      contact.screen.capture = async (o: CaptureOptions) => ({
+        ...(await capture(o)),
+        data: `shot${++n}`,
+      });
+      const r = await contact.session.single({ action: "screenshot" });
+      const shots = contact.screen.calls
+        .filter((c) => c.op === "capture")
+        .map((c) => c.args[0] as CaptureOptions);
+      const image = r.content.find((c) => c.type === "image") as { data: string } | undefined;
+      return { r, shots, image: image?.data };
+    }
+    /** The sidebar slots a capture leaves clear. */
+    const clear = (o: CaptureOptions) =>
+      [0, 1, 2, 3].filter((i) => !o.redact!.some((r) => r.x === 385 && r.y === 200 + 80 * i));
+    const [alex, sam, group, jordan] = CONVERSATION_ROWS as [string, string, string, string];
+    // Jordan's message lifts Jordan's row to the top and moves Sam's down a slot.
+    const before = messagesView("Sam");
+    const after = messagesView("Sam", [jordan, alex, sam, group]);
+
+    // Review finding, 2026-09-24: the slot left clear for Sam's row showed
+    // Jordan's name and message once Jordan's row moved into it.
+    test("the capture is taken again with the black-outs where the rows are now", async () => {
+      const { shots, image } = await reordering([before, after]);
+      expect(shots).toHaveLength(2);
+      expect(clear(shots[0]!)).toEqual([1]);
+      expect(clear(shots[1]!)).toEqual([2]);
+      expect(image).toBe("shot2");
+    });
+
+    test("a sidebar that never holds still is blacked out whole", async () => {
+      const { r, shots, image } = await reordering([before, after, before, after, before]);
+      expect(shots).toHaveLength(4);
+      expect(shots[3]!.redact).toContainEqual(CONVERSATION_LIST);
+      expect(shots[3]!.include).toContain("com.apple.MobileSMS");
+      expect(image).toBe("shot4");
+      expect(text(r)).toContain("blacked out whole");
+    });
+
+    test("and one whose window keeps moving is left out of the image", async () => {
+      const moved = (dx: number): Inspection => {
+        const w = messagesView("Sam").windows[0]!;
+        const list = w.found[IDS.conversationList]!;
+        const shift = (f: Rect) => ({ ...f, x: f.x + dx });
+        return {
+          running: true,
+          windows: [
+            {
+              ...w,
+              frame: shift(w.frame!),
+              found: {
+                [IDS.conversationList]: {
+                  ...list,
+                  frame: shift(list.frame!),
+                  rows: list.rows.map((row) => ({ ...row, frame: shift(row.frame) })),
+                },
+              },
+            },
+          ],
+        };
+      };
+      const { r, shots, image } = await reordering([0, 10, 20, 30, 40, 50].map(moved));
+      expect(shots).toHaveLength(5);
+      expect(shots[4]!.include).toEqual([]);
+      expect(shots[4]!.redact).toEqual([]);
+      expect(image).toBe("shot5");
+      expect(text(r)).toContain("Notes and Messages could not be checked");
+    });
+
+    test("a sidebar that held still is captured once, and the operator's is never re-read", async () => {
+      expect((await reordering([before])).shots).toHaveLength(1);
+      const owner = setup(POLICY, null, ALEX);
+      await owner.session.requestAccess({ apps: ["Messages"], reason: "t" });
+      let reads = 0;
+      owner.screen.inspect = async () => {
+        reads++;
+        return before;
+      };
+      await owner.session.single({ action: "screenshot" });
+      expect(owner.screen.ops().filter((op) => op === "capture")).toHaveLength(1);
+      expect(reads).toBe(0);
+    });
   });
 
   test("a contact's capture carries the redactions; the operator's does not", async () => {
@@ -2180,11 +2472,199 @@ describe("Messages is scoped to the conversation the request came from", () => {
     expect(screen.input().map((c) => c.op)).toEqual(["chord"]);
   });
 
+  // Review finding, 2026-09-24: keys were judged by the window with the
+  // sidebar, so with Jordan's conversation open in a window of its own and
+  // focused, Sam's session typed and sent there, and the check was told it
+  // was Sam's.
+  test("a key is judged by the window holding the focus, even a conversation in its own window", async () => {
+    const popped = { frame: { x: 900, y: 150, width: 500, height: 500 }, found: {} };
+    for (const [scope, policy, main] of [
+      [SAM, CONTACT, "Sam"],
+      [ALEX, POLICY, "Alex Rivera"],
+    ] as const) {
+      const { session, screen, guard } = await inMessagesAs(scope, main, policy);
+      const jordan = { ...popped, title: "Jordan Rivera" };
+      screen.views["com.apple.MobileSMS"] = {
+        running: true,
+        windows: [jordan, messagesView(main).windows[0]!],
+      };
+      screen.focus = inMessages({ label: "iMessage", window: "Jordan Rivera" });
+      const typed = await session.single(act({ action: "type", text: "hello" }));
+      const sent = await session.single(act({ action: "key", text: "Return" }));
+      expect(text(typed)).toContain('Messages is showing "Jordan Rivera"');
+      expect(text(sent)).toContain('Messages is showing "Jordan Rivera"');
+      expect(screen.input()).toEqual([]);
+      expect(guard.checks).toEqual([]);
+    }
+    // The other way round: the requester's own conversation in its own window.
+    const { session, screen, guard } = await inMessagesAs(SAM, "Jordan Rivera");
+    screen.views["com.apple.MobileSMS"] = {
+      running: true,
+      windows: [{ ...popped, title: "Sam" }, messagesView("Jordan Rivera").windows[0]!],
+    };
+    screen.focus = inMessages({ label: "iMessage", window: "Sam" });
+    expect((await session.single(act({ action: "type", text: "hi" }))).isError).toBeUndefined();
+    expect(guard.checks[0]!.facts).toEqual({
+      messages_showing: "Sam: the requester's own conversation, checked against chat.db",
+    });
+    expect(screen.input().map((c) => c.op)).toEqual(["type"]);
+  });
+
+  test("when the focused window cannot be found, a key is refused, not judged by another window", async () => {
+    const lost = [
+      inMessages({ label: "iMessage" }),
+      inMessages({ label: "iMessage", window: "Casey Lin" }),
+      null,
+    ];
+    for (const focus of lost) {
+      const { session, screen, guard } = await inMessagesAs(SAM, "Sam");
+      screen.focus = focus;
+      const r = await session.single(act({ action: "type", text: "hello" }));
+      expect(text(r)).toContain("did not say which window has the keyboard focus");
+      expect(screen.input()).toEqual([]);
+      expect(guard.checks).toEqual([]);
+    }
+  });
+
+  test("a window title the helper cut at 80 characters still finds its window, and only its own", async () => {
+    const name =
+      "Lake house weekend planning for the whole extended family and the neighbours too in 2026";
+    expect(name.length).toBeGreaterThan(80);
+    const lake = inSidebar({ ...SAM, conversation: { kind: "group", name, members: ["Sam"] } });
+    const { session, screen, guard } = await inMessagesAs(lake, name);
+    screen.focus = inMessages({ label: "iMessage", window: `${name.slice(0, 80)}…` });
+    expect((await session.single(act({ action: "type", text: "hi" }))).isError).toBeUndefined();
+    expect(guard.checks).toHaveLength(1);
+    // Two windows the cut title fits, showing different conversations: neither is assumed.
+    const other = { ...messagesView(`${name.slice(0, 80)} (the old one)`).windows[0]! };
+    screen.views["com.apple.MobileSMS"] = {
+      running: true,
+      windows: [other, messagesView(name).windows[0]!],
+    };
+    const r = await session.single(act({ action: "type", text: "hi" }));
+    expect(text(r)).toContain("did not say which window has the keyboard focus");
+    expect(screen.input()).toHaveLength(1);
+  });
+
+  // Review finding, 2026-09-24: two unnamed groups with an Alex and a Sam are
+  // both "Alex & Sam"; the requester's matched the other one.
+  test("a conversation titled like another one in chat.db is nobody's to act in", async () => {
+    const ours: Conversation = { kind: "group", name: null, members: ["Alex Rivera", "Sam Lee"] };
+    const theirs: Conversation = { kind: "group", name: null, members: ["Alex Kim", "Sam Park"] };
+    const scope = inSidebar({ ...SAM, conversation: ours }, [theirs]);
+    const { session, screen, guard } = await inMessagesAs(scope, "Alex & Sam");
+    const r = await session.single(act({ action: "type", text: "hello" }));
+    expect(text(r)).toContain("a title another conversation has too");
+    expect(screen.input()).toEqual([]);
+    expect(guard.checks).toEqual([]);
+    // Nor is it shown: its row and the open conversation are blacked out.
+    const view = messagesView("Alex & Sam", ["Alex & Sam, see you there", "Jordan Rivera, ok"]);
+    const hidden = redactions(scope, "com.apple.MobileSMS", view)!;
+    expect(hidden).toHaveLength(3);
+    expect(hidden[2]).toEqual({ x: 712, y: 100, width: 1008, height: 660 });
+  });
+
+  // Review finding, 2026-09-24: for a contact whose card name is one word,
+  // "Sam, Alex & Jordan, see you at 6" counted as their own row.
+  test("a group's row that starts with a DM contact's name is not theirs to see or click", async () => {
+    const rows = ["Sam, Alex & Jordan, see you at 6", "Sam, Unread, draw us a heart"];
+    const view = messagesView("Sam", rows);
+    const hidden = redactions(SAM, "com.apple.MobileSMS", view)!;
+    expect(hidden).toEqual([view.windows[0]!.found[IDS.conversationList]!.rows[0]!.frame]);
+    const { session, screen } = await inMessagesAs(SAM, "Sam");
+    screen.views["com.apple.MobileSMS"] = view;
+    screen.owner = inMessages({ role: "AXStaticText", label: rows[0] });
+    const r = await session.single(act({ action: "left_click", coordinate: px(400, 220) }));
+    expect(text(r)).toContain("That row is a different conversation");
+    expect(screen.input()).toEqual([]);
+  });
+
   test("searching is allowed from anywhere", async () => {
     const { session, screen } = await inMessagesAs(SAM, "Alex Rivera");
     screen.focus = inMessages({ role: "AXTextField", subrole: "AXSearchField", label: "Search" });
     const r = await session.single(act({ action: "type", text: "Sam" }));
     expect(r.isError).toBeUndefined();
+  });
+
+  // Review finding, 2026-09-24: with focus in the search field every chord
+  // passed, and cmd+delete reached the screen while Jordan's conversation
+  // was showing.
+  test("the search field lets through only editing the search, whatever is showing", async () => {
+    const { session, screen, guard } = await inMessagesAs(SAM, "Jordan Rivera");
+    screen.focus = inMessages({
+      role: "AXTextField",
+      subrole: "AXSearchField",
+      label: "Search",
+      window: "Jordan Rivera",
+    });
+    const edits: Action[] = [
+      { action: "type", text: "Sam" },
+      { action: "key", text: "delete" },
+      { action: "key", text: "shift+left" },
+      { action: "key", text: "Escape" },
+    ];
+    for (const a of edits) expect((await session.single(act(a))).isError).toBeUndefined();
+    expect(screen.input()).toHaveLength(edits.length);
+    expect(guard.checks[0]!.facts.focus).toBe("the search field");
+    screen.calls = [];
+    guard.checks = [];
+    const refused: Array<[Action, string]> = [
+      [{ action: "key", text: "cmd+delete" }, 'Messages is showing "Jordan Rivera"'],
+      [{ action: "key", text: "alt+delete" }, 'Messages is showing "Jordan Rivera"'],
+      [{ action: "key", text: "Return" }, "opens whichever result is selected"],
+      [{ action: "key", text: "down" }, "opens whichever result is selected"],
+      [{ action: "type", text: "Sam\n" }, "A line break in the Messages search field"],
+    ];
+    for (const [a, says] of refused) expect(text(await session.single(act(a)))).toContain(says);
+    expect(screen.input()).toEqual([]);
+    expect(guard.checks).toEqual([]);
+  });
+
+  test("a chord in the search field goes to the check when the requester's own conversation is showing", async () => {
+    const { session, screen, guard } = await inMessagesAs(SAM, "Sam");
+    screen.focus = inMessages({ subrole: "AXSearchField", label: "Search", window: "Sam" });
+    expect((await session.single(act({ action: "key", text: "cmd+a" }))).isError).toBeUndefined();
+    expect(guard.checks[0]!.facts.messages_showing).toStartWith("Sam: the requester's own");
+    expect(screen.input().map((c) => c.op)).toEqual(["chord"]);
+  });
+
+  test("what counts as editing a search", () => {
+    const edit = [
+      ["type", "Sam Lee"],
+      ["key", "a"],
+      ["key", "shift+a"],
+      ["key", "space"],
+      ["key", "BackSpace"],
+      ["key", "forward_delete"],
+      ["key", "left"],
+      ["key", "shift+end"],
+      ["key", "esc"],
+      ["hold_key", "delete"],
+      ["left_click", undefined],
+    ] as const;
+    for (const [action, t] of edit) expect(searchFieldInput(action, t)).toBe("edit");
+    const pick = [
+      ["key", "Return"],
+      ["key", "KP_Enter"],
+      ["key", "shift+Return"],
+      ["key", "up"],
+      ["key", "down"],
+      ["type", "Sam\n"],
+    ] as const;
+    for (const [action, t] of pick) expect(searchFieldInput(action, t)).toBe("pick");
+    const other = [
+      ["key", "cmd+delete"],
+      ["key", "alt+delete"],
+      ["key", "ctrl+a"],
+      ["key", "cmd+shift+left"],
+      ["key", "tab"],
+      ["key", "page_down"],
+      ["key", "f5"],
+      ["key", "a+b"],
+      ["key", "nonsense"],
+      ["type", "Sam\tLee"],
+    ] as const;
+    for (const [action, t] of other) expect(searchFieldInput(action, t)).toBe("other");
   });
 
   test("an unnamed group is recognised by its members", async () => {
@@ -2266,6 +2746,15 @@ describe("Notes is scoped to the requester's household list", () => {
     screen.focus = { ...screen.focus!, window: "Jordan's Kitchen list" };
     const r = await session.single(act({ action: "key", text: "delete" }));
     expect(text(r)).toContain("another household's list");
+    expect(screen.input()).toEqual([]);
+    expect(guard.checks).toEqual([]);
+  });
+
+  test("a key in a window Notes does not report is refused, not judged by the note in front", async () => {
+    const { session, screen, guard } = await inNotesAs(SAM, "Sam and Alex's Kitchen list");
+    screen.focus = { ...screen.focus!, window: "A Small Poem" };
+    const r = await session.single(act({ action: "type", text: "Eggs" }));
+    expect(text(r)).toContain("did not say which note is open");
     expect(screen.input()).toEqual([]);
     expect(guard.checks).toEqual([]);
   });
