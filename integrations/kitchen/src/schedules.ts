@@ -216,6 +216,21 @@ export function dueNow(d: Dinner, now = new Date()): boolean {
 /** Today's receipt for one person, the key `sent` is keyed by. */
 const receipt = (principal: string, now: Date) => `${dayKeyOf(now)}|${principal}`;
 
+/**
+ * Whether nobody has had today's text yet, so this send is the day's first and
+ * not a retry for someone it missed. It asks for a receipt dated today: the
+ * stored `sent` still holds the last day it fired (it is trimmed to one day
+ * when saved, not when read). The check used to be "any receipt at all",
+ * which was true on every day after the first, so the page request that goes
+ * with the day's first send was queued once, on the day the schedule was made
+ * (2026-08-17), while the text went on promising "the page will follow" on 17
+ * more days.
+ */
+export function firstSendToday(d: Dinner, now = new Date()): boolean {
+  const today = dayKeyOf(now);
+  return !(d.sent ?? []).some((s) => s.startsWith(`${today}|`));
+}
+
 /** Who this schedule still owes a text today. */
 export function owed(
   d: Dinner,
@@ -474,8 +489,9 @@ export function fire(account: string, d: Dinner, now = new Date()): FireResult {
       res.failed.push({ principal: person.principal, why: (e as Error).message });
     }
   }
-  // Ask for a page only on the first send, not on retries for a failed recipient.
-  if (pick && !pick.written && res.sent.length && !(d.sent ?? []).length) {
+  // Ask for a page only on the day's first send, not on retries for a failed
+  // recipient.
+  if (pick && !pick.written && res.sent.length && firstSendToday(d, now)) {
     try {
       res.queuedWrite = requestWrite(acct, pick, recipients(d, acct), now);
     } catch {

@@ -9,6 +9,8 @@
  *   - claiming food the house does not have.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Recipe } from "../src/recipes.ts";
 import {
   type Dinner,
@@ -18,6 +20,7 @@ import {
   composeText,
   describe as describeDinner,
   dueNow,
+  firstSendToday,
   nextFire,
   normalize,
   owed,
@@ -274,4 +277,35 @@ check(
 check(
   "a schedule whose recipients all left has nobody to text",
   recipients({ ...at4(), to: ["imessage:dm:+19999999999"] }, house).length === 0,
+);
+
+/* ── the page request goes with the day's first send ─────────────────────── */
+
+// The stored receipts are trimmed to one day when saved, not when read, so on any
+// day after the first they still hold the last day it fired. "Any receipt at all"
+// read that as a retry every day: the page was asked for once, on the day the
+// schedule was made, and the text promised "the page will follow" on 17 more days.
+section("asking for a written page");
+
+check(
+  "yesterday's receipts do not make today's send look like a retry",
+  firstSendToday({ ...at4(), sent: [key(HUNTER, yesterday), key(KAYLA, yesterday)] }, today),
+);
+
+check(
+  "a schedule that has never sent is on its first send",
+  firstSendToday({ ...at4(), sent: [] }, today),
+);
+
+check(
+  "a retry for the one person it missed today is not the first send",
+  !firstSendToday({ ...at4(), sent: [key(HUNTER, today)] }, today),
+);
+
+// fire() texts real phones, so its one use of the check is pinned by source.
+const fireSource = readFileSync(join(import.meta.dir, "..", "src", "schedules.ts"), "utf8");
+check(
+  "fire asks for the page on the day's first send, not on any receipt at all",
+  /pick && !pick\.written && res\.sent\.length && firstSendToday\(d, now\)/.test(fireSource) &&
+    !fireSource.includes("!(d.sent ?? []).length"),
 );
