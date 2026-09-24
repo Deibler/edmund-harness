@@ -37,7 +37,7 @@ function makeFixture() {
       ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB,
       date INTEGER, is_from_me INTEGER DEFAULT 0, cache_has_attachments INTEGER DEFAULT 0,
       service TEXT, associated_message_guid TEXT, associated_message_type INTEGER,
-      handle_id INTEGER DEFAULT 0
+      handle_id INTEGER DEFAULT 0, thread_originator_guid TEXT
     );
     CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, chat_identifier TEXT, style INTEGER);
     CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);

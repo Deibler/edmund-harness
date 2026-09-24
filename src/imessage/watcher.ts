@@ -26,6 +26,7 @@ const NEW_MESSAGES_SQL = `
     m.service                 AS service,
     m.associated_message_guid AS assoc_guid,
     m.associated_message_type AS assoc_type,
+    m.thread_originator_guid  AS thread_guid,
     c.chat_identifier         AS chat_identifier,
     c.guid                    AS chat_guid,
     c.style                   AS chat_style,
@@ -57,6 +58,7 @@ type Row = {
   service: string | null;
   assoc_guid: string | null;
   assoc_type: number | null;
+  thread_guid: string | null;
   chat_identifier: string | null;
   chat_guid: string | null;
   chat_style: number | null; // 43 = group, 45 = DM
@@ -422,21 +424,38 @@ function rowToMessage(r: Row, attachStmt: AttachmentStmt): InboundMessage | null
     attachments,
     attachmentTranscripts,
     service: r.service ?? "iMessage",
-    replyToGuid: parseReplyGuid(r.assoc_guid, r.assoc_type),
+    replyToGuid: parseReplyGuid(r.assoc_guid, r.assoc_type, r.thread_guid),
   };
 }
 
 /**
- * iMessage stores reply relationships in `associated_message_guid` prefixed
- * with a protocol tag: `p:0/<guid>` = threaded reply, `bp:<guid>` = quoted
- * reply. Tapback reactions also use this field (`associated_message_type`
- * 2000-3005) but we only want true replies — type 0 on the reply message
- * with the prefix indicates a plain textual reply to another message.
+ * The message at `rowId`, parsed exactly as the live watcher parses it. Null
+ * when the row is absent or isn't a conversation message. For tools that
+ * replay past messages through the live path (calibration, backtests).
  */
-function parseReplyGuid(assoc: string | null, type: number | null): string | null {
-  if (!assoc) return null;
-  // Tapbacks occupy 2000-3005 (like, love, laugh, etc). We only care about replies.
+export function readMessage(chatDb: ChatDb, rowId: number): InboundMessage | null {
+  const r = chatDb.query<Row>(NEW_MESSAGES_SQL).all(rowId - 1)[0];
+  if (!r || r.row_id !== rowId) return null;
+  return rowToMessage(r, chatDb.query<AttachmentRow>(ATTACHMENTS_SQL));
+}
+
+/**
+ * The message this one replies to. A swipe (inline) reply names its parent in
+ * `thread_originator_guid` and leaves `associated_message_guid` empty: all 91
+ * inline replies in the 90 days to 2026-09-24 did, so reading only the
+ * associated guid lost every one. The associated guid still carries the
+ * older `p:0/<guid>` / `bp:<guid>` forms. Tapback reactions use both fields
+ * (`associated_message_type` 2000-3099), and a reaction is not a reply.
+ */
+export function parseReplyGuid(
+  assoc: string | null,
+  type: number | null,
+  threadOriginator: string | null = null,
+): string | null {
   if (type !== null && type >= 2000 && type <= 3099) return null;
-  const m = assoc.match(/^(?:p:\d+\/|bp:)?([0-9A-F-]{36})$/i);
-  return m ? m[1]! : null;
+  if (assoc) {
+    const m = assoc.match(/^(?:p:\d+\/|bp:)?([0-9A-F-]{36})$/i);
+    if (m) return m[1]!;
+  }
+  return threadOriginator || null;
 }

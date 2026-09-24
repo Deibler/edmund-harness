@@ -897,6 +897,29 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   /**
+   * Experimental: answer group messages that are for the assistant but don't
+   * say his name. Code nominates a candidate (a swipe-reply to him, a word
+   * close to his name, or a message soon after he spoke); Jev decides whether
+   * it is for him; he decides whether to answer. Candidates' text and the
+   * eight messages before them go to Jev through OpenRouter ([keys].openrouter).
+   * "shadow" only records decisions in data/addressing.jsonl.
+   */
+  group_addressing: z
+    .object({
+      mode: z.enum(["off", "shadow", "on"]).default("off"),
+      model: z.string().default("typesafe/jev-1.13"),
+      /** A message this soon after the assistant spoke is a candidate. */
+      window_minutes: z.number().positive().default(10),
+      /** Wake when Jev's "wants a reply" probability reaches this. */
+      reply_threshold: z.number().min(0).max(1).default(0.6),
+      /** For a misspelled name or a swipe-reply to him: wake when "said to
+       *  him" reaches this, even if no reply is expected. */
+      addressed_threshold: z.number().min(0).max(1).default(0.7),
+      /** Each wake is a full turn; this bounds a misbehaving day. */
+      max_wakes_per_group_per_day: z.number().int().positive().default(20),
+    })
+    .default({}),
+  /**
    * Brown-nose mode — proactive, ghost-driven outreach. A "ghost"
    * observer (model set by `ghost_model` below) decides if/when to wake
    * the main model unprompted with a brief recommending an action. The

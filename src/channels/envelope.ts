@@ -1,4 +1,4 @@
-import type { InboundMessage, ReplyContext } from "../imessage/types.ts";
+import type { InboundMessage, ReplyContext, UnnamedWake } from "../imessage/types.ts";
 import type { RecentItem } from "../persona/recent-received.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { envelopeStamp } from "../util/clock.ts";
@@ -118,6 +118,22 @@ export type EnvelopeContext = {
  *
  *   <current inbound text>
  */
+/**
+ * Why a group message that doesn't say the assistant's name reached him. The
+ * check that let it in only decides whether to wake him; whether anything
+ * needs saying is his call, so the line says so.
+ */
+export function describeUnnamedWake(w: UnnamedWake): string {
+  const why =
+    w.reason === "reply-to-assistant"
+      ? "it's a swipe-reply to one of your messages"
+      : w.reason === "name-like"
+        ? "it has a word close to your name"
+        : "it came in a few minutes after you last spoke";
+  const scores = `said to you ${w.addressed.toFixed(2)}, wants a reply ${w.wantsReply.toFixed(2)}`;
+  return `this message doesn't say your name, but ${why}, and a classifier judged it's for you (${scores}). It can be wrong. If it isn't for you, or nothing needs saying, reply KEEP_QUIET.`;
+}
+
 export function buildEnvelope(ctx: EnvelopeContext): string {
   if (ctx.messages.length === 0) return "";
   const first = ctx.messages[0]!;
@@ -150,6 +166,8 @@ export function buildEnvelope(ctx: EnvelopeContext): string {
   if (ctx.isGroup && ctx.invocation) {
     header.push(`Invocation: ${describeInvocation(ctx.invocation)}`);
   }
+  const unnamed = ctx.messages.find((m) => m.unnamedWake)?.unnamedWake;
+  if (ctx.isGroup && unnamed) header.push(`Not named: ${describeUnnamedWake(unnamed)}`);
   if (ctx.pendingAttachments && ctx.pendingAttachments > 0) {
     header.push(
       `Pending attachments: ${ctx.pendingAttachments} (still downloading from iMessage — a follow-up turn with the same content properly inlined will likely arrive within seconds; do NOT tell the user their image "didn't come through" or ask them to resend yet, just acknowledge naturally or stay quiet until the next turn)`,

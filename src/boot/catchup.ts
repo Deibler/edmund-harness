@@ -1,6 +1,7 @@
 import { entryToInbound, parsePendingLine } from "../bridge/session-queue.ts";
 import type { Deps } from "../channels/deps.ts";
 import { handleBatch, shouldAccept } from "../channels/turn.ts";
+import type { AddressChecker } from "../gating/address-check.ts";
 import { guestGateFor } from "../gating/allowlist.ts";
 import { getGroupParticipants } from "../imessage/participants.ts";
 import type { InboundMessage } from "../imessage/types.ts";
@@ -35,13 +36,17 @@ export function groupBacklog(
   messages: InboundMessage[],
   deps: Pick<Deps, "config" | "echoes" | "contacts" | "state" | "guests"> &
     Partial<Pick<Deps, "alert" | "chatDb">>,
+  /** Un-named group messages the address check woke him for, by row id. They
+   *  join their chat's batch, marked, in place of the gate's refusal. */
+  admitted: Map<number, InboundMessage> = new Map(),
 ): Map<SessionKey, InboundMessage[]> {
   const groups = new Map<SessionKey, InboundMessage[]>();
   // Same guest gate as the live watcher: backlog messages from unknown
   // senders buffer (or activate) exactly as they would have live, so a key
   // presented during downtime still opens the conversation on boot.
   const guestGate = deps.guests ? guestGateFor(deps.guests, deps.alert ?? null) : undefined;
-  for (const msg of messages) {
+  for (const backlogMsg of messages) {
+    let msg = backlogMsg;
     // Vouching happens for registered-group traffic on this path too — a
     // group message that arrived while the daemon was down still counts as
     // co-membership. Without chatDb (test fixtures) only the sender vouches.
@@ -61,7 +66,11 @@ export function groupBacklog(
         }
       }
     }
-    if (!shouldAccept(msg, deps.config, deps.echoes, guestGate)) continue;
+    if (!shouldAccept(msg, deps.config, deps.echoes, guestGate)) {
+      const woken = admitted.get(msg.rowId);
+      if (!woken) continue;
+      msg = woken;
+    }
     // Routing-aware, exactly like the live path: a "wolf …" backlog message
     // goes to the trading session, everything else to edmund (per-message,
     // by name only — no stickiness). Record the decision so recovery agrees.
@@ -84,13 +93,38 @@ export function groupBacklog(
   return groups;
 }
 
+/**
+ * The backlog's batches: un-named group messages go through the missed-name
+ * check first, and any it wakes him for join their chat's batch, marked.
+ */
+export async function backlogGroups(
+  messages: InboundMessage[],
+  deps: Parameters<typeof groupBacklog>[1],
+  addressChecker?: AddressChecker,
+): Promise<Map<SessionKey, InboundMessage[]>> {
+  const admitted = new Map<number, InboundMessage>();
+  if (addressChecker) {
+    await Promise.all(
+      messages.map(async (m) => {
+        const woken = await addressChecker.admit(m);
+        if (woken) admitted.set(m.rowId, woken);
+      }),
+    );
+  }
+  return groupBacklog(messages, deps, admitted);
+}
+
 export async function runCatchUp(params: {
   deps: Deps;
   locks: SessionLocks;
   startCursor: number;
   concurrency: number;
+  /** The live watcher's missed-name check, applied to the backlog too: after a
+   *  restart the watcher starts only once catch-up drains, which on
+   *  2026-09-24 took ten minutes, and every message in between came through here. */
+  addressChecker?: AddressChecker;
 }): Promise<number> {
-  const { deps, locks, startCursor, concurrency } = params;
+  const { deps, locks, startCursor, concurrency, addressChecker } = params;
   const { config, chatDb, echoes, contacts } = deps;
 
   // --- orphaned inbound_ack replay (post-2026-07-19 crash hardening) ---
@@ -134,7 +168,7 @@ export async function runCatchUp(params: {
   const { messages, maxRowId } = readBacklog({ chatDb, startCursor });
   if (messages.length === 0) return maxRowId;
 
-  const groups = groupBacklog(messages, deps);
+  const groups = await backlogGroups(messages, deps, addressChecker);
   if (groups.size === 0) return maxRowId;
 
   const total = [...groups.values()].reduce((n, b) => n + b.length, 0);

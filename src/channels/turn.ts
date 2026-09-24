@@ -48,7 +48,7 @@ import { ensureSandbox } from "../persona/sandbox.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
 import { type SessionKey, chatIdFromKey } from "../sessions/key.ts";
 import { isMirrorSession, isSmsSession } from "../sessions/key.ts";
-import { localDay, recordSpend } from "../spend/ledger.ts";
+import { localDay, recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { genId } from "../util/ids.ts";
 import { humanCount, log, shortSession } from "../util/log.ts";
 import { prefetchLinks } from "../web/link-prefetch.ts";
@@ -157,6 +157,20 @@ function turnNeedsRecentMedia(
     if (m.text && MEDIA_REFERENCE_RE.test(m.text)) return true;
   }
   return false;
+}
+
+/**
+ * The group re-gate after transcription. A turn goes ahead when the name is in
+ * any message's text or voice transcript, or when a message was let in
+ * without it because the address check judged it to be for the assistant.
+ */
+export function passesGroupRegate(
+  messages: InboundMessage[],
+  transcripts: Iterable<string>,
+  names: string[],
+): boolean {
+  if (messages.some((m) => m.unnamedWake)) return true;
+  return isAssistantMentioned([...messages.map((m) => m.text), ...transcripts].join("\n"), names);
 }
 
 export async function handleBatch(
@@ -972,8 +986,7 @@ async function handleBatchInner(
     // cost vs. the latency win of parallelism, and the prefetch cache makes
     // it a freebie next time anyway.)
     if (isGroup) {
-      const corpus = [...messages.map((m) => m.text), ...transcripts.values()].join("\n");
-      if (!isAssistantMentioned(corpus, sessionNames)) {
+      if (!passesGroupRegate(messages, transcripts.values(), sessionNames)) {
         if (process.env.DEBUG) {
           console.log(`[gate] post-transcribe skip ${key}: no mention in text or transcripts`);
         }
@@ -1234,7 +1247,7 @@ async function handleBatchInner(
       // Guest turns are tagged per campaign (`guest:<key>`, plain `guest`
       // for vouched) so the lifetime max_spend_usd cap can sum them.
       subsystem: guest ? guestSpendSubsystem(guest.campaign?.key ?? null) : "turn",
-      costUsd: result.ok ? (result.totalCostUsd ?? null) : null,
+      ...resumedRunSpend(result),
       durMs: Date.now() - turnStartedAt,
       contextTokens: result.ok ? (result.contextTokens ?? null) : null,
     });
