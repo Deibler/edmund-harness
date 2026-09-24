@@ -231,15 +231,15 @@ check(
     updateAccount("morgan", { people: { [NEW]: "Morgan" } });
     const book: Record<string, string> = {
       "+15551230000": "Morgana Whoever",
-      "+15551239999": "Heather  Example",
+      "+15551239999": "Riley  Example",
       "+15551238888": "+1 (555) 123-8888",
     };
     const added = nameMembers("morgan", (h: string) => book[h]);
     const people = getAccount("morgan")!.people!;
     return (
-      JSON.stringify(added) === JSON.stringify({ [PARTNER]: "Heather" }) &&
+      JSON.stringify(added) === JSON.stringify({ [PARTNER]: "Riley" }) &&
       people[NEW] === "Morgan" &&
-      people[PARTNER] === "Heather" &&
+      people[PARTNER] === "Riley" &&
       people[STRANGER] === undefined
     );
   })(),
