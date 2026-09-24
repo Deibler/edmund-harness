@@ -98,7 +98,12 @@ const batchAction = z.object({
     ),
   scroll_direction: direction.optional(),
   scroll_amount: z.number().int().min(0).max(100).optional(),
-  duration: z.number().optional().describe("Seconds (0-100), for hold_key and wait."),
+  duration: z
+    .number()
+    .optional()
+    .describe(
+      "Seconds (0-100), for hold_key and wait. A wait of up to 10 right after an action ends early, once the screen has shown that action's effect and held still, so it costs little to leave one there.",
+    ),
   repeat: z.number().int().min(1).max(100).optional().describe("For key: repeat count."),
 });
 

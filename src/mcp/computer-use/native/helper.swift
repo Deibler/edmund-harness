@@ -392,8 +392,13 @@ func quit(_ req: JSON) async throws -> JSON {
 
 // MARK: - Screen capture
 
+/// What a capture of `req` sees: which apps' windows, over which part of the
+/// display, at what size. `shows` is false when nothing in the filter is on
+/// screen, which ScreenCaptureKit refuses to capture.
 @MainActor
-func capture(_ req: JSON) async throws -> JSON {
+func captureSetup(_ req: JSON) async throws -> (
+  filter: SCContentFilter, config: SCStreamConfiguration, shows: Bool
+) {
   let displayId = CGDirectDisplayID(try num(req, "display"))
   let exclude = Set(req["exclude"] as? [String] ?? [])
   let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -432,6 +437,13 @@ func capture(_ req: JSON) async throws -> JSON {
         w.isOnScreen && include.contains(w.owningApplication?.bundleIdentifier ?? "")
       }
     } ?? true
+  return (filter, config, showsSomething)
+}
+
+@MainActor
+func capture(_ req: JSON) async throws -> JSON {
+  let displayId = CGDirectDisplayID(try num(req, "display"))
+  let (filter, config, showsSomething) = try await captureSetup(req)
   var image =
     showsSomething
     ? try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
@@ -463,6 +475,95 @@ func capture(_ req: JSON) async throws -> JSON {
   return [
     "data": (data as Data).base64EncodedString(), "width": image.width, "height": image.height,
   ]
+}
+
+// MARK: - Settling
+
+/// The screen as it was just before an action, for `settle` to compare with.
+/// Kept here so a whole frame never crosses the pipe.
+@MainActor var settleBase: [UInt8]? = nil
+
+/// One frame of what a capture of `req` sees, as raw pixels.
+@MainActor
+func frame(_ setup: (filter: SCContentFilter, config: SCStreamConfiguration, shows: Bool))
+  async throws -> [UInt8]
+{
+  guard setup.shows else { return [] }
+  return pixels(
+    try await SCScreenshotManager.captureImage(
+      contentFilter: setup.filter, configuration: setup.config))
+}
+
+/// An image's pixels as RGBX bytes, so two frames compare exactly.
+func pixels(_ image: CGImage) -> [UInt8] {
+  let w = image.width
+  let h = image.height
+  var buf = [UInt8](repeating: 0, count: w * h * 4)
+  buf.withUnsafeMutableBytes { raw in
+    guard
+      let ctx = CGContext(
+        data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+    else { return }
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+  }
+  return buf
+}
+
+/// How many pixels differ between two frames. Frames of different sizes
+/// (the display changed) count as wholly different.
+func changedPixels(_ a: [UInt8], _ b: [UInt8]) -> Int {
+  guard a.count == b.count else { return max(a.count, b.count, 4) / 4 }
+  var n = 0
+  a.withUnsafeBufferPointer { pa in
+    b.withUnsafeBufferPointer { pb in
+      var i = 0
+      while i < pa.count {
+        if pa[i] != pb[i] || pa[i + 1] != pb[i + 1] || pa[i + 2] != pb[i + 2] { n += 1 }
+        i += 4
+      }
+    }
+  }
+  return n
+}
+
+/// Remember the screen, as `settle` will see it, just before an action.
+@MainActor
+func settleMark(_ req: JSON) async throws {
+  settleBase = try await frame(try await captureSetup(req))
+}
+
+/// Wait for the effect of the action since `settle_mark`. Returns once the
+/// screen differs from the marked frame by at least `minChanged` pixels and
+/// has then held still for `quietMs`, or at `maxMs` whatever happened. A
+/// change that never shows means waiting the whole time, so an app slow to
+/// react is never cut short; a blinking caret is below `minChanged`.
+@MainActor
+func settle(_ req: JSON) async throws -> JSON {
+  let start = Date()
+  let maxMs = try num(req, "maxMs")
+  let quietMs = try num(req, "quietMs")
+  let minChanged = Int(try num(req, "minChanged"))
+  guard let base = settleBase else { throw HelperError("nothing to settle against: no settle_mark") }
+  settleBase = nil
+  let setup = try await captureSetup(req)
+  let ms = { Date().timeIntervalSince(start) * 1000 }
+  var prev = base
+  var still = start
+  var effect = false
+  var frames = 0
+  while true {
+    let now = try await frame(setup)
+    frames += 1
+    if changedPixels(prev, now) > 0 { still = Date() }
+    if !effect && changedPixels(base, now) >= minChanged { effect = true }
+    prev = now
+    if effect && Date().timeIntervalSince(still) * 1000 >= quietMs {
+      return ["ms": ms(), "settled": true, "frames": frames]
+    }
+    if ms() >= maxMs { return ["ms": ms(), "settled": false, "frames": frames] }
+    try await Task.sleep(nanoseconds: 30_000_000)
+  }
 }
 
 /// A black image, for a capture that has nothing it may show.
@@ -690,6 +791,8 @@ func handle(_ req: JSON) async throws -> Any {
   case "open": return try await open(bundleId: try str(req, "bundleId"))
   case "quit": return try await quit(req)
   case "capture": return try await capture(req)
+  case "settle_mark": try await settleMark(req)
+  case "settle": return try await settle(req)
   case "cursor":
     let p = cursor()
     return ["x": p.x, "y": p.y]

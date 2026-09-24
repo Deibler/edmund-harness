@@ -53,6 +53,8 @@ import type {
   PointOwner,
   QuitResult,
   RunningApp,
+  SettleResult,
+  SettleView,
 } from "../src/mcp/computer-use/native.ts";
 import { type Policy, approved, resolveApp, tierOf } from "../src/mcp/computer-use/policy.ts";
 import { startedBy } from "../src/mcp/computer-use/request.ts";
@@ -1063,6 +1065,16 @@ class FakeScreen implements Native {
     this.log("capture", opts);
     return { data: "AAAA", width: opts.width, height: opts.height };
   }
+  /** What the next settleWait answers; an Error makes it fail. */
+  settleResult: SettleResult | Error = { ms: 420, settled: true };
+  async settleMark(view: SettleView) {
+    this.log("settleMark", view);
+  }
+  async settleWait(view: SettleView & { maxMs: number; quietMs: number; minChanged: number }) {
+    this.log("settleWait", view);
+    if (this.settleResult instanceof Error) throw this.settleResult;
+    return this.settleResult;
+  }
   async cursor() {
     return { x: 960, y: 540 };
   }
@@ -1621,6 +1633,74 @@ describe("computer_batch", () => {
     expect(text(r)).toContain("[2/4] key:");
     expect(text(r)).toContain("2 action(s) not run");
     expect(screen.input().map((c) => c.op)).toEqual(["click"]);
+  });
+});
+
+describe("waiting in a batch", () => {
+  const click = { action: "left_click", coordinate: [10, 10] };
+
+  test("a wait right after an action ends once the screen shows its effect and holds still", async () => {
+    const { session, screen, clock } = await ready();
+    const r = await session.batch([click, { action: "wait", duration: 1 }], WHY);
+    // Marked after every gate and check, immediately before the input.
+    const ops = screen.ops().filter((op) => op !== "ownerAt");
+    expect(ops).toEqual(["settleMark", "click", "settleWait"]);
+    expect(screen.calls.find((c) => c.op === "settleWait")!.args[0]).toMatchObject({
+      maxMs: 1000,
+      rect: { y: 40 },
+    });
+    expect(clock.now()).toBe(0);
+    expect(text(r)).toContain(
+      "Waited 0.4s, until the screen stopped changing (asked for up to 1s).",
+    );
+  });
+
+  test("the watch sees what a capture would: a contact's granted apps only", async () => {
+    const { session, screen } = await ready(["Notes"], CONTACT, SAM);
+    await session.batch([click, { action: "wait", duration: 1 }], WHY);
+    const view = screen.calls.find((c) => c.op === "settleMark")!.args[0] as SettleView;
+    expect(view.include).toEqual(["com.apple.Notes"]);
+  });
+
+  test("a wait with no input just before it, or longer than a settle, sleeps in full", async () => {
+    for (const actions of [
+      [{ action: "wait", duration: 1 }],
+      [click, { action: "screenshot" }, { action: "wait", duration: 1 }],
+      [click, { action: "wait", duration: 20 }],
+    ]) {
+      const { session, screen, clock } = await ready();
+      await session.batch(actions, WHY);
+      expect(screen.ops()).not.toContain("settleWait");
+      expect(clock.now()).toBe(actions.at(-1)!.duration! * 1000);
+    }
+  });
+
+  test("a settle that fails sleeps in full, and one that never settled says the full time", async () => {
+    const failed = await ready();
+    failed.screen.settleResult = new Error("the screen helper exited");
+    expect(
+      text(await failed.session.batch([click, { action: "wait", duration: 1 }], WHY)),
+    ).toContain("Waited 1s.");
+    expect(failed.clock.now()).toBe(1000);
+
+    const busy = await ready();
+    busy.screen.settleResult = { ms: 1003, settled: false };
+    expect(text(await busy.session.batch([click, { action: "wait", duration: 1 }], WHY))).toContain(
+      "Waited 1s.",
+    );
+    expect(busy.clock.now()).toBe(0);
+  });
+
+  test("a mark never outlives its batch", async () => {
+    const { session, screen, clock } = await ready();
+    screen.click = async () => {
+      throw new Error("the screen helper exited");
+    };
+    await session.batch([click, { action: "wait", duration: 1 }], WHY);
+    expect(screen.ops()).toContain("settleMark");
+    await session.single(act({ action: "wait", duration: 1 }));
+    expect(screen.ops()).not.toContain("settleWait");
+    expect(clock.now()).toBe(1000);
   });
 });
 
