@@ -72,7 +72,12 @@ import {
   serialQueue,
   sessionPolicy,
 } from "../src/mcp/computer-use/server.ts";
-import { type Action, ComputerSession, SCREEN_WAIT_MS } from "../src/mcp/computer-use/session.ts";
+import {
+  type Action,
+  ComputerSession,
+  SCREEN_WAIT_MS,
+  isUntitled,
+} from "../src/mcp/computer-use/session.ts";
 import { MIN_EXPLANATION, computerTools } from "../src/mcp/computer-use/tools.ts";
 import type { ToolContext } from "../src/mcp/context.ts";
 import { cronTools } from "../src/mcp/tools/cron.ts";
@@ -214,6 +219,7 @@ const APPS: InstalledApp[] = [
   installed("com.google.Chrome", "Google Chrome"),
   installed("com.apple.Terminal", "Terminal"),
   installed("com.apple.Maps", "Maps"),
+  installed("com.silhouetteamerica.silhouettestudio", "Silhouette Studio"),
 ];
 
 describe("policy", () => {
@@ -697,6 +703,74 @@ function jev(
   });
   return { guard, audit };
 }
+
+describe("JevGuard reuse and waivers", () => {
+  test("an exactly repeated check reuses the verdict, and any change asks again", async () => {
+    const { fn, calls } = fakeFetch([jevResponse(), jevResponse(), jevResponse(), jevResponse()]);
+    let said = ["Alex Rivera: tick eggs off my list"];
+    const { guard, audit } = jev(fn, { request: () => said });
+    const first = await guard.check(CHECK);
+    const again = await guard.check(CHECK);
+    expect(calls).toHaveLength(1);
+    expect(again).toMatchObject({ allowed: true, reused: true, scores: first.scores });
+    await guard.check({ ...CHECK, explanation: `${WHY} Now the milk.` });
+    await guard.check({
+      ...CHECK,
+      action: 'left-click checkbox "Milk" in Notes, window "Kitchen list"',
+    });
+    said = [...said, "Alex Rivera: actually leave it"];
+    await guard.check(CHECK);
+    expect(calls).toHaveLength(4);
+    expect(audit).toHaveLength(5);
+  });
+
+  test("a refusal is reused too; an error never is", async () => {
+    const refused = fakeFetch([jevResponse({ destructive: 0.9 })]);
+    const g = jev(refused.fn).guard;
+    expect((await g.check(CHECK)).allowed).toBe(false);
+    expect((await g.check(CHECK)).allowed).toBe(false);
+    expect(refused.calls).toHaveLength(1);
+
+    const down = fakeFetch([...Array(4)].map(() => new Error("offline")).concat([jevResponse()]));
+    const d = jev(down.fn).guard;
+    expect((await d.check(CHECK)).error).toBeDefined();
+    expect((await d.check(CHECK)).allowed).toBe(true);
+    expect(down.calls).toHaveLength(5);
+  });
+
+  test("a reused verdict lasts thirty minutes", async () => {
+    const { fn, calls } = fakeFetch([jevResponse(), jevResponse()]);
+    let t = 0;
+    const { guard } = jev(fn, { now: () => t });
+    await guard.check(CHECK);
+    t = 29 * 60_000;
+    await guard.check(CHECK);
+    expect(calls).toHaveLength(1);
+    t = 31 * 60_000;
+    await guard.check(CHECK);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("a waived harm is asked and recorded but does not refuse; the others still do", async () => {
+    const { fn, calls } = fakeFetch([
+      jevResponse({ destructive: 0.7 }),
+      jevResponse({ destructive: 0.7, privacy: 0.8 }),
+    ]);
+    const { guard, audit } = jev(fn);
+    const waive = { harms: ["destructive" as const], because: "Edmund's own document" };
+    const v = await guard.check({ ...CHECK, waive });
+    expect(v).toMatchObject({
+      allowed: true,
+      flagged: [],
+      waived: [{ harm: "destructive", p: 0.7 }],
+    });
+    expect(audit[0]!.waive?.because).toBe("Edmund's own document");
+    expect(JSON.parse(calls[0]!.init.body as string).state.waive).toBeUndefined();
+    const w = await guard.check({ ...CHECK, action: "press Delete", waive });
+    expect(w.allowed).toBe(false);
+    expect(w.flagged.map((f) => f.harm)).toEqual(["privacy"]);
+  });
+});
 
 describe("JevGuard", () => {
   test("asks every harm question about the action, the request and the explanation", async () => {
@@ -1701,6 +1775,92 @@ describe("waiting in a batch", () => {
     await session.single(act({ action: "wait", duration: 1 }));
     expect(screen.ops()).not.toContain("settleWait");
     expect(clock.now()).toBe(1000);
+  });
+});
+
+describe("a document Edmund made this session", () => {
+  const STUDIO = "com.silhouetteamerica.silhouettestudio";
+  const DESIGN: Policy = { ...POLICY, apps: [...POLICY.apps, "Silhouette Studio"] };
+  const inWindow = (screen: FakeScreen, pid: number, title: string) => {
+    screen.front = { ...app(STUDIO, "Silhouette Studio"), pid };
+    screen.focus = {
+      pid,
+      bundleId: STUDIO,
+      name: "Silhouette Studio",
+      role: "AXWindow",
+      label: title,
+    };
+  };
+  const press = async (session: ComputerSession, guard: FakeGuard, key: string) => {
+    await session.single(act({ action: "key", text: key }));
+    return guard.checks.at(-1)!.waive;
+  };
+
+  test("Delete, forward-delete and Cut there set aside only the destructive answer", async () => {
+    const { session, screen, guard } = await ready(["Silhouette Studio"], DESIGN);
+    const opened = await screen.open(STUDIO); // launched during this hold
+    inWindow(screen, opened.pid, "Silhouette Studio: Untitled-1");
+    for (const key of ["Delete", "forward_delete", "cmd+x"]) {
+      expect(await press(session, guard, key)).toEqual({
+        harms: ["destructive"],
+        because:
+          '"Silhouette Studio: Untitled-1" is a document Edmund created during this session and has never saved',
+      });
+    }
+    expect(await press(session, guard, "cmd+a")).toBeUndefined();
+    expect(await press(session, guard, "cmd+delete")).toBeUndefined();
+  });
+
+  test("not a saved document, nor a file merely named Untitled", async () => {
+    const { session, screen, guard } = await ready(["Silhouette Studio"], DESIGN);
+    const opened = await screen.open(STUDIO);
+    for (const title of ["Silhouette Studio: santa-card", "Silhouette Studio: Untitled Design"]) {
+      inWindow(screen, opened.pid, title);
+      expect(await press(session, guard, "Delete")).toBeUndefined();
+    }
+  });
+
+  test("not an untitled document that was open before Edmund could act in its app", async () => {
+    for (const grantFirst of [true, false]) {
+      const { session, screen, guard } = setup(DESIGN);
+      const running = screen.launch(STUDIO, "Silhouette Studio");
+      screen.views[STUDIO] = {
+        running: true,
+        windows: [{ title: "Silhouette Studio: Untitled-1", found: {} }],
+      };
+      // Granted before the hold starts, or only in the middle of it.
+      await session.requestAccess({
+        apps: grantFirst ? ["Silhouette Studio", "Notes"] : ["Notes"],
+        reason: "t",
+      });
+      await session.single({ action: "screenshot" });
+      if (!grantFirst) await session.requestAccess({ apps: ["Silhouette Studio"], reason: "t" });
+      inWindow(screen, running.pid, "Silhouette Studio: Untitled-1");
+      expect(await press(session, guard, "Delete")).toBeUndefined();
+      // A new document that appears afterwards is Edmund's.
+      inWindow(screen, running.pid, "Silhouette Studio: Untitled-2");
+      expect(await press(session, guard, "Delete")).toBeDefined();
+    }
+  });
+
+  test("untitled titles", () => {
+    for (const t of [
+      "Untitled",
+      "Untitled 2",
+      "Untitled-3",
+      "Silhouette Studio: Untitled-1",
+      "Untitled — Edited",
+    ]) {
+      expect(isUntitled(t)).toBe(true);
+    }
+    for (const t of [
+      "Untitled Design",
+      "My Untitled",
+      "santa-card",
+      "Silhouette Studio: Untitled Design",
+    ]) {
+      expect(isUntitled(t)).toBe(false);
+    }
   });
 });
 

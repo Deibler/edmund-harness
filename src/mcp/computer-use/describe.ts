@@ -87,6 +87,13 @@ export function deletedText(chord: Chord, focus: PointOwner | null, repeat: numb
   return before.slice(Math.max(0, before.length - more)) + selected;
 }
 
+/** Delete or forward-delete with no modifier, or Cut: a key that removes what is selected. */
+export function removesSelection(chord: Chord, meaning: string | null): boolean {
+  if (meaning === "Cut") return true;
+  if (chord.modifiers.length || chord.keys.length !== 1) return false;
+  return chord.keys[0] === BACKSPACE || chord.keys[0] === FORWARD_DELETE;
+}
+
 /** Text quoted in an action: line breaks made visible, and clipped. */
 export function quoted(text: string, max = 400): string {
   return `"${clip(text.replace(/\r\n|\r|\n/g, "⏎"), max)}"`;
