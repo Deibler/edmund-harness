@@ -123,6 +123,19 @@ function blank(id: string, ts: string): Item {
 
 const round = (n: number) => Math.round(n * 1000) / 1000;
 
+/**
+ * Whether a write decided an item's presence or level (`Item.decided`): an
+ * add, a toss, a count or level set, finishing it, or a use that emptied it.
+ * A use that leaves some behind says nothing about "low", and a metadata set
+ * says nothing at all.
+ */
+function decides(e: KitchenEvent, wasGone: boolean, gone: boolean): boolean {
+  if (e.op === "add" || e.op === "toss") return true;
+  if (e.op === "set") return typeof e.qty === "number" || e.fields?.level != null;
+  if (e.op === "use") return (e.qty == null && !e.some) || (!wasGone && gone);
+  return false;
+}
+
 export function fold(account: string, events?: KitchenEvent[]): Record<string, Item> {
   const evs = events ?? readLog(account);
   const dropped = droppedBatches(evs);
@@ -148,6 +161,7 @@ export function fold(account: string, events?: KitchenEvent[]): Record<string, I
     }
     it.updated = e.ts;
     const q = e.qty ?? null;
+    const wasGone = it.gone;
 
     if (e.op === "add") {
       // An add asserts the item is in the house now, so emptiness left by the
@@ -206,6 +220,7 @@ export function fold(account: string, events?: KitchenEvent[]): Record<string, I
       it.level = "out";
       it.gone = true;
     }
+    if (decides(e, wasGone, it.gone)) it.decided = { src: e.src ?? null, at: e.ts };
   }
   return items;
 }

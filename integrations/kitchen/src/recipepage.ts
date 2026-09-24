@@ -12,6 +12,7 @@
 
 import type { BuiltRecipe } from "./cookbook.ts";
 import { type PricePoint, recipeCost } from "./cost.ts";
+import { onHand } from "./foods.ts";
 import { dayKey } from "./insights.ts";
 import { CLIENT } from "./recipe/client.ts";
 import { CSS } from "./recipe/style.ts";
@@ -86,12 +87,14 @@ const MODIFIER = new Set([
 ]);
 
 /**
- * Stock badge for a written ingredient line. Lines without a ledger slug are
- * untracked (salt, water) and get no badge rather than a false "out".
+ * Stock badge for a written ingredient line. Lines without a ledger slug, and
+ * pantry basics nobody tracks (salt, water), get no badge rather than a false
+ * "out".
  */
 function stockState(ing: { item?: string | null }, items: Record<string, Item>) {
   if (!ing.item) return null;
   const it = items[ing.item];
+  if (!it && onHand(items, ing.item)) return null;
   if (!it || it.gone) return { label: "out", col: "var(--bad)" };
   if (it.level === "low") return { label: "running low", col: "var(--warn)" };
   return { label: "have", col: "var(--good)" };
@@ -141,10 +144,7 @@ export function renderRecipePage(r: BuiltRecipe, ctx: RecipePageCtx): string {
   // The shortfall comes from `needs`, the authoritative slug list, not the prose.
   const missing = needs
     .map(([id]) => id)
-    .filter((id) => {
-      const it = ctx.items[id];
-      return !it || it.gone;
-    })
+    .filter((id) => !onHand(ctx.items, id))
     .map((id) => ({
       item: id,
       name: lines.find((l) => l.item === id)?.name ?? ctx.items[id]?.name ?? id.replace(/-/g, " "),

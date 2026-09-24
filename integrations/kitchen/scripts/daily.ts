@@ -20,7 +20,7 @@ import { checkAccount } from "../src/doctor.ts";
 import { siteStatus } from "../src/host.ts";
 import { pruneIdeas } from "../src/ideas.ts";
 import { photographMissing } from "../src/photos.ts";
-import { cookable, loadRecipes } from "../src/recipes.ts";
+import { cookable, loadRecipes, offered } from "../src/recipes.ts";
 import { morningReview } from "../src/review.ts";
 import { loadKitchenSettings } from "../src/settings.ts";
 import { writeSite } from "../src/site.ts";
@@ -63,7 +63,10 @@ async function runAccount(id: string): Promise<void> {
 
     const { html, pages } = writeSite(id, acct, dir);
     if (pages) console.log(`  ${pages} recipe page(s)`);
-    const c = cookable(Object.fromEntries(items.map((i) => [i.id, i])), loadRecipes(id).recipes);
+    const c = cookable(
+      Object.fromEntries(items.map((i) => [i.id, i])),
+      offered(id, loadRecipes(id).recipes),
+    );
     console.log(`  rendered ${dir}: ${c.filter((x) => x.ready).length}/${c.length} cookable`);
 
     // Confirm the render is what the live URL serves. A registry pointing at a

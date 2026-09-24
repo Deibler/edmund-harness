@@ -21,7 +21,7 @@ import { isConvenience } from "./foods.ts";
 import { lastMade, madeIndex } from "./made.ts";
 import { moodFor, moodScore, readWeather } from "./mood.ts";
 import { loadProfiles } from "./profile.ts";
-import { type Cookable, type Recipe, cookable, loadRecipes } from "./recipes.ts";
+import { type Cookable, type Recipe, cookable, menu } from "./recipes.ts";
 import { fold, live } from "./store.ts";
 import type { Account } from "./types.ts";
 
@@ -267,21 +267,7 @@ export function pickFor(
   recent: ReadonlySet<string> = new Set(),
 ): Pick | null {
   const items = fold(account);
-  const { recipes } = loadRecipes(account);
-  const book = loadCookbook(account);
-  const written = new Set(book.map((b) => b.id));
-
-  // Written recipes count as choices even when the catalog lacks them.
-  const extra: Recipe[] = book
-    .filter((b) => !recipes.some((r) => r.id === b.id))
-    .map((b) => ({
-      id: b.id,
-      name: b.name,
-      desc: b.desc,
-      minutes: b.minutes,
-      needs: b.needs,
-      cat: b.cat,
-    }));
+  const written = new Set(loadCookbook(account).map((b) => b.id));
 
   const cats = CATS_FOR[meal];
   // A dinner built around deli meat or bread is lunch, whatever its card says.
@@ -289,7 +275,8 @@ export function pickFor(
     const main = items[r.needs[0]?.[0] ?? ""];
     return meal === "dinner" && !!main && isConvenience(main);
   };
-  const all = [...recipes, ...extra].filter((r) => cats.has(r.cat) && !anchoredOnLunch(r));
+  // The same menu the home page ranks, so the avoid list holds here too.
+  const all = menu(account).filter((r) => cats.has(r.cat) && !anchoredOnLunch(r));
   if (!all.length) return null;
 
   const mood = moodFor(acct, readWeather(account), now);

@@ -154,27 +154,125 @@ export function isConvenience(it: Pick<Item, "id" | "name" | "cat">): boolean {
   return CONVENIENCE.test(hay(it));
 }
 
+/* ------------------------------------------------------------------ *
+ * Pantry basics
+ * ------------------------------------------------------------------ */
+
 /**
- * Whether a household's avoid list rules this dish out.
+ * Ingredients a recipe may name without the ledger tracking them: every
+ * kitchen has them, and nobody logs buying salt. This is the one definition:
+ * saving an idea accepts them, `onHand` counts them as present, and pruning
+ * never retires a dish for lacking one.
+ */
+export const PANTRY_BASICS: ReadonlySet<string> = new Set([
+  "salt",
+  "black-pepper",
+  "pepper",
+  "water",
+  "cooking-oil",
+  "olive-oil",
+  "vegetable-oil",
+  "all-purpose-flour",
+  "flour",
+  "sugar",
+  "granulated-sugar",
+]);
+
+export const isPantryBasic = (slug: string): boolean => PANTRY_BASICS.has(slug);
+
+/**
+ * Whether an ingredient is in the kitchen, as far as cooking is concerned.
  *
- * Matched against the dish name and every ingredient slug, by whole words, so
- * "tomato paste" catches `tomato-paste` without catching `tomatoes-on-the-vine`.
+ * The ledger decides anything it tracks, basics included: a household that
+ * logged salt and later said it ran out has told us more than the assumption.
+ * An untracked basic is present; anything else untracked is missing.
+ */
+export function onHand(items: Readonly<Record<string, Pick<Item, "gone">>>, slug: string): boolean {
+  const it = items[slug];
+  if (it) return !it.gone;
+  return isPantryBasic(slug);
+}
+
+/* ------------------------------------------------------------------ *
+ * The avoid list
+ * ------------------------------------------------------------------ */
+
+const words = (s: string): string[] =>
+  s
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+/** Plural spellings of a singular word. Bogus ones ("mushroomes") match nothing. */
+function pluralsOf(w: string): string[] {
+  const out = [`${w}s`, `${w}es`];
+  if (/[^aeiou]y$/.test(w)) out.push(`${w.slice(0, -1)}ies`); // berry -> berries
+  if (w.endsWith("f")) out.push(`${w.slice(0, -1)}ves`); // leaf -> leaves
+  if (w.endsWith("fe")) out.push(`${w.slice(0, -2)}ves`); // knife -> knives
+  return out;
+}
+
+/**
+ * Singular spellings of a word that may be plural. Words ending in -ss, -us or
+ * -is are not plurals (glass, asparagus, hummus), so they have none.
+ */
+function singularsOf(w: string): string[] {
+  if (w.length < 3 || /(ss|us|is)$/.test(w) || !w.endsWith("s")) return [];
+  const out = [w.slice(0, -1)]; // mushrooms -> mushroom, olives -> olive, peas -> pea
+  if (w.endsWith("ies")) out.push(`${w.slice(0, -3)}y`); // berries -> berry
+  if (w.endsWith("ves")) out.push(`${w.slice(0, -3)}f`, `${w.slice(0, -3)}fe`); // leaves, knives
+  if (/(o|ch|sh|x|z|ss)es$/.test(w)) out.push(w.slice(0, -2)); // tomatoes, peaches, glasses
+  return out;
+}
+
+/**
+ * Whether a household's avoid list rules this dish out, and by which term.
+ *
+ * Matched by whole words against the dish name and each ingredient (slug or
+ * written name), so "tomato paste" catches `tomato-paste` without catching
+ * `tomatoes-on-the-vine`, and "pea" never catches "peach".
+ *
+ * Number is forgiven in the direction that is safe. The term as written and
+ * its plural match anywhere: "mushroom" catches `cremini-mushrooms` and
+ * `mushroom-soup`. A plural term's singular matches only as the ingredient
+ * itself, its last word: "mushrooms" catches `mushroom`, but "olives" does not
+ * catch `olive-oil` and "greens" does not catch `green-beans`, because a
+ * singular noun in front of another is usually an attribute, not the food.
  */
 export function avoidedBy(
   avoid: readonly string[] | undefined,
-  dish: { name: string; needs?: ReadonlyArray<readonly [string, unknown]> },
+  dish: {
+    name: string;
+    needs?: ReadonlyArray<readonly [string, unknown]>;
+    /** Extra ingredient phrases, e.g. a written recipe's ingredient names. */
+    also?: readonly string[];
+  },
 ): string | null {
   if (!avoid?.length) return null;
-  const words = [dish.name, ...(dish.needs ?? []).map(([slug]) => slug.replace(/-/g, " "))]
-    .join(" | ")
-    .toLowerCase();
+  const ingredients = [...(dish.needs ?? []).map(([slug]) => slug), ...(dish.also ?? [])]
+    .map(words)
+    .filter((w) => w.length);
+  const phrases = [
+    { w: words(dish.name), ingredient: false },
+    ...ingredients.map((w) => ({ w, ingredient: true })),
+  ];
   for (const raw of avoid) {
-    const term = raw.trim().toLowerCase();
-    if (!term) continue;
-    const pattern = new RegExp(
-      `\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[\s-]+/g, "[\\s-]+")}\\b`,
-    );
-    if (pattern.test(words)) return raw;
+    const term = words(raw);
+    if (!term.length) continue;
+    const lead = term.slice(0, -1);
+    const last = term[term.length - 1]!;
+    const anywhere = new Set([last, ...pluralsOf(last)]);
+    const asHead = new Set(singularsOf(last));
+    const hit = phrases.some(({ w, ingredient }) => {
+      for (let i = 0; i + term.length <= w.length; i++) {
+        if (!lead.every((t, k) => w[i + k] === t)) continue;
+        const end = w[i + lead.length]!;
+        if (anywhere.has(end)) return true;
+        if (ingredient && i + term.length === w.length && asHead.has(end)) return true;
+      }
+      return false;
+    });
+    if (hit) return raw;
   }
   return null;
 }

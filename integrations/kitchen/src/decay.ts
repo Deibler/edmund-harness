@@ -10,7 +10,7 @@
  * item somebody rescues is exempt for two weeks.
  */
 
-import { append, live, readLog } from "./store.ts";
+import { append, droppedBatches, live, readLog } from "./store.ts";
 import type { Item, KitchenEvent } from "./types.ts";
 
 const DAY = 86_400_000;
@@ -33,8 +33,12 @@ function lastTouched(item: Item): number {
   return new Date(item.updated || item.added).getTime();
 }
 
-/** Items a person rescued from an automatic cleanup (an undo of its batch), and when. */
+/**
+ * Items a person rescued from an automatic cleanup (an undo of its batch), and
+ * when. A rescue that was itself undone rescued nothing.
+ */
 function vindicated(evs: KitchenEvent[]): Map<string, number> {
+  const dropped = droppedBatches(evs);
   const sweptIn = new Map<string, string[]>();
   for (const e of evs) {
     if (e.src !== "auto-cleanup" || !e.item) continue;
@@ -42,7 +46,7 @@ function vindicated(evs: KitchenEvent[]): Map<string, number> {
   }
   const out = new Map<string, number>();
   for (const e of evs) {
-    if (e.op !== "undo" || !e.batch_target) continue;
+    if (e.op !== "undo" || !e.batch_target || dropped.has(e.batch)) continue;
     for (const id of sweptIn.get(e.batch_target) ?? []) {
       out.set(id, Math.max(out.get(id) ?? 0, new Date(e.ts).getTime()));
     }
@@ -123,8 +127,8 @@ export function lastSweep(
   }
   if (!batch) return null;
   // An undone sweep is not offered again; the button would restore nothing.
-  const undone = evs.some((e) => e.op === "undo" && e.batch_target === batch);
-  if (undone) return null;
+  // Shared with the fold, so a put-back that was itself undone offers it again.
+  if (droppedBatches(evs).has(batch)) return null;
   return {
     batch,
     at,

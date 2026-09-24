@@ -157,6 +157,16 @@ check("undoing the cleanup put the milk back", qty("milk") === 1);
 const undos = live("t").length;
 await drain("t");
 check("a repeated unsweep changed nothing", live("t").length === undos);
+// A put-back that was itself undone is not "already put back".
+const { readLog: logOf } = await import("../src/store.ts");
+const putBack = logOf("t")
+  .filter((e) => e.op === "undo" && e.batch_target === sweepBatch)
+  .pop()!;
+append("t", [{ op: "undo", batch_target: putBack.batch, why: "it really was gone" }]);
+check("undoing the put-back took the milk again", qty("milk") === null);
+tap({ kind: "unsweep", batch: sweepBatch });
+await drain("t");
+check("so the next unsweep tap puts it back", qty("milk") === 1);
 
 // ── shopping. Ticking clears written lines and leaves stock to a receipt.
 addToList("t", [

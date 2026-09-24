@@ -14,7 +14,7 @@
 import { isConvenience } from "./foods.ts";
 import { ASSUMED_SRC, history } from "./history.ts";
 import { type ListEntry, readList, removeFromList } from "./list.ts";
-import { cookable, loadRecipes } from "./recipes.ts";
+import { cookable, loadRecipes, offered } from "./recipes.ts";
 import { dispositionOf, onRunOut, readBook, skipped, unskip } from "./restock.ts";
 import { fold, openPlans, readLog, slug } from "./store.ts";
 import type { Category, Item } from "./types.ts";
@@ -73,7 +73,7 @@ export type Shopping = {
 
 const DAY = 86400000;
 
-/** How long an item assumed to be out stays in its own section of the list. */
+/** How long a run-out nobody confirmed is shown at all, on the list or in the tray. */
 export const ASSUMED_SHOWN_DAYS = 10;
 
 /** How many "buy this and dinners open up" ideas the tray will ever show. */
@@ -106,10 +106,8 @@ export function shopping(account: string): Shopping {
   const { trips, shopsBy } = hist;
   const lastBought = new Map<string, string>();
   for (const [id, x] of hist.items) if (x.lastBought) lastBought.set(id, x.lastBought);
-  // The newest write per item, to find items that are out only by assumption.
-  const lastWrite = new Map<string, { src: string | null | undefined; ts: string }>();
-  for (const e of events) if (e.item) lastWrite.set(e.item, { src: e.src, ts: e.ts });
-  const { recipes } = loadRecipes(account);
+  // Unlock ideas are suggestions, so they come from what may be offered.
+  const recipes = offered(account, loadRecipes(account).recipes);
 
   const held: Array<{ name: string; why: string }> = [];
   const age = (id: string) => daysSince(lastBought.get(id));
@@ -149,8 +147,10 @@ export function shopping(account: string): Shopping {
   /* ── 3. run-outs ────────────────────────────────────────────────────────── */
   //
   // Proven staples are listed (`onRunOut`), other recent run-outs are offered in
-  // the tray, one-offs never cooked with are dropped. Items out only by
-  // assumption get their own section, since nobody confirmed them.
+  // the tray, one-offs never cooked with are dropped. A run-out nobody confirmed
+  // (the kitchen assumed it) goes through exactly the same rules, including
+  // every answer the household gave; it is only shown under its own heading
+  // and worded as a guess.
   const staple: Line[] = [];
   const assumed: Line[] = [];
   const restockAsks: Suggestion[] = [];
@@ -166,18 +166,10 @@ export function shopping(account: string): Shopping {
       cat: it.cat,
       bought: age(it.id),
     };
-    const last = lastWrite.get(it.id);
-    if (last?.src === ASSUMED_SRC) {
-      if (daysSince(last.ts)! <= ASSUMED_SHOWN_DAYS) {
-        claimed.add(it.id);
-        assumed.push({
-          ...line,
-          reason: "assumed",
-          why: it.gone ? "probably out" : "probably low",
-        });
-      }
-      continue;
-    }
+    // Worded as a guess when the kitchen assumed it rather than anybody saying so.
+    const guess =
+      it.decided?.src === ASSUMED_SRC ? (it.gone ? "probably out" : "probably low") : null;
+    const ranOut = daysSince(it.decided?.at);
     if (skipped(book, it.id, trips, shopsBy)) {
       held.push({ name: it.name, why: "not this trip" });
       continue;
@@ -194,12 +186,18 @@ export function shopping(account: string): Shopping {
       });
       continue;
     }
-    if (fate === "list") {
-      claimed.add(it.id); // so it cannot also appear in the tray
-      staple.push({ ...line, reason: "staple", why: it.gone ? "out" : "running low" });
+    // An assumption nobody acted on for this long is no longer news.
+    if (guess && (ranOut ?? 0) > ASSUMED_SHOWN_DAYS) {
+      held.push({ name: it.name, why: "assumed out a while ago and never confirmed" });
       continue;
     }
-    if ((daysSince(last?.ts) ?? 0) > OFFER_WITHIN_DAYS) {
+    if (fate === "list") {
+      claimed.add(it.id); // so it cannot also appear in the tray
+      if (guess) assumed.push({ ...line, reason: "assumed", why: guess });
+      else staple.push({ ...line, reason: "staple", why: it.gone ? "out" : "running low" });
+      continue;
+    }
+    if ((ranOut ?? 0) > OFFER_WITHIN_DAYS) {
       held.push({ name: it.name, why: "ran out a while ago" });
       continue;
     }
@@ -210,7 +208,7 @@ export function shopping(account: string): Shopping {
       cat: it.cat,
       kind: "restock",
       unlocks: [],
-      why: it.gone ? "ran out" : "running low",
+      why: guess ?? (it.gone ? "ran out" : "running low"),
       bought: age(it.id),
     });
   }
@@ -282,7 +280,7 @@ export function shopping(account: string): Shopping {
         id: "assumed",
         title: "Assumed to be low/out:",
         lines: assumed,
-        note: "Nobody confirmed these. Tick or delete any you still have.",
+        note: "Nobody confirmed these. Tick any you still have: it goes back in the kitchen, and a tick here is not counted as shopping.",
       },
       {
         id: "asked",

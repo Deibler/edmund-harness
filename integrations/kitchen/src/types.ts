@@ -133,6 +133,12 @@ export type Item = {
   gone: boolean;
   price?: number;
   store?: string;
+  /**
+   * The write that last decided whether it is here, low or out: its `src` and
+   * time. Set by the fold. A rename, an alias, a price or a partial use never
+   * decides it, so they cannot turn an assumed run-out into a confirmed one.
+   */
+  decided?: { src: string | null; at: string };
 };
 
 /**

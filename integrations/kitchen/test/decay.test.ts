@@ -94,7 +94,7 @@ check("the sweep is offered for undo", last?.batch === swept.batch);
 check("undo lists what it took", (last?.items.length ?? 0) === stale.length);
 
 // One retraction puts everything back exactly as it was.
-append("t", [{ op: "undo", batch_target: swept.batch!, why: "still here" }]);
+const putBack = append("t", [{ op: "undo", batch_target: swept.batch!, why: "still here" }]);
 check("stock is restored", live("t").length === before);
 check(
   "chili is back",
@@ -104,3 +104,26 @@ check("a retracted sweep is not offered again", lastSweep("t") === null);
 
 // The next pass must not re-remove what was just rescued, although it is still old.
 check("re-sweeping does not immediately re-remove", staleItems("t").length === 0);
+
+// Undoing the put-back means the leftovers really were gone: the sweep stands
+// again, so it is offered again, and nothing was rescued.
+append("t", [{ op: "undo", batch_target: putBack, why: "no, we ate it" }]);
+check(
+  "undoing the put-back takes the chili again",
+  !live("t").some((i) => i.id === "leftover-chili"),
+);
+check("and offers the sweep for undo again", lastSweep("t")?.batch === swept.batch);
+append("t", [
+  {
+    op: "add",
+    item: "leftover-chili",
+    qty: 1,
+    unit: "container",
+    fields: { name: "Leftover chili", cat: "other", loc: "fridge" },
+    ts: iso(5 * DAY),
+  },
+]);
+check(
+  "a later batch of the same leftover is not exempt as if it had been rescued",
+  staleItems("t").some((s) => s.item.id === "leftover-chili"),
+);

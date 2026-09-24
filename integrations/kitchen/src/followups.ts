@@ -9,8 +9,9 @@
  *
  * Silence is an answer too. A suspicion nobody was asked about within a few
  * days (no meal was sent), or one that was asked and ignored, is assumed true:
- * the item is marked out or low in one retractable batch, and the list shows it
- * under "Assumed to be low/out:" where a single tick corrects it.
+ * the item is marked out or low in one retractable batch. The list then treats
+ * it like any run-out, and shows a staple under "Assumed to be low/out:", where
+ * a tick on the site says they still have it.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";

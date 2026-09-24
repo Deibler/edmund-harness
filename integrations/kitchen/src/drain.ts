@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { eaters, getAccount, updateAccount } from "./accounts.ts";
+import { stillHere } from "./assess.ts";
 import { getRecipe, loadCookbook } from "./cookbook.ts";
 import { readExplore } from "./explore.ts";
 import { addToList, removeFromList, setAmount } from "./list.ts";
@@ -35,8 +36,9 @@ import {
   saveDinners,
   sendTo,
 } from "./schedules.ts";
-import { settleAfterPurchase, tripCount } from "./shopping.ts";
-import { append, fold, live, openPlans, readLog, slug } from "./store.ts";
+import { settleAfterPurchase, shopping, tripCount } from "./shopping.ts";
+import { append, droppedBatches, fold, live, openPlans, readLog, slug } from "./store.ts";
+import type { KitchenEvent } from "./types.ts";
 import { contained, positive, safeId } from "./util.ts";
 
 /** Kinds this module may settle. Some settle only for certain inputs; see `needsPerson`. */
@@ -69,6 +71,40 @@ export type DrainResult = {
   left: MakeRequest[];
   failed: string[];
 };
+
+/**
+ * A person saying items are in the kitchen after all: the site's "I already
+ * have this" and a tick under "Assumed to be low/out:". One path, so the two
+ * cannot disagree; `stillHere` decides each write, and none is a purchase.
+ * Returns what changed, empty when the ledger already agreed.
+ */
+function hereAfterAll(
+  account: string,
+  ids: string[],
+  qty: number | null,
+  profile?: string | null,
+): string[] {
+  const stock = fold(account);
+  const why = `on the shelf after all${profile ? ` (${profile})` : ""}`;
+  const writes: Partial<KitchenEvent>[] = [];
+  for (const id of ids) {
+    const it = stock[id];
+    // Never tracked: their word is the first record of it.
+    const w = it
+      ? stillHere(it, { why, src: "reconcile", qty })
+      : {
+          op: "set" as const,
+          item: id,
+          ...(qty !== null ? { qty } : {}),
+          fields: {},
+          why,
+          src: "reconcile",
+        };
+    if (w) writes.push(w);
+  }
+  if (writes.length) append(account, writes);
+  return writes.map((w) => `${w.item}${typeof w.qty === "number" ? ` -> ${w.qty}` : ""}`);
+}
 
 /**
  * Resolve one request. Returns a log line, an empty string for "handled, not
@@ -120,8 +156,9 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
 
     case "unsweep": {
       if (!r.batch) return null;
-      const already = readLog(account).some((e) => e.op === "undo" && e.batch_target === r.batch);
-      if (already) return `unsweep ${r.batch}: already put back`;
+      // Shared with the fold: a put-back that was itself undone is not "already".
+      if (droppedBatches(readLog(account)).has(r.batch))
+        return `unsweep ${r.batch}: already put back`;
       append(account, [
         {
           op: "undo" as const,
@@ -191,7 +228,19 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
       // A tick is evidence of presence, not of quantity or price: each known
       // item is added back with a null qty, and the receipt refines it later.
       // Without the add, derived staple lines would stay on the list.
-      const ticked = (r.items ?? []).filter(Boolean);
+      //
+      // Except under "Assumed to be low/out:", whose ticks mean "we still have
+      // it", as the list says. Those are the same correction as "I already
+      // have this": nothing was bought, so no trip, and no skip is spent.
+      const all = (r.items ?? []).filter(Boolean);
+      const assumed = new Set(
+        shopping(account)
+          .lines.filter((l) => l.reason === "assumed")
+          .map((l) => l.key),
+      );
+      const kept = all.filter((id) => assumed.has(id));
+      const ticked = all.filter((id) => !assumed.has(id));
+      const back = kept.length ? hereAfterAll(account, kept, null, r.profile) : [];
       const n = removeFromList(account, ticked);
       const stock = fold(account);
       const known = ticked.filter((id) => stock[id]);
@@ -208,11 +257,13 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
           })),
         );
       }
-      settleAfterPurchase(account, ticked);
-      return (
-        `shopping trip: ${known.length} back on the shelves, ` +
-        `${n} written line${n === 1 ? "" : "s"} cleared. Quantities wait for the receipt.`
-      );
+      if (ticked.length) settleAfterPurchase(account, ticked);
+      const still = kept.length
+        ? `${back.length} assumed low or out still here (not a purchase)`
+        : "";
+      if (!ticked.length) return `shopping list: ${still || "nothing ticked"}, no trip recorded`;
+      const cleared = `${n} written line${n === 1 ? "" : "s"} cleared${still ? `, ${still}` : ""}`;
+      return `shopping trip: ${known.length} back on the shelves, ${cleared}. Quantities wait for the receipt.`;
     }
 
     case "pairskip": {
@@ -322,26 +373,16 @@ async function handleOne(account: string, r: MakeRequest): Promise<string | null
     case "restock": {
       // "I do have that": a person's word beats anything inferred.
       if (!r.items?.length) return null;
-      const stock = Object.fromEntries(live(account).map((i) => [i.id, i]));
-      const want = typeof r.qty === "number" ? r.qty : 1;
-      // Covers both "marked gone but here" and "here but counted too low".
-      const fix = r.items.filter((id) => {
-        const it = stock[id];
-        return !it || it.gone || (typeof it.qty === "number" && it.qty < want);
-      });
-      if (!fix.length) return `restock: the ledger already agrees`;
-      append(
+      // A count only when the tap carried one (the short sheet sends the
+      // recipe's); the list's button knows presence, not how many.
+      const fix = hereAfterAll(
         account,
-        fix.map((id) => ({
-          op: "set" as const,
-          item: id,
-          qty: want,
-          fields: {},
-          why: `on the shelf after all${r.profile ? ` (${r.profile})` : ""}`,
-          src: "reconcile",
-        })),
+        r.items,
+        typeof r.qty === "number" ? r.qty : null,
+        r.profile,
       );
-      return `corrected on the shelves: ${fix.map((id) => `${id} -> ${want}`).join(", ")}`;
+      if (!fix.length) return `restock: the ledger already agrees`;
+      return `corrected on the shelves: ${fix.join(", ")}`;
     }
 
     case "reconcile": {

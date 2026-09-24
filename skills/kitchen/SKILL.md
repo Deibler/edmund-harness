@@ -69,13 +69,17 @@ words.
   and `low` and `gone` are held as suspicions for the next follow-up. Nothing
   leaves a shelf on an inference alone.
 - **Told** (`told:true`, a person said so): written at once, whatever it is,
-  and any suspicion about the item is dropped.
+  and any suspicion about the item is dropped. `here` clears an out or a low,
+  assumed or not, so the item leaves the list.
 
 **Silence settles it.** A suspicion raised in a follow-up and unanswered for two
 days, or never raised within four (no meal was sent), is assumed: the item is
-marked out or low in one undoable batch and appears on the list and the note
-under **Assumed to be low/out:**, where one tick corrects it. A suspicion is
-withdrawn automatically if the item is bought or seen again.
+marked out or low in one undoable batch. It then goes through the same rules as
+any run-out (see *The shopping list*), and a staple is listed on the list and
+the note under **Assumed to be low/out:**. On the site, ticking one there (or
+"I already have this") means they still have it: it goes back in the kitchen,
+and it is not a shopping trip. A suspicion is withdrawn automatically if the
+item is bought or seen again.
 
 **The morning review** is a daily event in the household's `wake` session
 listing the items worth a look. Assess them and reply `KEEP_QUIET`. Items past
@@ -103,9 +107,14 @@ rest come from ignoring these:
   butter-garlic sauce five nights running is one dinner. Check what was cooked
   recently (the ideas brief lists it) and change the method, cuisine or starch.
 - **The avoid list is a hard filter.** Anything in `diet.avoid` is never
-  offered, on any path. Record a new dislike as soon as somebody says one:
-  `kitchen_accounts action:"settings" avoid:[...]` with the full list, since it
-  replaces the old one.
+  offered, on any path: the home page, dinner texts, ideas, explore, and what
+  the tray says is worth buying. Record a new dislike as soon as somebody says
+  one: `kitchen_accounts action:"settings" avoid:[...]` with the full list,
+  since it replaces the old one. Terms match whole words and forgive number:
+  "mushroom" also catches cremini mushrooms and mushroom soup, "mushrooms"
+  catches mushroom, and "olives" never catches olive oil. A recipe written with
+  an avoided food is saved with a warning and never suggested; looking a dish up
+  or confirming it was cooked ignores the list.
 - **A "no" is information.** When somebody turns a dish down, note it in the
   person file and do not offer it again soon.
 - **Ask about unsure food, never assume it.**
@@ -332,8 +341,9 @@ A line reaches the list only through one of these groups:
   cooked or called off.
 - **Out of something you keep**: ran out or marked low, and the house keeps it
   (bought on two or more separate trips, or marked `always`).
-- **Assumed to be low/out:**: unanswered suspicions, kept apart because nobody
-  confirmed them.
+- **Assumed to be low/out:**: the same, for run-outs nobody confirmed
+  (unanswered suspicions), kept apart and worded as a guess. Every answer below
+  applies to them too, and a one-off is dropped as usual.
 - **You added these**: somebody typed it. Never second-guessed or dropped.
 
 The list must never become everything ever bought. Everything else is a
@@ -354,7 +364,7 @@ Three ways to take something off, and they differ:
 
 | They said | Do | Because |
 |---|---|---|
-| "I already have that" | `kitchen_record` an `add`, or the site's restock | The ledger is wrong. |
+| "I already have that" | `kitchen_inventory action:"assess" told:true` `here`, or the site's "I already have this" | The ledger is wrong. |
 | "not this trip" | `answer:{item, as:"skip"}` | About today; ends at the next trip. |
 | "we do not buy that" | `answer:{item, as:"never"}` | About the household; permanent. |
 
@@ -365,7 +375,8 @@ lines; pass `key` when the add answers a site tap.
 **A list nobody ticked still settles.** A receipt logged through
 `kitchen_record` clears written lines it satisfied and ends skips. Ticks on the
 site log items back onto the shelves with no quantity (a tick knows presence,
-the receipt knows amounts).
+the receipt knows amounts). A tick under **Assumed to be low/out:** means "we
+still have it": the item comes back, but it is no purchase and no trip.
 
 ### Apple Notes
 
@@ -516,13 +527,15 @@ confidence in each, lunch food listed separately, what was cooked recently and
 the names to avoid repeating; write the dishes for these people, then
 `action:"save"`. Saving rejects unknown ingredients, avoided food and dinners
 anchored on lunch food. Salt, pepper, oil, flour, sugar and water need no
-tracking.
+tracking: untracked, they count as in the kitchen; tracked, the ledger decides
+(salt marked out makes a dish short). Running out of one never retires an idea.
 
 `kitchen_explore` is the deliberate exception to the ledger anchor: dishes
 chosen for distance from what the house cooks, labelled as ideas to shop for,
 never as cookable, and never written to the ledger. Everything the house owns
-goes into the brief, and anything on a dish's buy list that matches a live item
-is moved to "already in the house" on save.
+goes into the brief, anything on a dish's buy list that matches a live item
+is moved to "already in the house" on save, and a dish that uses anything on
+the avoid list is dropped.
 
 ### One-person households
 

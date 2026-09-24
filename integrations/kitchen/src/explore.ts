@@ -10,8 +10,9 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { accountDir } from "./accounts.ts";
+import { accountDir, getAccount } from "./accounts.ts";
 import { loadCookbook } from "./cookbook.ts";
+import { avoidedBy } from "./foods.ts";
 import { type Effort, type Method, loadRecipes } from "./recipes.ts";
 import { live, slug } from "./store.ts";
 
@@ -56,6 +57,24 @@ export function readExplore(account: string): ExploreSet | null {
   }
 }
 
+/** An explore dish as the avoid list reads it: its name and everything it uses. */
+const exploreDish = (d: { name: string; buy: string[]; have: string[] }) => ({
+  name: d.name,
+  also: [...d.buy, ...d.have],
+});
+
+/**
+ * The saved set as the page may show it. The avoid list can change after a set
+ * was written, so it is applied again here; `readExplore` stays whole for
+ * looking a dish up.
+ */
+export function exploreShelf(account: string): ExploreSet | null {
+  const s = readExplore(account);
+  const avoid = getAccount(account)?.diet?.avoid;
+  if (!s || !avoid?.length) return s;
+  return { ...s, dishes: s.dishes.filter((d) => !avoidedBy(avoid, exploreDish(d))) };
+}
+
 const EFFORTS = new Set<string>(["quick", "weeknight", "project", "allday"]);
 const METHODS = new Set<string>([
   "stovetop",
@@ -79,7 +98,11 @@ export function exploreBrief(account: string, theme?: string | null): string {
   const known = [...new Set([...recipes.map((r) => r.name), ...book.map((b) => b.name)])];
   const cuisines = [...new Set(recipes.map((r) => r.cuisine).filter(Boolean))] as string[];
   const owned = live(account).map((i) => i.name);
+  const avoid = getAccount(account)?.diet?.avoid ?? [];
   return [
+    avoid.length
+      ? `Never use (a dish with any of these is dropped on save): ${avoid.join(", ")}.\n`
+      : "",
     "Every dish this household already cooks. This is the list to get AWAY from:",
     known.map((n) => `- ${n}`).join("\n"),
     cuisines.length ? `\nCuisines already represented: ${cuisines.join(", ")}.` : "",
@@ -110,14 +133,16 @@ export function exploreBrief(account: string, theme?: string | null): string {
 
 /**
  * Validate and write a set. Fields are coerced because they land on a public
- * page; a dish the house already cooks is dropped, and anything on a shopping
- * line that the house owns is moved to `have`.
+ * page; a dish the house already cooks is dropped, so is one that uses
+ * anything on the avoid list, and anything on a shopping line that the house
+ * owns is moved to `have`.
  */
 export function saveExplore(
   account: string,
   raw: unknown[],
   theme?: string | null,
-): { set: ExploreSet; dropped: string[] } {
+): { set: ExploreSet; dropped: string[]; avoided: string[] } {
+  const avoid = getAccount(account)?.diet?.avoid;
   const { recipes } = loadRecipes(account);
   const book = loadCookbook(account);
   const known = [...new Set([...recipes.map((r) => r.name), ...book.map((b) => b.name)])];
@@ -126,6 +151,9 @@ export function saveExplore(
   const seen = new Set<string>();
   const dishes: ExploreDish[] = [];
   const dropped: string[] = [];
+  const avoided: string[] = [];
+  const arr = (v: unknown) =>
+    (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []).slice(0, 14);
   for (const item of raw) {
     const d = (item ?? {}) as Record<string, unknown>;
     if (typeof d.name !== "string" || !d.name.trim()) continue;
@@ -134,12 +162,15 @@ export function saveExplore(
       dropped.push(d.name.trim());
       continue;
     }
+    const hit = avoidedBy(avoid, exploreDish({ name: d.name, buy: arr(d.buy), have: arr(d.have) }));
+    if (hit) {
+      avoided.push(`${d.name.trim()} (${hit})`);
+      continue;
+    }
     seen.add(id);
     const effort = EFFORTS.has(String(d.effort)) ? (String(d.effort) as Effort) : "weeknight";
     const method = METHODS.has(String(d.method)) ? (String(d.method) as Method) : "stovetop";
     const str = (v: unknown) => (typeof v === "string" ? v : "");
-    const arr = (v: unknown) =>
-      (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []).slice(0, 14);
     const buy: string[] = [];
     const have = arr(d.have);
     for (const line of arr(d.buy)) (owned.has(slug(line)) ? have : buy).push(line);
@@ -167,5 +198,5 @@ export function saveExplore(
   };
   mkdirSync(join(accountDir(), account), { recursive: true });
   writeFileSync(explorePath(account), JSON.stringify(set, null, 2));
-  return { set, dropped };
+  return { set, dropped, avoided };
 }
