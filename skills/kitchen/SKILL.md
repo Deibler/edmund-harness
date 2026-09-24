@@ -381,9 +381,10 @@ in the Notes app on this Mac. No tool and no background job touches a note.
   once. A chat with no screen tools for Notes is never woken (while computer
   use only shadows, that is every chat but the owner's), so those notes wait.
 - **Which note.** The one named in `note_list` (set once with
-  `kitchen_shopping noteTitle`), else "<household> list". Open it from the
-  note list by that title. The screen tools refuse another household's list;
-  never open one.
+  `kitchen_shopping noteTitle`), else "<household> list". The first
+  `noteWritten:true` pins that title, so naming somebody later never renames
+  the list. Open it from the note list by that title. The screen tools refuse
+  another household's list; never open one.
 - **What it says.** Above the line "Add anything below this line and I will
   move it onto the list above.": the title as the first line, then each group
   as a heading followed by its lines as checklist items, exactly as

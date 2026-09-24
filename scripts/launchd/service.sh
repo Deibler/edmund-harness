@@ -54,8 +54,11 @@ cmd="${1:-status}"
 # the committed templates leave as placeholders. The repo ships portable
 # templates (__HARNESS_ROOT__ / __HOME__); the resolved copy lands in
 # ~/Library/LaunchAgents. This is what makes a fresh checkout work on any
-# machine without hand-editing absolute paths.
+# machine without hand-editing absolute paths. The destination is removed
+# first: if it is a symlink to the template, writing through it would empty
+# the template, and launchd would keep running the placeholders.
 render_plist() {
+  rm -f "$2"
   sed -e "s|__HARNESS_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$1" > "$2"
 }
 
@@ -72,7 +75,6 @@ sidecar() {
       [[ -f "$src" ]] || { echo "plist not found: $src" >&2; exit 1; }
       mkdir -p "$HOME/Library/LaunchAgents"
       launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1 || true
-      rm -f "$dest"
       render_plist "$src" "$dest"
       launchctl bootstrap "$DOMAIN" "$dest"
       launchctl enable "$DOMAIN/$label"

@@ -28,7 +28,7 @@ import { dirname, join } from "node:path";
 import type { Config } from "../../../src/config/config.ts";
 import { sessionPolicy } from "../../../src/mcp/computer-use/policy.ts";
 import { tierForSessionKey } from "../../../src/security/policy.ts";
-import { accountDir, getAccount, householdTitle } from "./accounts.ts";
+import { accountDir, getAccount, householdTitle, updateAccount } from "./accounts.ts";
 import { shopping } from "./shopping.ts";
 
 /**
@@ -43,6 +43,12 @@ export const SETTLE_MS = 2 * 60_000;
 
 export type NoteLine = { kind: "title" | "heading" | "item" | "text"; text: string };
 
+/**
+ * The note's title: the one pinned on the household, else one derived from
+ * its name. A derived title follows the people, so naming somebody would
+ * point the kitchen (and the screen scope) at a note that does not exist.
+ * `markNoteWritten` pins it the first time a note by that title is confirmed.
+ */
 export const noteTitle = (account: string): string => {
   const acct = getAccount(account);
   const named = acct?.note_list?.trim();
@@ -178,6 +184,10 @@ export function noteDue(account: string, now = Date.now()): { due: boolean; sign
 
 /** Edmund has brought the note up to date with the list as it stands. */
 export function markNoteWritten(account: string, now = Date.now()): void {
+  // The note now exists under this title, so it is its name from here on.
+  if (getAccount(account) && !getAccount(account)?.note_list?.trim()) {
+    updateAccount(account, { note_list: noteTitle(account) });
+  }
   const signature = noteSignature(account);
   writeNoteState(account, {
     written: signature,
