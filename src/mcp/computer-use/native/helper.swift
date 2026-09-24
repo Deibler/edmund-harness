@@ -118,7 +118,42 @@ func focused() -> JSON? {
   let err = AXUIElementCopyAttributeValue(
     AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute as CFString, &value)
   guard err == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-  return describe(element: value as! AXUIElement)
+  let element = value as! AXUIElement
+  var out = describe(element: element)
+  // What an edit at the caret would touch: the selection and the text either
+  // side of it, so a Delete can be described by the text it removes. Never
+  // for a password field.
+  if !(out["secure"] as? Bool ?? false), let range = selectedRange(element) {
+    let total = attribute(element, kAXNumberOfCharactersAttribute) as? Int ?? Int.max
+    let end = range.location + range.length
+    let before = max(0, range.location - EDIT_CONTEXT)
+    out["selection"] = ["location": range.location, "length": range.length]
+    out["selectedText"] =
+      range.length > 0 ? stringFor(element, location: range.location, length: min(range.length, 4000)) ?? "" : ""
+    out["textAfter"] = stringFor(element, location: end, length: max(0, min(EDIT_CONTEXT, total - end))) ?? ""
+    out["textBefore"] = stringFor(element, location: before, length: range.location - before) ?? ""
+  }
+  return out
+}
+
+/// How much text either side of the caret `focused` reports.
+let EDIT_CONTEXT = 1000
+
+func selectedRange(_ element: AXUIElement) -> CFRange? {
+  guard let v = attribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(v) == AXValueGetTypeID()
+  else { return nil }
+  var range = CFRange()
+  return AXValueGetValue(v as! AXValue, .cfRange, &range) ? range : nil
+}
+
+func stringFor(_ element: AXUIElement, location: Int, length: Int) -> String? {
+  if length <= 0 { return "" }
+  var range = CFRange(location: location, length: length)
+  guard let param = AXValueCreate(.cfRange, &range) else { return nil }
+  var out: CFTypeRef?
+  let err = AXUIElementCopyParameterizedAttributeValue(
+    element, kAXStringForRangeParameterizedAttribute as CFString, param, &out)
+  return err == .success ? out as? String : nil
 }
 
 func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {

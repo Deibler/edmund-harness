@@ -6,7 +6,7 @@
  * something a classifier can judge, and (730, 410) is not.
  */
 
-import type { PointOwner } from "./native.ts";
+import type { Chord, PointOwner } from "./native.ts";
 
 const ROLES: Record<string, string> = {
   AXButton: "button",
@@ -63,4 +63,31 @@ export function describeElement(o: PointOwner): string {
 
 export function clip(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+const BACKSPACE = 0x33;
+const FORWARD_DELETE = 0x75;
+
+/**
+ * The text pressing Delete (backspace) or forward-delete `repeat` times would
+ * remove, read from the focused text: the selection first, then one character
+ * beside the caret per further press. Null for any other key, with a modifier
+ * (a word or a line at a time, whose reach is not worked out here), or when
+ * the focused element does not report its text.
+ */
+export function deletedText(chord: Chord, focus: PointOwner | null, repeat: number): string | null {
+  if (chord.modifiers.length || chord.keys.length !== 1) return null;
+  const key = chord.keys[0];
+  if (key !== BACKSPACE && key !== FORWARD_DELETE) return null;
+  if (!focus?.selection) return null;
+  const selected = focus.selectedText ?? "";
+  const more = Math.max(0, focus.selection.length > 0 ? repeat - 1 : repeat);
+  if (key === FORWARD_DELETE) return selected + (focus.textAfter ?? "").slice(0, more);
+  const before = focus.textBefore ?? "";
+  return before.slice(Math.max(0, before.length - more)) + selected;
+}
+
+/** Text quoted in an action: line breaks made visible, and clipped. */
+export function quoted(text: string, max = 400): string {
+  return `"${clip(text.replace(/\r\n|\r|\n/g, "⏎"), max)}"`;
 }

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { ensureMcpConfig } from "../src/claude/mcp-config.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
-import { describeElement } from "../src/mcp/computer-use/describe.ts";
+import { deletedText, describeElement } from "../src/mcp/computer-use/describe.ts";
 import {
   fitImage,
   frameFor,
@@ -362,6 +362,45 @@ describe("currentApps", () => {
   });
 });
 
+describe("what a delete removes", () => {
+  const edit = (location: number, selected: string, before: string, after: string): PointOwner => ({
+    pid: 1,
+    bundleId: "com.apple.Notes",
+    name: "Notes",
+    role: "AXTextArea",
+    selection: { location, length: selected.length },
+    selectedText: selected,
+    textBefore: before,
+    textAfter: after,
+  });
+  const DELETE = parseChord("delete");
+  const FORWARD = parseChord("forward_delete");
+
+  test("forward-delete takes characters after the caret, one per press", () => {
+    const caret = edit(8, "", "Limes, 8", "\nAvocados, 2, a little firm\nChips");
+    expect(deletedText(FORWARD, caret, 27)).toBe("\nAvocados, 2, a little firm");
+  });
+
+  test("delete takes characters before the caret", () => {
+    expect(deletedText(DELETE, edit(8, "", "Limes, 8", ""), 3)).toBe(", 8");
+  });
+
+  test("a selection goes first, then one character per further press", () => {
+    const sel = edit(0, "Limes", "", ", 8\nChips");
+    expect(deletedText(FORWARD, sel, 1)).toBe("Limes");
+    expect(deletedText(FORWARD, sel, 3)).toBe("Limes, ");
+    expect(deletedText(DELETE, edit(6, "8", "Limes, ", ""), 2)).toBe(" 8");
+  });
+
+  test("other keys, modified deletes and text that is not reported say nothing", () => {
+    const caret = edit(8, "", "Limes, 8", "\nChips");
+    expect(deletedText(parseChord("Return"), caret, 1)).toBeNull();
+    expect(deletedText(parseChord("alt+delete"), caret, 1)).toBeNull();
+    expect(deletedText(FORWARD, { ...caret, selection: undefined }, 1)).toBeNull();
+    expect(deletedText(FORWARD, null, 1)).toBeNull();
+  });
+});
+
 describe("what started the turn", () => {
   const NOW = 1_800_000_000_000;
   const job = (
@@ -386,9 +425,11 @@ describe("what started the turn", () => {
     expect(startedBy(null, null, NOW)).toBeNull();
   });
 
-  test("a long event is clipped", () => {
-    const said = startedBy(job(1_000, "x".repeat(5_000)), null, NOW)!;
-    expect(said.length).toBeLessThan(1_000);
+  test("a whole kitchen wake is passed on; only a runaway event is clipped", () => {
+    const wake = `[Kitchen · Home] ${"[ ] a line on the list\n".repeat(60)}4. Screenshot to check.`;
+    expect(startedBy(job(1_000, wake), null, NOW)).toContain("4. Screenshot to check.");
+    const said = startedBy(job(1_000, "x".repeat(20_000)), null, NOW)!;
+    expect(said.length).toBeLessThan(4_200);
     expect(said.endsWith("…")).toBe(true);
   });
 
@@ -756,6 +797,11 @@ describe("JevGuard", () => {
     const sent = JSON.parse(calls[0]!.init.body as string);
     expect(sent.state.turn_started_by).toBe(event);
     expect(sent.questions.scope.instructions).toContain("turn_started_by");
+    // Measured: without this, a scheduled sync's deletion of a stale line
+    // scored destructive 0.54 even with the line named; with it, 0.29-0.38.
+    expect(sent.questions.destructive.instructions).toContain(
+      "deleting a line above its sentinel that is not one of those lines is the edit it asks for",
+    );
     expect(audit[0]!.startedBy).toBe(event);
 
     const plain = jev(fn, { startedBy: () => null });
@@ -1838,6 +1884,16 @@ describe("Messages is scoped to the conversation the request came from", () => {
     expect(screen.input()).toHaveLength(1);
   });
 
+  test("a key goes to the conversation window, not a popover Messages puts in front of it", async () => {
+    const { session, screen } = await inMessagesAs(SAM, "Sam");
+    const main = messagesView("Sam").windows[0]!;
+    const popover = { title: "", frame: { x: 900, y: 600, width: 200, height: 60 }, found: {} };
+    screen.views["com.apple.MobileSMS"] = { running: true, windows: [popover, main] };
+    const r = await session.single(act({ action: "key", text: "Return" }));
+    expect(r.isError).toBeUndefined();
+    expect(screen.input().map((c) => c.op)).toEqual(["chord"]);
+  });
+
   test("searching is allowed from anywhere", async () => {
     const { session, screen } = await inMessagesAs(SAM, "Alex Rivera");
     screen.focus = inMessages({ role: "AXTextField", subrole: "AXSearchField", label: "Search" });
@@ -1896,6 +1952,58 @@ describe("Notes is scoped to the requester's household list", () => {
     const jordan = await session.single(act({ action: "left_click", coordinate: px(900, 420) }));
     expect(text(jordan)).toContain("\"Jordan's Kitchen list\" is not this household's list");
     expect(screen.input()).toHaveLength(1);
+  });
+
+  test("a key goes to the window holding the note, not a small window Notes puts in front of it", async () => {
+    const { session, screen, guard } = await inNotesAs(SAM, "Sam and Alex's Kitchen list");
+    const main = notesView("Sam and Alex's Kitchen list").windows[0]!;
+    // With several checklist lines selected, Notes lists a small untitled window first.
+    const popup = { title: "", frame: { x: 1100, y: 400, width: 44, height: 28 }, found: {} };
+    screen.views["com.apple.Notes"] = { running: true, windows: [popup, main] };
+    screen.focus = { ...screen.focus!, window: "Notes" };
+    const r = await session.single(act({ action: "key", text: "delete" }));
+    expect(r.isError).toBeUndefined();
+    expect(screen.input().map((c) => c.op)).toEqual(["chord"]);
+    expect(guard.checks[0]!.facts).toEqual({
+      note_open: "Sam and Alex's Kitchen list: the requester's household list",
+    });
+  });
+
+  test("with two notes open, the one being typed in decides, so another household's is still refused", async () => {
+    const { session, screen, guard } = await inNotesAs(SAM, "Sam and Alex's Kitchen list");
+    const own = notesView("Sam and Alex's Kitchen list").windows[0]!;
+    const theirs = {
+      ...notesView("Jordan's Kitchen list").windows[0]!,
+      title: "Jordan's Kitchen list",
+    };
+    screen.views["com.apple.Notes"] = { running: true, windows: [own, theirs] };
+    screen.focus = { ...screen.focus!, window: "Jordan's Kitchen list" };
+    const r = await session.single(act({ action: "key", text: "delete" }));
+    expect(text(r)).toContain("another household's list");
+    expect(screen.input()).toEqual([]);
+    expect(guard.checks).toEqual([]);
+  });
+
+  test("a delete is described by the text it removes, and typing over a selection by what it replaces", async () => {
+    const { session, screen, guard } = await inNotesAs(SAM, "Sam and Alex's Kitchen list");
+    screen.focus = {
+      ...screen.focus!,
+      selection: { location: 40, length: 0 },
+      selectedText: "",
+      textBefore: "Sam and Alex's Kitchen list\nLimes, 8",
+      textAfter: "\nAvocados, 2, a little firm\nTortilla chips",
+    };
+    await session.single(act({ action: "key", text: "forward_delete", repeat: 27 }));
+    expect(guard.checks.at(-1)!.action).toContain(
+      'which deletes this text: "⏎Avocados, 2, a little firm"',
+    );
+    screen.focus = {
+      ...screen.focus!,
+      selection: { location: 30, length: 8 },
+      selectedText: "Limes, 8",
+    };
+    await session.single(act({ action: "type", text: "Limes, 6" }));
+    expect(guard.checks.at(-1)!.action).toContain('replacing the selected text "Limes, 8"');
   });
 
   test("nothing is typed when Notes cannot say which note is open", async () => {

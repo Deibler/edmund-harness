@@ -28,7 +28,7 @@
  */
 
 import type { ToolResult } from "../tools/types.ts";
-import { clip, describeElement } from "./describe.ts";
+import { clip, deletedText, describeElement, quoted } from "./describe.ts";
 import { type Frame, frameFor, inFrame, toImage, toScreen, zoomRegion } from "./geometry.ts";
 import { type Guard, refusalText } from "./guard.ts";
 import { blockedChord, chordMeaning, isSystemCombo, modifierFlags, parseChord } from "./keys.ts";
@@ -63,6 +63,7 @@ import {
   isConversation,
   isConversationRow,
   isOwnNote,
+  keyWindow,
   noteRefusal,
   openNoteTitle,
   redactions,
@@ -547,7 +548,21 @@ export class ComputerSession {
   private async key(a: Action): Promise<Step> {
     const repeat = Math.min(Math.max(a.repeat ?? 1, 1), 100);
     const { chord, focus, front, words } = await this.prepareChord(a);
-    await this.approve(a, front, focus, `press ${words}${repeat > 1 ? ` ${repeat} times` : ""}`);
+    // Say what a Delete removes: "forward-delete 27 times" is something the
+    // safety check can only guess at, the line it deletes is not.
+    const deletes = deletedText(chord, focus, repeat);
+    await this.approve(
+      a,
+      front,
+      focus,
+      `press ${words}${repeat > 1 ? ` ${repeat} times` : ""}${
+        deletes === null
+          ? ""
+          : deletes
+            ? `, which deletes this text: ${quoted(deletes)}`
+            : ", which deletes nothing (no text beside the caret)"
+      }`,
+    );
     await this.native.chord(chord, { repeat });
     return { text: "Key pressed." };
   }
@@ -596,7 +611,15 @@ export class ComputerSession {
     const focus = await this.native.focused();
     if (focus?.secure) throw new Refusal(PASSWORD_FIELD);
     const into = focus ? describeElement(focus) : `whatever has focus in ${front.name}`;
-    await this.approve(a, front, focus, `type text "${clip(text, TYPED_SHOWN)}" into ${into}`);
+    const replacing = focus?.selectedText
+      ? `, replacing the selected text ${quoted(focus.selectedText)}`
+      : "";
+    await this.approve(
+      a,
+      front,
+      focus,
+      `type text "${clip(text, TYPED_SHOWN)}" into ${into}${replacing}`,
+    );
     if (text.includes("\n") && this.flags.clipboardWrite) {
       const previous = await this.native.clipboardRead();
       await this.native.clipboardWrite(text);
@@ -850,7 +873,7 @@ export class ComputerSession {
   ): Promise<Record<string, string>> {
     const app = target?.bundleId || front.bundleId;
     if (app === MESSAGES) return this.gateConversation(target, at);
-    if (app === NOTES) return this.gateNote(at);
+    if (app === NOTES) return this.gateNote(target, at);
     return {};
   }
 
@@ -864,7 +887,10 @@ export class ComputerSession {
         "This request did not come from a conversation, so there is no conversation in Messages to act on. Nothing was done.",
       );
     }
-    const window = windowAt(await this.native.inspect(MESSAGES, [IDS.conversationList]), at);
+    const inspection = await this.native.inspect(MESSAGES, [IDS.conversationList]);
+    const window = at
+      ? windowAt(inspection, at)
+      : keyWindow(inspection, target, IDS.conversationList);
     const showing = window?.title ?? "";
     const own = `${showing}: the requester's own conversation, checked against chat.db`;
     const row = rowAt(window, IDS.conversationList, at);
@@ -890,8 +916,12 @@ export class ComputerSession {
     return { messages_showing: own };
   }
 
-  private async gateNote(at: Point | null): Promise<Record<string, string>> {
-    const window = windowAt(await this.native.inspect(NOTES, [IDS.noteBody, IDS.noteList]), at);
+  private async gateNote(
+    target: PointOwner | null,
+    at: Point | null,
+  ): Promise<Record<string, string>> {
+    const inspection = await this.native.inspect(NOTES, [IDS.noteBody, IDS.noteList]);
+    const window = at ? windowAt(inspection, at) : keyWindow(inspection, target, IDS.noteBody);
     if (!window?.frame || !window.found[IDS.noteBody]) {
       throw new Refusal(
         "Notes did not say which note is open (its windows cannot be read right now), so nothing was done. Take a screenshot and try again.",
