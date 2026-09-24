@@ -909,11 +909,21 @@ describe("JevGuard", () => {
     const sent = JSON.parse(calls[0]!.init.body as string);
     expect(sent.state.turn_started_by).toBe(event);
     expect(sent.questions.scope.instructions).toContain("turn_started_by");
-    // Measured: without this, a scheduled sync's deletion of a stale line
-    // scored destructive 0.54 even with the line named; with it, 0.29-0.38.
-    expect(sent.questions.destructive.instructions).toContain(
-      "deleting a line above its sentinel that is not one of those lines is the edit it asks for",
+    // A scheduled note sync may delete only the lines its event lists under
+    // the kitchen's own heading for Edmund's earlier lines (the kitchen's
+    // notelist test pins its events to that heading). Any other line above
+    // the sentinel is somebody's, wherever it sits: the earlier sentence let
+    // anything "not in the list" go, which deleted a line typed mid-list.
+    // Measured on that earlier sentence: without it, deleting a named stale
+    // line scored destructive 0.54; with it, 0.29-0.38. This one is unmeasured.
+    const { OWN_LINES } = await import("../integrations/kitchen/src/notelist.ts");
+    const destructive: string = sent.questions.destructive.instructions;
+    expect(destructive).toContain(`When turn_started_by lists lines under "${OWN_LINES}"`);
+    expect(destructive).toContain("deleting one of those listed lines is the edit it asks for");
+    expect(destructive).toContain(
+      "Deleting any other line above that note's sentinel is destruction",
     );
+    expect(destructive).not.toContain("not one of those lines");
     expect(audit[0]!.startedBy).toBe(event);
 
     const plain = jev(fn, { startedBy: () => null });

@@ -15,18 +15,12 @@ import { existsSync } from "node:fs";
 import { getAccount, listAccounts } from "../src/accounts.ts";
 import { drain, needsPerson, publishQueue } from "../src/drain.ts";
 import { followupDue, markAsked, mayOffer, readFollowups } from "../src/followups.ts";
-import { canEditNotes, holdNote, noteDue, noteLines } from "../src/notelist.ts";
+import { noteStep, screenLocked } from "../src/notewatch.ts";
 import { describe, due, fire } from "../src/schedules.ts";
 import { loadKitchenSettings } from "../src/settings.ts";
 import { shopping } from "../src/shopping.ts";
 import { writeSite } from "../src/site.ts";
-import {
-  MAX_ATTEMPTS,
-  sessionFor,
-  wakeForFollowup,
-  wakeForNote,
-  wakeForRequests,
-} from "../src/wake.ts";
+import { wakeForFollowup, wakeForRequests } from "../src/wake.ts";
 
 const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 
@@ -138,28 +132,13 @@ for (const { id } of listAccounts()) {
     }
 
     // The shared note has no writer but Edmund on screen. Once the list has
-    // changed and settled, the household's session is woken to bring the note
-    // up to date; a chat the screen policy gives no Notes is not woken, and
-    // that is logged once per list rather than every ten seconds.
+    // changed and settled, or somebody asked from the site, the household's
+    // session is woken to bring the note up to date, unless it could not do
+    // it now (no Notes for that chat, or a locked Mac); see `noteStep`.
     if (acct) {
       try {
-        const { due, signature } = noteDue(id);
-        const session = due ? sessionFor(acct) : null;
-        if (due && session && canEditNotes(config, session)) {
-          const w = wakeForNote(id, acct, signature, noteLines(id));
-          for (const x of w.woke)
-            console.log(
-              `${stamp()} ${id}: note is behind the list; woke ${x.session}, job ${x.job}`,
-            );
-          if (w.held.some((h) => h.why === "exhausted") && holdNote(id, signature))
-            console.log(
-              `${stamp()} ${id}: note still behind after ${MAX_ATTEMPTS} wakes; waiting for the list to change`,
-            );
-        } else if (due && holdNote(id, signature)) {
-          console.log(
-            `${stamp()} ${id}: note is behind the list, but ${session ? `${session} has no screen tools for Notes` : "the household has no session"}; not waking`,
-          );
-        }
+        for (const line of await noteStep(id, acct, config, { locked: screenLocked }))
+          console.log(`${stamp()} ${id}: ${line}`);
       } catch (e) {
         trouble = [trouble, `note: ${(e as Error).message}`].filter(Boolean).join("; ");
         console.error(`${stamp()} ${id}: FAILED note check ${(e as Error).message}`);

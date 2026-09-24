@@ -21,7 +21,8 @@
  *     the answer lands on the site or in the ledger, and the turn ends quietly.
  *
  * Retries: once per item per twenty minutes, three times at most, tracked in
- * the household's `wakes.json`.
+ * the household's `wakes.json`. A person asking again (`fresh`) starts a new
+ * round of attempts.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -31,7 +32,15 @@ import type { JobInput } from "../../../src/cron/types.ts";
 import { accountDir, eaters, householdTitle } from "./accounts.ts";
 import { type Evidence, describeEvidence } from "./evidence.ts";
 import type { Due } from "./followups.ts";
-import { type NoteLine, SENTINEL, noteText, noteTitle } from "./notelist.ts";
+import {
+  type NoteBrief,
+  SENTINEL,
+  THEIRS_ABOVE,
+  noteText,
+  noteTitle,
+  ownLinesText,
+  showNote,
+} from "./notelist.ts";
 import type { MakeRequest } from "./requests.ts";
 import { requestKey } from "./requests.ts";
 import { dataDir } from "./settings.ts";
@@ -62,6 +71,33 @@ export type WakeResult = {
 };
 
 type Ledger = Record<string, { attempts: number; last: number }>;
+type Hold = "exhausted" | "recent";
+
+/**
+ * Why an item with this ledger entry is not woken now, or null when it is.
+ * `fresh` is a person asking again: their ask gets its own attempts, though
+ * never a second turn within RETRY_MS of the last.
+ */
+function holdFor(seen: Ledger[string] | undefined, now: number, fresh = false): Hold | null {
+  if (!seen || now - seen.last > FORGET_MS) return null;
+  if (!fresh && seen.attempts >= MAX_ATTEMPTS) return "exhausted";
+  if (now - seen.last < RETRY_MS) return "recent";
+  return null;
+}
+
+/**
+ * Whether `wake` would hold this key right now, without waking anything. For
+ * a caller that must do something costly (look at the screen) only when a
+ * wake would really go out.
+ */
+export function wakeHeld(
+  account: string,
+  key: string,
+  now = Date.now(),
+  fresh = false,
+): Hold | null {
+  return holdFor(readLedger(account)[key], now, fresh);
+}
 
 const ledgerPath = (account: string) => join(accountDir(), account, "wakes.json");
 
@@ -207,6 +243,8 @@ export function wake(
     now?: number;
     /** Build the event for a session; defaults to `eventText`. */
     text?: (items: WakeItem[], session: string) => string;
+    /** Somebody asked again: a new round of attempts (see `holdFor`). */
+    fresh?: boolean;
   } = {},
 ): WakeResult {
   const out: WakeResult = { woke: [], held: [] };
@@ -219,13 +257,9 @@ export function wake(
 
   const bySession = new Map<string, WakeItem[]>();
   for (const it of items) {
-    const seen = ledger[it.key];
-    if (seen && seen.attempts >= MAX_ATTEMPTS) {
-      out.held.push({ key: it.key, why: "exhausted" });
-      continue;
-    }
-    if (seen && now - seen.last < RETRY_MS) {
-      out.held.push({ key: it.key, why: "recent" });
+    const hold = holdFor(ledger[it.key], now, opts.fresh);
+    if (hold) {
+      out.held.push({ key: it.key, why: hold });
       continue;
     }
     const session = sessionFor(acct, it.requester);
@@ -247,8 +281,8 @@ export function wake(
       harnessWritten: true,
     });
     for (const it of due) {
-      const seen = ledger[it.key];
-      ledger[it.key] = { attempts: (seen?.attempts ?? 0) + 1, last: now };
+      const before = opts.fresh ? 0 : (ledger[it.key]?.attempts ?? 0);
+      ledger[it.key] = { attempts: before + 1, last: now };
     }
     out.woke.push({ session, keys: due.map((d) => d.key), job: job.id });
   }
@@ -379,39 +413,54 @@ export function wakeForFollowup(
  * The shared note
  * ------------------------------------------------------------------ */
 
-export function noteEventText(account: string, acct: Account, lines: NoteLine[]): string {
+/**
+ * The wake for a note that is behind. Edmund's own lines that left the list
+ * come first, before the list, so the screen check (which reads the first
+ * 4,000 characters of the event) always sees which deletions were asked for.
+ */
+export function noteEventText(account: string, acct: Account, brief: NoteBrief): string {
   const title = noteTitle(account);
   return [
     `[Kitchen · ${householdTitle(acct)}] The shopping list changed, so the shared Apple Note "${title}" is behind. Bring it up to date on screen with the computer tools. Nobody asked for this in chat.`,
     "",
-    `Above the line "${SENTINEL}" the note should read, in this order:`,
+    ownLinesText(brief.gone),
     "",
-    noteText(lines),
+    `Above the line "${SENTINEL}" the note should read, in this order (version ${brief.version}):`,
+    "",
+    noteText(brief.lines),
     "",
     `1. request_access for Notes, open_application Notes, and open "${title}" from the note list. Touch no other note.`,
-    "2. Screenshot and read it. Below the sentinel line is the household's own: anything new there is an item somebody wants. Put it on the list with kitchen_shopping add (by: whoever wrote it, when you can tell) and then delete it from below the line. If you added anything, use the lines from that kitchen_shopping reply instead of the ones above.",
-    "3. Change only the lines that differ: delete lines no longer on the list, add new ones as unticked checklist lines (Format > Checklist), and leave every tick where it is. Never select all and paste; a whole-note paste lets a phone bring old lines back as copies.",
-    "4. Screenshot to check, then kitchen_shopping noteWritten:true.",
+    "2. Screenshot and read it. Below the sentinel line is the household's own: anything new there is an item somebody wants. Put it on the list with kitchen_shopping add (by: whoever wrote it, when you can tell), then delete it from below the line.",
+    brief.gone === null
+      ? "3. Above the sentinel, leave every line that is not in the list where it is."
+      : `3. ${THEIRS_ABOVE}`,
+    "   If you added anything, work from the lines and version in that kitchen_shopping reply instead.",
+    "4. Change only the lines that differ: delete only lines named above as yours, add new ones as unticked checklist lines (Format > Checklist), and leave every tick where it is. Never select all and paste; a whole-note paste lets a phone bring old lines back as copies.",
+    `5. Screenshot to check, then kitchen_shopping noteWritten:true noteVersion:"${brief.version}".`,
     "If this chat has no computer tools, or Notes will not cooperate, stop without calling noteWritten.",
     "",
     QUIET,
   ].join("\n");
 }
 
+/** The note's wake key: one per list version. */
+export const noteKey = (signature: string) => `note:${signature}`;
+
 /**
  * Wake the household's session to bring its note up to date with the list.
  * Keyed on the list's signature, so one list state wakes at most
- * MAX_ATTEMPTS times; a newer list is a new key.
+ * MAX_ATTEMPTS times; a newer list is a new key, and a person asking from
+ * the site (`fresh`) is a new round. What Edmund is shown is recorded as he
+ * is shown it, so his confirmation can name it.
  */
 export function wakeForNote(
   account: string,
   acct: Account,
   signature: string,
-  lines: NoteLine[],
   opts: WakeOpts = {},
 ): WakeResult {
-  return wake(account, acct, [{ key: `note:${signature}`, line: "" }], {
+  return wake(account, acct, [{ key: noteKey(signature), line: "" }], {
     ...opts,
-    text: () => noteEventText(account, acct, lines),
+    text: () => noteEventText(account, acct, showNote(account, opts.now)),
   });
 }
