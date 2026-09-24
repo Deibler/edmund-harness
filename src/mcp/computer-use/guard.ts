@@ -23,6 +23,16 @@
 
 const ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
 const ATTEMPT_TIMEOUT_MS = 10_000;
+/**
+ * How long a verdict is reused for a check whose state is exactly the same.
+ * The same state is the same question, so asking again only costs time: in
+ * one 68-minute Silhouette turn on 2026-09-24, 757 of 1,355 checks repeated an
+ * earlier one exactly (3.5 of 6.8 minutes of checking) and none of them got a
+ * different verdict. Leaving the model's explanation out of the match would
+ * have reused 90%, but one of those did get a different verdict.
+ */
+const REUSE_MS = 30 * 60_000;
+const REUSE_MAX = 1_000;
 const RETRY_DELAYS_MS = [500, 1500, 4000];
 
 const PREAMBLE =
@@ -90,12 +100,22 @@ export type Check = {
   explanation: string;
   /** What the screen shows that bears on scope: the open conversation or note. */
   facts?: Record<string, string>;
+  /**
+   * Harms the harness has settled itself for this action, and how. They are
+   * still asked and recorded, but do not refuse it. Only the session sets
+   * this, from facts it checked (never from the model's word).
+   */
+  waive?: { harms: Harm[]; because: string };
 };
 
 export type Verdict = {
   allowed: boolean;
-  /** Harms at or above the threshold, highest first. Empty when allowed. */
+  /** Harms at or above the threshold that refuse the action, highest first. Empty when allowed. */
   flagged: Array<{ harm: Harm; p: number }>;
+  /** Harms at or above the threshold that the check's `waive` set aside. */
+  waived?: Array<{ harm: Harm; p: number }>;
+  /** The scores came from an earlier check with exactly the same state. */
+  reused?: boolean;
   /** Every harm's probability, when the classifier answered. */
   scores: Partial<Record<Harm, number>>;
   /** Why no verdict could be reached; the action is then refused. */
@@ -145,12 +165,20 @@ export type JevGuardOptions = {
   audit?: (entry: AuditEntry) => void;
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  /** The clock verdict reuse expires by. */
+  now?: () => number;
 };
 
 export class JevGuard implements Guard {
   private readonly pending = new Set<Promise<unknown>>();
+  /** Scores by the exact state sent, oldest first. Errors are never kept. */
+  private readonly answered = new Map<string, { scores: Record<Harm, number>; at: number }>();
 
   constructor(private readonly o: JevGuardOptions) {}
+
+  private now(): number {
+    return (this.o.now ?? Date.now)();
+  }
 
   /**
    * The verdict on one action. In shadow mode nothing is refused, so the
@@ -199,15 +227,24 @@ export class JevGuard implements Guard {
     let verdict: Verdict;
     const attempts: string[] = [];
     try {
-      const scores = await this.ask(state, questions, attempts);
-      const flagged = (Object.entries(scores) as Array<[Harm, number]>)
+      const key = JSON.stringify(state);
+      const earlier = this.answered.get(key);
+      const reused = earlier !== undefined && this.now() - earlier.at < REUSE_MS;
+      const scores = reused ? earlier.scores : await this.ask(state, questions, attempts);
+      if (!reused) this.remember(key, scores);
+      const over = (Object.entries(scores) as Array<[Harm, number]>)
         .filter(([, p]) => p >= this.o.threshold)
         .sort((a, b) => b[1] - a[1])
         .map(([harm, p]) => ({ harm, p }));
+      const waivable = new Set(c.waive?.harms ?? []);
+      const flagged = over.filter((f) => !waivable.has(f.harm));
+      const waived = over.filter((f) => waivable.has(f.harm));
       verdict = {
         allowed: flagged.length === 0,
         flagged,
+        ...(waived.length ? { waived } : {}),
         scores,
+        ...(reused ? { reused } : {}),
         ms: Date.now() - started,
         attempts,
       };
@@ -235,6 +272,17 @@ export class JevGuard implements Guard {
       mode: this.o.mode,
     });
     return verdict;
+  }
+
+  /** Keep an answer for reuse, dropping expired and then the oldest entries. */
+  private remember(key: string, scores: Record<Harm, number>): void {
+    const now = this.now();
+    this.answered.delete(key);
+    this.answered.set(key, { scores, at: now });
+    for (const [k, v] of this.answered) {
+      if (this.answered.size <= REUSE_MAX && now - v.at < REUSE_MS) break;
+      this.answered.delete(k);
+    }
   }
 
   /**

@@ -28,9 +28,9 @@
  */
 
 import type { ToolResult } from "../tools/types.ts";
-import { clip, deletedText, describeElement, quoted } from "./describe.ts";
+import { clip, deletedText, describeElement, quoted, removesSelection } from "./describe.ts";
 import { type Frame, frameFor, inFrame, toImage, toScreen, zoomRegion } from "./geometry.ts";
-import { type Guard, refusalText } from "./guard.ts";
+import { type Check, type Guard, refusalText } from "./guard.ts";
 import { blockedChord, chordMeaning, isSystemCombo, modifierFlags, parseChord } from "./keys.ts";
 import type { ScreenLock } from "./lock.ts";
 import type {
@@ -155,6 +155,12 @@ export class ComputerSession {
   private hold: { before: Set<number>; lastActed: number } | null = null;
   /** Apps this hold launched, by pid, to quit when it ends. */
   private readonly launched = new Map<number, RunningApp>();
+  /**
+   * Untitled windows already open, by pid, when this hold could first act in
+   * their app: at the start of the hold for apps granted then, at the grant
+   * for apps granted later. Apps the hold launched have none. See ownDocument.
+   */
+  private readonly untitledBefore = new Map<number, Set<string>>();
   private installed: InstalledApp[] | null = null;
   private readonly native: Native;
   private readonly policy: Policy;
@@ -202,6 +208,10 @@ export class ComputerSession {
           tier: tierOf(app.bundleId),
         });
       }
+    }
+    if (this.hold) {
+      const running = await this.native.running();
+      await this.noteUntitled(running.filter((a) => this.hold?.before.has(a.pid)));
     }
     const ask = (flag: boolean | undefined) => Boolean(flag);
     this.flags = {
@@ -315,6 +325,7 @@ export class ComputerSession {
       }
     }
     this.launched.clear();
+    this.untitledBefore.clear();
     this.hold = null;
     // Quitting changes the screen, so old coordinates must not be reused.
     this.frame = null;
@@ -634,7 +645,17 @@ export class ComputerSession {
 
   private async key(a: Action): Promise<Step> {
     const repeat = Math.min(Math.max(a.repeat ?? 1, 1), 100);
-    const { chord, focus, front, words } = await this.prepareChord(a);
+    const { chord, focus, front, words, meaning } = await this.prepareChord(a);
+    // Hunter's rule (2026-09-24): removing things from a document Edmund made
+    // this session is his to do. The harness checked whose document it is, so
+    // only the destructive answer is set aside, and only for these keys.
+    const doc = removesSelection(chord, meaning) ? this.ownDocument(focus) : null;
+    const waive: Check["waive"] = doc
+      ? {
+          harms: ["destructive"],
+          because: `"${doc}" is a document Edmund created during this session and has never saved`,
+        }
+      : undefined;
     // Say what a Delete removes: "forward-delete 27 times" is something the
     // safety check can only guess at, the line it deletes is not.
     const deletes = deletedText(chord, focus, repeat);
@@ -649,6 +670,8 @@ export class ComputerSession {
             ? `, which deletes this text: ${quoted(deletes)}`
             : ", which deletes nothing (no text beside the caret)"
       }`,
+      null,
+      waive,
     );
     await this.beforeInput();
     await this.native.chord(chord, { repeat });
@@ -685,7 +708,7 @@ export class ComputerSession {
     const meaning = chordMeaning(chord, front.name);
     if (focus?.secure && meaning === "Paste") throw new Refusal(PASSWORD_FIELD);
     const words = `key chord ${a.text}${meaning ? ` (macOS shortcut: ${meaning})` : ""}${focus ? ` with focus on ${describeElement(focus)}` : ""}`;
-    return { chord, focus, front, words };
+    return { chord, focus, front, words, meaning };
   }
 
   /**
@@ -861,8 +884,41 @@ export class ComputerSession {
     }
     const running = await this.native.running();
     if (this.hold) this.noteLaunched(running);
-    else this.hold = { before: new Set(running.map((a) => a.pid)), lastActed: this.now() };
+    else {
+      this.hold = { before: new Set(running.map((a) => a.pid)), lastActed: this.now() };
+      await this.noteUntitled(running);
+    }
     this.hold.lastActed = this.now();
+  }
+
+  /** Record the untitled windows of these apps, once each, for the granted ones. */
+  private async noteUntitled(running: RunningApp[]): Promise<void> {
+    for (const app of running) {
+      if (!app.regular || !this.isGranted(app.bundleId) || this.untitledBefore.has(app.pid))
+        continue;
+      try {
+        const { windows } = await this.native.inspect(app.bundleId, []);
+        this.untitledBefore.set(app.pid, new Set(windows.map((w) => w.title).filter(isUntitled)));
+      } catch {
+        // Unknown, so no window of this app counts as Edmund's.
+      }
+    }
+  }
+
+  /**
+   * The title of the never-saved document `target` is in, when Edmund made it
+   * during this hold: an untitled window of an app the hold launched, or one
+   * its app did not have when the hold could first act there. Null otherwise.
+   * An app the hold launched that restores someone's unsaved document would
+   * pass; quitting apps at the end of a hold makes that rare.
+   */
+  private ownDocument(target: PointOwner | null): string | null {
+    if (!this.hold || !target) return null;
+    const title = target.window ?? (target.role === "AXWindow" ? target.label : undefined);
+    if (!title || !isUntitled(title)) return null;
+    if (!this.hold.before.has(target.pid)) return title;
+    const before = this.untitledBefore.get(target.pid);
+    return before && !before.has(title) ? title : null;
   }
 
   private noteLaunched(running: RunningApp[]): void {
@@ -925,9 +981,10 @@ export class ComputerSession {
     target: PointOwner | null,
     words: string,
     at: Point | null = null,
+    waive?: Check["waive"],
   ) {
     const facts = await this.gateScope(front, target, at);
-    await this.check(a.action, a.explanation ?? "", front, target, words, facts);
+    await this.check(a.action, a.explanation ?? "", front, target, words, facts, waive);
   }
 
   private async check(
@@ -937,6 +994,7 @@ export class ComputerSession {
     target: PointOwner | null,
     action: string,
     facts: Record<string, string> = {},
+    waive?: Check["waive"],
   ): Promise<void> {
     const verdict = await this.guard.check({
       tool,
@@ -945,6 +1003,7 @@ export class ComputerSession {
       window: target?.window ?? "",
       explanation,
       facts,
+      ...(waive ? { waive } : {}),
     });
     if (!verdict.allowed) throw new Refusal(refusalText(verdict));
   }
@@ -1126,6 +1185,17 @@ export class ComputerSession {
       return { content: [{ type: "text", text: message(err) }], isError: true };
     }
   }
+}
+
+/**
+ * A never-saved document's window title: "Untitled", "Untitled 2",
+ * "Silhouette Studio: Untitled-1", "Untitled — Edited". A saved file that
+ * merely starts with the word ("Untitled Design") is not one.
+ */
+const UNTITLED = /(?:^|:\s)Untitled(?:[- ]\d+)?(?:\s+—\s+Edited)?$/i;
+
+export function isUntitled(title: string): boolean {
+  return UNTITLED.test(title.trim());
 }
 
 function withheldNote(apps: string[]): string {
