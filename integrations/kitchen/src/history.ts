@@ -97,7 +97,9 @@ export function history(events: KitchenEvent[]): History {
   const planStatus = new Map<string, "open" | "done" | "dropped">();
   let lastMeal: string | null = null;
 
+  // An undone "we made it" or "we didn't" leaves the plan open, as in the fold.
   for (const e of events) {
+    if (dropped.has(e.batch)) continue;
     if (e.op === "plan_done" && e.plan_id) planStatus.set(e.plan_id, "done");
     if (e.op === "plan_void" && e.plan_id) planStatus.set(e.plan_id, "dropped");
   }

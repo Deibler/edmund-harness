@@ -35,11 +35,11 @@ import { escapeHtml } from "./util.ts";
 
 import { priceBook } from "./cost.ts";
 import { lastSweep } from "./decay.ts";
-import { readExplore } from "./explore.ts";
+import { exploreShelf } from "./explore.ts";
 import { onTheClock } from "./fit.ts";
 import { lastMade, madeIndex } from "./made.ts";
 import { VIBES, moodFor, readWeather } from "./mood.ts";
-import { METHOD_LABEL, type Recipe, compoundPairs, cookable, loadRecipes } from "./recipes.ts";
+import { METHOD_LABEL, compoundPairs, cookable, menu } from "./recipes.ts";
 import { MEALS, dinnersOf } from "./schedules.ts";
 import { fold, live } from "./store.ts";
 
@@ -154,22 +154,11 @@ const NAV: Array<[string, string, string]> = [
 
 export function renderSite(account: string, acct: Account, assets: Assets = noAssets()): string {
   const items = fold(account);
-  // The shared catalog plus this household's own ideas.
-  const { recipes } = loadRecipes(account);
+  // The catalog, this household's own ideas and its written recipes, minus
+  // the avoid list: everything the page may offer.
+  const all = menu(account);
   const book = loadCookbook(account);
   const prof = loadProfiles(account);
-
-  const extra: Recipe[] = book
-    .filter((b) => !recipes.some((r) => r.id === b.id))
-    .map((b) => ({
-      id: b.id,
-      name: b.name,
-      desc: b.desc,
-      minutes: b.minutes,
-      needs: b.needs,
-      cat: b.cat,
-    }));
-  const all = [...recipes, ...extra];
   const cook = cookable(items, all);
   const pairs = compoundPairs(items, all);
 
@@ -219,7 +208,7 @@ export function renderSite(account: string, acct: Account, assets: Assets = noAs
     skips: activeSkips(prof),
     // Cached weather may be absent; the mood then works from the calendar alone.
     mood: moodFor(acct, readWeather(account)),
-    explore: readExplore(account),
+    explore: exploreShelf(account),
   };
 
   const people = eaters(acct);

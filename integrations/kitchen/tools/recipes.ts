@@ -14,6 +14,7 @@ import {
   saveRecipe,
   variantId,
 } from "../src/cookbook.ts";
+import { writtenAvoids } from "../src/recipes.ts";
 import { slug } from "../src/store.ts";
 import { Acct, text, withAccount } from "./shared.ts";
 
@@ -126,6 +127,19 @@ function stepWarnings(steps: BuiltRecipe["steps"]): string {
   }`;
 }
 
+/**
+ * A written recipe that uses something on the avoid list is saved anyway: it
+ * exists because somebody asked for it, and the avoid list governs what the
+ * kitchen offers, not what a person may ask for. It is never suggested
+ * (`offered`), and the model is told so at the moment it can still rewrite it.
+ */
+function avoidWarning(account: string, r: BuiltRecipe): string {
+  const hit = writtenAvoids(account, r);
+  return hit
+    ? `\n\nAVOIDED: this uses ${hit}, which this household avoids. It is saved and its page works, but it will never be suggested (home page, dinner texts, shopping ideas). If nobody asked for it by name, write it again without ${hit}.`
+    : "";
+}
+
 export function recipeTools(ctx: ToolContext): ToolDef[] {
   return [
     {
@@ -224,7 +238,7 @@ export function recipeTools(ctx: ToolContext): ToolDef[] {
             builtBy: ctx.sessionKey ?? null,
           });
           return text(
-            `Saved "${saved.name}" as ${saved.id}${saved.base ? ` (variant of ${saved.base})` : ""}. Re-render the site to publish it.${stepWarnings(saved.steps)}`,
+            `Saved "${saved.name}" as ${saved.id}${saved.base ? ` (variant of ${saved.base})` : ""}. Re-render the site to publish it.${avoidWarning(id, saved)}${stepWarnings(saved.steps)}`,
           );
         }),
     },

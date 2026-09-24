@@ -126,7 +126,8 @@ export function judgementTools(ctx: ToolContext): ToolDef[] {
         "The explore shelf: dishes deliberately unlike anything this house cooks, written " +
         "by you. `brief` returns everything they already cook (the list to get away from), " +
         "everything they own (so the shopping line is honest) and any theme they typed; " +
-        "write eight and `save`. Saving drops repeats of known dishes, moves owned " +
+        "write eight and `save`. Saving drops repeats of known dishes and anything on the " +
+        "avoid list, moves owned " +
         "ingredients from buy to have, publishes the set, re-renders the page and marks " +
         "the explore taps that asked for it served.",
       inputSchema: z.object({
@@ -150,7 +151,7 @@ export function judgementTools(ctx: ToolContext): ToolDef[] {
           if (!a.dishes?.length) return text("Nothing to save.", true);
           if (a.key && !isWaiting(id, "explore", a.key))
             return text(`No explore request is waiting with key ${a.key}.`, true);
-          const { set, dropped } = saveExplore(id, a.dishes, a.theme);
+          const { set, dropped, avoided } = saveExplore(id, a.dishes, a.theme);
           if (a.key) markHandled(id, [a.key]);
           const render = rerender(id);
           return text(
@@ -158,6 +159,9 @@ export function judgementTools(ctx: ToolContext): ToolDef[] {
               `Published ${set.dishes.length}${set.theme ? ` for "${set.theme}"` : ""}: ${set.dishes.map((d) => d.name).join(", ")}.`,
               dropped.length
                 ? `Dropped as repeats of what they already cook: ${dropped.join(", ")}.`
+                : "",
+              avoided.length
+                ? `Dropped for using something this household avoids: ${avoided.join(", ")}.`
                 : "",
               a.key ? "Marked that explore tap served." : "",
               render ?? "",

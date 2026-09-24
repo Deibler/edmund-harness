@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { openrouterKey } from "./openrouter.ts";
-import { type Recipe, cookable, loadRecipes } from "./recipes.ts";
+import { type Recipe, cookable, loadRecipes, offered } from "./recipes.ts";
 import { live } from "./store.ts";
 
 const PHOTO_STYLE =
@@ -66,7 +66,8 @@ export async function photographMissing(
   const log = opts.log ?? (() => {});
   const shoot = opts.shoot ?? makePhoto;
   const stock = Object.fromEntries(live(account).map((i) => [i.id, i]));
-  const ranked = cookable(stock, loadRecipes(account).recipes).sort(
+  // Only dishes the page can show; an avoided one would be a picture nobody sees.
+  const ranked = cookable(stock, offered(account, loadRecipes(account).recipes)).sort(
     (a, b) => Number(b.ready) - Number(a.ready) || a.missing.length - b.missing.length,
   );
   const want = ranked.filter((c) => !existsSync(photoPath(dir, c.recipe.id)));

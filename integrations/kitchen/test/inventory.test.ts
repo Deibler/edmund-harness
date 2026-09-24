@@ -50,7 +50,7 @@ const followups = await import("../src/followups.ts");
 const { morningReview } = await import("../src/review.ts");
 const { shopping } = await import("../src/shopping.ts");
 const { noteLines } = await import("../src/notelist.ts");
-const { loadRecipes } = await import("../src/recipes.ts");
+const { menu } = await import("../src/recipes.ts");
 const { saveIdeas } = await import("../src/ideas.ts");
 const { followupText } = await import("../src/wake.ts");
 const { append, fold, readLog } = await import("../src/store.ts");
@@ -146,6 +146,33 @@ describe("history", () => {
     ]);
     expect(h.items.get("eggs")?.lastSeen).toBe(ago(5));
   });
+  test("an undone 'we made it' or 'we didn't' leaves the meal unconfirmed", () => {
+    const plan = (id: string, meal: string) => ({
+      ts: ago(3),
+      batch: `plan-${id}`,
+      op: "plan" as const,
+      item: null,
+      plan: {
+        id,
+        meal,
+        lines: [{ item: "tortillas", name: "Tortillas", qty: null }],
+        created: ago(3),
+      },
+    });
+    const h = history([
+      { ts: ago(5), batch: "buy", op: "add", item: "tortillas", src: "receipt:shop-2026-09-18" },
+      plan("p1", "Tacos"),
+      plan("p2", "Quesadillas"),
+      { ts: ago(2), batch: "made", op: "plan_done", item: null, plan_id: "p1" },
+      { ts: ago(2), batch: "void", op: "plan_void", item: null, plan_id: "p2" },
+      { ts: ago(1), batch: "u1", op: "undo", batch_target: "made" },
+      { ts: ago(1), batch: "u2", op: "undo", batch_target: "void" },
+    ]);
+    expect(h.items.get("tortillas")?.plannedSinceBought).toEqual([
+      { meal: "Tacos", at: ago(3), status: "open" },
+      { meal: "Quesadillas", at: ago(3), status: "open" },
+    ]);
+  });
 });
 
 /* ── evidence ─────────────────────────────────────────────────────────────── */
@@ -233,6 +260,13 @@ describe("verdicts", () => {
 describe("follow-ups", () => {
   const A = "fu";
   buy(A, { id: "rice", name: "Rice", cat: "pantry", loc: "pantry" }, 10);
+  // Bought on two trips, so the house keeps it and an assumed run-out is listed.
+  buy(
+    A,
+    { id: "cilantro", name: "Cilantro", cat: "produce", loc: "fridge" },
+    30,
+    "receipt:shop-2026-08-24",
+  );
   buy(A, { id: "cilantro", name: "Cilantro", cat: "produce", loc: "fridge" }, 10);
   buy(A, { id: "limes", name: "Limes", cat: "produce", loc: "fridge" }, 10);
   append(A, [
@@ -408,7 +442,7 @@ describe("the avoid list is a filter", () => {
         ],
       }),
     );
-    expect(loadRecipes(A).recipes.map((r) => r.id)).not.toContain("marinara");
+    expect(menu(A).map((r) => r.id)).not.toContain("marinara");
   });
   test("saving ideas refuses avoided food and deli-anchored dinners, and allows basics", () => {
     const res = saveIdeas(A, [

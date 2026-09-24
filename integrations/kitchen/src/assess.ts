@@ -32,6 +32,38 @@ export type AssessResult = {
   batch: string | null;
 };
 
+/**
+ * The write for a person saying something is here after all, or null when the
+ * ledger already agrees (present, not low, not counted short of `qty`).
+ *
+ * It clears whatever made the kitchen think otherwise, out or low, assumed or
+ * not, so the item leaves the list. Nothing arrived, so it is never a purchase:
+ * the caller's `src` must not be a trip source. The chat verdict, the site's
+ * "I already have this" and a tick under "Assumed to be low/out:" all come
+ * through here, so they cannot disagree.
+ */
+export function stillHere(
+  it: Item,
+  opts: { why: string; src: string; qty?: number | null },
+): Partial<KitchenEvent> | null {
+  const { why, src } = opts;
+  const want = opts.qty ?? null;
+  // Finished, so only an add brings it back; with no count it is uncounted,
+  // never an invented number.
+  if (it.gone) return { op: "add", item: it.id, qty: want, fields: {}, why, src };
+  const short = want !== null && typeof it.qty === "number" && it.qty < want;
+  const low = it.level === "low" || it.level === "out";
+  if (!short && !low) return null;
+  return {
+    op: "set",
+    item: it.id,
+    ...(short ? { qty: want } : {}),
+    fields: low ? { level: "full" } : {},
+    why,
+    src,
+  };
+}
+
 function resolve(items: Record<string, Item>, said: string): Item | string {
   const m = match(said, items);
   const hits = m.exact;
@@ -79,13 +111,8 @@ export function applyVerdicts(
       continue;
     }
     if (v.verdict === "here") {
-      // A restock when the ledger thought it was out; otherwise a look that
-      // refreshes when it was last seen.
-      writes.push(
-        it.gone
-          ? { op: "add", item: it.id, qty: null, why, src }
-          : { op: "set", item: it.id, why, src },
-      );
+      // Back from out or low, or else a look that refreshes when it was last seen.
+      writes.push(stillHere(it, { why, src }) ?? { op: "set", item: it.id, why, src });
       out.said.push(`${it.name}: still here`);
     } else if (v.verdict === "low") {
       writes.push({ op: "set", item: it.id, fields: { level: "low" }, why, src });

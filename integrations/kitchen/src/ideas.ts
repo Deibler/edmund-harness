@@ -13,10 +13,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { eaters, getAccount } from "./accounts.ts";
 import { type Evidence, evidence } from "./evidence.ts";
-import { avoidedBy, isConvenience } from "./foods.ts";
+import { PANTRY_BASICS, avoidedBy, isConvenience, isPantryBasic, onHand } from "./foods.ts";
 import { meals } from "./insights.ts";
 import { METHOD_LABEL, type Recipe, loadRecipes, overlayPath } from "./recipes.ts";
-import { live } from "./store.ts";
+import { fold, live } from "./store.ts";
 import type { Account, Item } from "./types.ts";
 
 export const IDEAS_TARGET = 10;
@@ -46,6 +46,9 @@ export function writeOverlay(account: string, o: Overlay): void {
 /**
  * Drop ideas built on food that is gone, or unmade for `IDEA_MAX_AGE_DAYS`, and
  * say how many more the page could use.
+ *
+ * A pantry basic never retires a dish, tracked or not: running out of salt is a
+ * line on the shopping list, not a reason to forget every salted dinner.
  */
 export function pruneIdeas(
   account: string,
@@ -56,7 +59,9 @@ export function pruneIdeas(
   const cutoff = now - IDEA_MAX_AGE_DAYS * 86_400_000;
   const dropped: Array<{ id: string; why: string }> = [];
   const kept = readOverlay(account).recipes.filter((r) => {
-    const missing = r.needs.filter(([s]) => !s.startsWith("leftover-") && !have.has(s));
+    const missing = r.needs.filter(
+      ([s]) => !s.startsWith("leftover-") && !isPantryBasic(s) && !have.has(s),
+    );
     if (missing.length) {
       dropped.push({ id: r.id, why: `no longer have ${missing.map(([s]) => s).join(", ")}` });
       return false;
@@ -71,24 +76,6 @@ export function pruneIdeas(
   return { kept, dropped, want: Math.max(0, IDEAS_TARGET - kept.length) };
 }
 
-/**
- * Pantry basics a recipe may name without the ledger tracking them, so dishes
- * are not rejected for being seasoned.
- */
-export const BASICS = new Set([
-  "salt",
-  "black-pepper",
-  "pepper",
-  "water",
-  "cooking-oil",
-  "olive-oil",
-  "vegetable-oil",
-  "all-purpose-flour",
-  "flour",
-  "sugar",
-  "granulated-sugar",
-]);
-
 /** How many recent meals the brief lists, so new ideas vary from them. */
 const RECENT_MEALS = 10;
 
@@ -102,6 +89,10 @@ const RECENT_MEALS = 10;
  */
 export function ideasBrief(account: string, acct: Account, want: number): string {
   const ev = evidence(account).filter((e) => e.estimate !== "doubtful");
+  // The same test cooking uses, so the brief never promises a basic the ledger
+  // says has run out.
+  const stock = fold(account);
+  const basics = [...PANTRY_BASICS].filter((s) => onHand(stock, s));
   const mains = ev.filter((e) => !isConvenience(e.item));
   const convenience = ev.filter((e) => isConvenience(e.item));
   const slugList = (xs: Evidence[]) =>
@@ -134,7 +125,7 @@ export function ideasBrief(account: string, acct: Account, want: number): string
     slugList(mains),
     "",
     `Lunch and snack food. Never the centre of a dinner: ${slugList(convenience)}`,
-    `Always available without tracking: ${[...BASICS].join(", ")}.`,
+    basics.length ? `Always available without tracking: ${basics.join(", ")}.` : "",
     "",
     perishable.length ? `Worth using soon: ${perishable.join(", ")}.` : "",
     recent.length
@@ -198,7 +189,10 @@ export function saveIdeas(
     const unknown = r.needs
       .filter(
         ([s]) =>
-          !(typeof s === "string" && (have.has(s) || BASICS.has(s) || s.startsWith("leftover-"))),
+          !(
+            typeof s === "string" &&
+            (have.has(s) || isPantryBasic(s) || s.startsWith("leftover-"))
+          ),
       )
       .map(([s]) => String(s));
     if (unknown.length) {

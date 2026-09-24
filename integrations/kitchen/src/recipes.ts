@@ -10,7 +10,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { accountDir, getAccount } from "./accounts.ts";
-import { avoidedBy } from "./foods.ts";
+import { type BuiltRecipe, loadCookbook } from "./cookbook.ts";
+import { avoidedBy, onHand } from "./foods.ts";
 import type { Item } from "./types.ts";
 
 export type Recipe = {
@@ -138,7 +139,12 @@ export function overlayPath(account: string): string {
 
 /**
  * The shared catalog plus, for a household, its own overlay (which wins on an id
- * collision), minus anything on its avoid list.
+ * collision).
+ *
+ * Every dish, avoided or not: this is also how a dish is looked up (its
+ * leftovers, what "we made it" takes off the shelves), and a dish somebody
+ * cooked has to be found whatever the avoid list says. Anything that offers or
+ * ranks dishes goes through `menu` or `offered` instead.
  */
 export function loadRecipes(account?: string): { recipes: Recipe[]; seed: CookedSeed[] } {
   const p = catalogPath();
@@ -155,23 +161,71 @@ export function loadRecipes(account?: string): { recipes: Recipe[]; seed: Cooked
   }
   if (!account) return { recipes, seed };
 
-  // The avoid list is a hard filter on every path that offers a dish.
-  const avoid = getAccount(account)?.diet?.avoid;
-  const allowed = (r: Recipe) => !avoidedBy(avoid, r);
-
   const op = overlayPath(account);
-  if (!existsSync(op)) return { recipes: recipes.filter(allowed), seed };
+  if (!existsSync(op)) return { recipes, seed };
   try {
     const raw = JSON.parse(readFileSync(op, "utf8")) as { recipes?: Recipe[] };
     const own = raw.recipes ?? [];
     const mine = new Set(own.map((r) => r.id));
-    return {
-      recipes: [...recipes.filter((r) => !mine.has(r.id)), ...own].filter(allowed),
-      seed,
-    };
+    return { recipes: [...recipes.filter((r) => !mine.has(r.id)), ...own], seed };
   } catch {
-    return { recipes: recipes.filter(allowed), seed };
+    return { recipes, seed };
   }
+}
+
+/** A written recipe as the avoid list reads it: its needs and every ingredient line. */
+const writtenDish = (b: BuiltRecipe) => ({
+  name: b.name,
+  needs: b.needs,
+  also: b.ingredients.flatMap((i) => [i.name, ...(i.item ? [i.item] : [])]),
+});
+
+/**
+ * The avoid term a written recipe hits, if any. Checked on save so the model
+ * hears about it, and by `offered` so the dish is never suggested.
+ */
+export function writtenAvoids(account: string, b: BuiltRecipe): string | null {
+  return avoidedBy(getAccount(account)?.diet?.avoid, writtenDish(b));
+}
+
+/**
+ * The dishes a household may be offered, from any list of them: everything
+ * minus the avoid list. A catalog card is also judged by the written recipe
+ * that shares its id, because offering the card sends that page.
+ *
+ * The one filter for every path that suggests or ranks a dish.
+ */
+export function offered<R extends Recipe>(account: string, recipes: R[]): R[] {
+  const avoid = getAccount(account)?.diet?.avoid;
+  if (!avoid?.length) return recipes;
+  const written = new Map(loadCookbook(account).map((b) => [b.id, b]));
+  return recipes.filter((r) => {
+    if (avoidedBy(avoid, r)) return false;
+    const w = written.get(r.id);
+    return !(w && avoidedBy(avoid, writtenDish(w)));
+  });
+}
+
+/**
+ * Everything the household could be offered: the catalog, its own ideas, and
+ * every recipe written for it that the catalog lacks, minus the avoid list.
+ * What the home page and the dinner text rank.
+ */
+export function menu(account: string): Recipe[] {
+  const { recipes } = loadRecipes(account);
+  const have = new Set(recipes.map((r) => r.id));
+  // Written recipes count as choices even when the catalog lacks them.
+  const extra: Recipe[] = loadCookbook(account)
+    .filter((b) => !have.has(b.id))
+    .map((b) => ({
+      id: b.id,
+      name: b.name,
+      desc: b.desc,
+      minutes: b.minutes,
+      needs: b.needs,
+      cat: b.cat,
+    }));
+  return offered(account, [...recipes, ...extra]);
 }
 
 export type Need = {
@@ -196,14 +250,16 @@ export type Cookable = {
  * Presence decides and quantity only advises. A recipe's want is a bare number
  * ("4" thighs) while the shelf holds "1 pkg"; the units cannot be reconciled, so
  * a shortfall is reported as "short" for the cook and never makes a dish
- * unready. A level-tracked staple (qty null) is available unless marked out.
+ * unready. A level-tracked staple (qty null) is available unless marked out,
+ * and an untracked pantry basic is available (`onHand`).
  */
 export function cookable(items: Record<string, Item>, recipes: Recipe[]): Cookable[] {
   const scored = recipes.map((r) => {
     const needs: Need[] = r.needs.map(([id, want]) => {
       const it = items[id];
       const name = it?.name ?? id.replace(/-/g, " ");
-      if (!it || it.gone) return { id, name, want, state: "out" as const };
+      if (!onHand(items, id)) return { id, name, want, state: "out" as const };
+      if (!it) return { id, name, want, state: "have" as const };
       const short = want !== null && typeof it.qty === "number" && it.qty < want;
       return { id, name, want, state: short ? ("short" as const) : ("have" as const) };
     });

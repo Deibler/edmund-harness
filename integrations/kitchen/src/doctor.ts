@@ -19,7 +19,7 @@ import { loadCookbook } from "./cookbook.ts";
 import { siteStatus } from "./host.ts";
 import { readList } from "./list.ts";
 import { readWeather } from "./mood.ts";
-import { cookable, loadRecipes } from "./recipes.ts";
+import { cookable, loadRecipes, offered } from "./recipes.ts";
 import { dinnersOf, nextFire, recipients } from "./schedules.ts";
 import { corruptLines, fold, live, readLog } from "./store.ts";
 
@@ -142,7 +142,8 @@ export function checkAccount(id: string): Report {
 
   /* ── what it can suggest ─────────────────────────────────────────────── */
 
-  const { recipes } = loadRecipes(id);
+  // What it can offer, so the counts match the page.
+  const recipes = offered(id, loadRecipes(id).recipes);
   const book = loadCookbook(id);
   const ready = cookable(fold(id), recipes).filter((c) => c.ready).length;
   if (!recipes.length) {
