@@ -736,7 +736,7 @@ export class ComputerSession {
   private async key(a: Action): Promise<Step> {
     const repeat = Math.min(Math.max(a.repeat ?? 1, 1), 100);
     const { chord, focus, front, words, meaning } = await this.prepareChord(a);
-    // Hunter's rule (2026-09-24): removing things from a document Edmund made
+    // The operator's rule (2026-09-24): removing things from a document Edmund made
     // this session is his to do. The harness checked whose document it is, so
     // only the destructive answer is set aside, and only for these keys.
     const doc = removesSelection(chord, meaning) ? this.ownDocument(focus) : null;
