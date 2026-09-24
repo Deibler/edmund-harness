@@ -374,12 +374,14 @@ from on their phones. **Only you write it, on screen, with the computer tools**
 in the Notes app on this Mac. No tool and no background job touches a note.
 
 - **When.** After you change a household's list in a turn, bring its note up
-  to date in the same turn if you can, then `kitchen_shopping noteWritten:true`.
-  If you don't, the watch pass wakes that household's session once the list
-  has held still for two minutes, with the lines the note should have, and you
-  do it then, quietly. The site's Apple Notes button asks for that wake at
-  once. A chat with no screen tools for Notes is never woken (while computer
-  use only shadows, that is every chat but the owner's), so those notes wait.
+  to date in the same turn if you can, then `kitchen_shopping noteWritten:true`
+  with its `noteVersion`. If you don't, the watch pass wakes that household's
+  session once the list has held still for two minutes, with the lines the
+  note should have, and you do it then, quietly. The site's Apple Notes button
+  asks for that wake at once, even when the list's own wakes have run out. A
+  chat with no screen tools for Notes is never woken (while computer use only
+  shadows, that is every chat but the owner's), and nobody is woken while the
+  Mac is locked; those notes wait and are woken for once they can be done.
 - **Which note.** The one named in `note_list` (set once with
   `kitchen_shopping noteTitle`), else "<household> list". The first
   `noteWritten:true` pins that title, so naming somebody later never renames
@@ -392,8 +394,15 @@ in the Notes app on this Mac. No tool and no background job touches a note.
   the household's own. Never rewrite it, but anything new there is an item
   somebody wants: put it on the list with `kitchen_shopping add` (`by` whoever
   wrote it, when you can tell), then delete it from below the line.
-- **Change only the lines that differ.** Delete lines that left the list, add
-  new ones as unticked checklist lines (Format > Checklist), and leave the
+- **Delete only your own lines.** The wake and `kitchen_shopping` name the
+  lines you wrote last time that have since left the list; those are the only
+  lines above the sentinel you may delete, and the screen check refuses any
+  other. A line up there you were not given is the household's, even one
+  typed between your lines or one of yours they reworded: put it on the list
+  with `kitchen_shopping add`, name exactly as written, and leave it where it
+  is. When nothing records which lines are yours yet, delete none of them.
+- **Change only the lines that differ.** Delete your lines that left the list,
+  add new ones as unticked checklist lines (Format > Checklist), and leave the
   rest alone. Never select all and paste the list: a phone that has edited
   the note can bring deleted lines back, so a whole-note paste leaves stacked
   copies of the list on somebody's phone.
@@ -401,8 +410,11 @@ in the Notes app on this Mac. No tool and no background job touches a note.
   while it stays on the list. A tick never means the food is owned; the
   receipt decides that.
 - **Check before you say so.** Take a screenshot after editing, and call
-  `noteWritten:true` only once the note reads right. If Notes will not
-  cooperate, leave it: the note stays marked as behind.
+  `noteWritten:true noteVersion:"<v>"` only once the note reads right, with
+  the version printed next to the lines you worked from. That records those
+  lines as yours. Without a version nothing is recorded. If the list changed
+  while you worked, the note stays behind and you are woken for the rest. If
+  Notes will not cooperate, leave it: the note stays marked as behind.
 - **Sharing.** To put somebody on the note, use Share > Collaborate in Notes,
   which sends the invite through Messages. The screen tools only act in the
   conversation you are in, so you can invite the person you are talking to

@@ -9,7 +9,7 @@ import type { ToolDef } from "../../../src/mcp/tools/types.ts";
 import { getAccount, updateAccount } from "../src/accounts.ts";
 import { STORES, bestBasket, bestDeals, importPrices, loadPrices } from "../src/deals.ts";
 import { addToList } from "../src/list.ts";
-import { markNoteWritten, noteBehind, noteLines, noteText, noteTitle } from "../src/notelist.ts";
+import { briefText, markNoteWritten, noteBehind, noteTitle, showNote } from "../src/notelist.ts";
 import { markHandled } from "../src/requests.ts";
 import { setDisposition, skip } from "../src/restock.ts";
 import { priceMaxAgeDays } from "../src/settings.ts";
@@ -33,7 +33,7 @@ export function shoppingTools(ctx: ToolContext): ToolDef[] {
         "(what a dish needs from a supermarket is your call, after kitchen_status: real " +
         "products, nothing the house already owns, staples assumed). The household's shared " +
         "Apple Note is not written by any tool: bring it up to date on screen in Notes with " +
-        "the computer tools, then set `noteWritten`.",
+        "the computer tools, then set `noteWritten` with the `noteVersion` you worked from.",
       inputSchema: z.object({
         account: Acct,
         add: z
@@ -84,8 +84,16 @@ export function shoppingTools(ctx: ToolContext): ToolDef[] {
           .optional()
           .describe(
             "Set once you have made the household's Apple Note match the list on screen and " +
-              "checked it with a screenshot. Records the list as written, which is what stops " +
-              "the kitchen waking you to do it.",
+              "checked it with a screenshot. Needs noteVersion. Records the lines you wrote as " +
+              "yours, which is what stops the kitchen waking you to do it.",
+          ),
+        noteVersion: z
+          .string()
+          .optional()
+          .describe(
+            "With noteWritten: the version printed with the lines you worked from (in the " +
+              "wake-up or a kitchen_shopping reply), so the kitchen records what you wrote, " +
+              "not the list as it is by the time you finish.",
           ),
         noteTitle: z
           .string()
@@ -96,7 +104,7 @@ export function shoppingTools(ctx: ToolContext): ToolDef[] {
               "which note is this household's.",
           ),
       }),
-      handler: async ({ account, add, key, answer, noteWritten, noteTitle: wanted }) =>
+      handler: async ({ account, add, key, answer, noteWritten, noteVersion, noteTitle: wanted }) =>
         withAccount(ctx, account, async (id) => {
           const said: string[] = [];
           if (key && !isWaiting(id, "addlist", key))
@@ -154,13 +162,22 @@ export function shoppingTools(ctx: ToolContext): ToolDef[] {
               }.`,
             );
           }
-          if (noteWritten) {
-            markNoteWritten(id);
-            said.push(`Recorded: "${noteTitle(id)}" matches the list.`);
-          } else if (noteBehind(id)) {
+          // Without a version the kitchen cannot know which lines were written,
+          // so nothing is recorded: the note stays behind and a wake follows.
+          const written = noteWritten && noteVersion ? markNoteWritten(id, noteVersion) : null;
+          if (noteWritten && !written?.ok) {
             said.push(
-              `The shared note "${noteTitle(id)}" is behind the list. Bring it up to date on screen (Notes, only the lines that differ, ticks left alone), then call again with noteWritten:true. Left alone, you are woken to do it once the list settles. Above the sentinel line it should read:\n${noteText(noteLines(id))}`,
+              `Nothing recorded for the note: ${written && !written.ok ? written.why : "noteWritten needs the noteVersion you worked from"}. If "${noteTitle(id)}" now reads exactly as below, call again with noteWritten:true and this version; otherwise bring it up to date first.\n${briefText(showNote(id))}`,
             );
+          } else {
+            if (written?.ok)
+              said.push(
+                `Recorded: "${noteTitle(id)}" matches version ${written.version}${written.current ? ", the list as it stands" : ""}.`,
+              );
+            if (noteBehind(id))
+              said.push(
+                `The shared note "${noteTitle(id)}" is behind the list${written?.ok ? " again: it changed while you worked" : ""}. Bring it up to date on screen (Notes, only the lines that differ, ticks left alone), then call again with noteWritten:true and the version below. Left alone, you are woken to do it once the list settles.\n${briefText(showNote(id))}`,
+              );
           }
 
           const s = shopping(id);

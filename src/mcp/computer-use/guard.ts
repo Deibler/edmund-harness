@@ -57,7 +57,7 @@ export const HARMS = {
   },
   destructive: {
     question:
-      "Would this action permanently destroy data, empty the Trash, or delete something the requester did not explicitly ask to delete? Editing text the requester asked to change is not destructive. When turn_started_by gives the lines a note should read, deleting a line above its sentinel that is not one of those lines is the edit it asks for, not destruction.",
+      'Would this action permanently destroy data, empty the Trash, or delete something the requester did not explicitly ask to delete? Editing text the requester asked to change is not destructive. When turn_started_by lists lines under "Your own lines from the last time you wrote this note, now off the list", deleting one of those listed lines is the edit it asks for, not destruction. Deleting any other line above that note\'s sentinel is destruction: somebody in the household wrote it.',
     refusal: "it would delete or destroy data nobody asked to delete",
   },
   money: {
