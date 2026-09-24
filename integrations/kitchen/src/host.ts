@@ -75,12 +75,15 @@ export function publish(id: string, origin: string): Published {
   const url = `${origin.replace(/\/+$/, "")}/?key=${key}`;
   const previous = acct.site?.url && acct.site.url !== url ? acct.site.url : null;
   updateAccount(id, { site: { artifact, key, port, url } } as Partial<Account>);
-  ensureManifest(artifact, id);
+  ensureManifest(artifact, id, url);
   return { url, key, port, previous };
 }
 
-/** The share server names its artifact from this file; give it one if missing. */
-function ensureManifest(artifact: string, id: string): void {
+/**
+ * The share server names its artifact from this file, and scripts that send
+ * a site's link read `public_url` from it, so it must not keep a dead one.
+ */
+function ensureManifest(artifact: string, id: string, url: string): void {
   const path = join(artifact, "artifact.json");
   let manifest: Record<string, unknown> = {};
   try {
@@ -88,9 +91,10 @@ function ensureManifest(artifact: string, id: string): void {
   } catch {
     // Missing or unreadable: write a fresh one.
   }
-  if (manifest.artifact_id) return;
-  manifest.artifact_id = `kitchen-${id}`;
+  if (manifest.artifact_id && manifest.public_url === url) return;
+  manifest.artifact_id ??= `kitchen-${id}`;
   manifest.name ??= `${id} kitchen`;
+  manifest.public_url = url;
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 

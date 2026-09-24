@@ -65,7 +65,7 @@ test("publishing keeps a household's key and port, and takes the lowest free por
   expect(again).toMatchObject({ key: b.key, port: b.port, previous: null });
   expect(
     JSON.parse(readFileSync(join(getAccount("b")!.site!.artifact!, "artifact.json"), "utf8")),
-  ).toMatchObject({ artifact_id: "kitchen-b" });
+  ).toMatchObject({ artifact_id: "kitchen-b", public_url: b.url });
 
   expect(
     hosted()
