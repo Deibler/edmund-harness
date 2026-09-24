@@ -29,7 +29,9 @@ const OWNER = "imessage:dm:+15550100001";
 const PARTNER = "imessage:dm:+15550100002";
 const GROUP = "imessage:group:any;+;0000000000000000000000000000beef";
 
-const { createAccount, getAccount, updateAccount } = await import("../src/accounts.ts");
+const { createAccount, getAccount, joinAccount, updateAccount } = await import(
+  "../src/accounts.ts"
+);
 const { addToList, removeFromList } = await import("../src/list.ts");
 const notes = await import("../src/notelist.ts");
 const { MAX_ATTEMPTS, wakeForNote } = await import("../src/wake.ts");
@@ -119,6 +121,18 @@ describe("when Edmund is woken for it", () => {
     expect(notes.noteDue(id, T + 10 * notes.SETTLE_MS).due).toBe(false);
     add(id, "Cilantro");
     expect(notes.noteBehind(id)).toBe(true);
+  });
+
+  test("a confirmed note keeps its title when somebody in the household is named", () => {
+    const id = household();
+    updateAccount(id, { people: { [members.get(id)!]: "Sam" } });
+    notes.markNoteWritten(id, T);
+    expect(notes.noteTitle(id)).toBe("Sam's Kitchen list");
+    const partner = "imessage:dm:+15550309999";
+    joinAccount(id, partner);
+    updateAccount(id, { people: { [members.get(id)!]: "Sam", [partner]: "Alex" } });
+    expect(notes.noteTitle(id)).toBe("Sam's Kitchen list");
+    expect(notes.noteBehind(id)).toBe(false);
   });
 
   test("the site's Apple Notes button makes it due at once, without the wait", () => {
