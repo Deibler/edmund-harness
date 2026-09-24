@@ -20,7 +20,9 @@ import type { ScreenScopeFn } from "../../integrations/contracts.ts";
 import { integrationExport } from "../../integrations/optional.ts";
 import { AddressBook } from "../../sessions/address-book.ts";
 import { ContactBook } from "../../sessions/contacts.ts";
-import type { InspectedWindow, Inspection, Rect } from "./native.ts";
+import { log } from "../../util/log.ts";
+import { parseChord } from "./keys.ts";
+import type { Chord, InspectedWindow, Inspection, Rect } from "./native.ts";
 
 export const MESSAGES = "com.apple.MobileSMS";
 export const NOTES = "com.apple.Notes";
@@ -42,6 +44,13 @@ export type Scope = {
   requester: string;
   /** The conversation this session is, or null for one with no chat (a cron turn). */
   conversation: Conversation | null;
+  /**
+   * Every title another conversation in chat.db can be shown under, as
+   * `titleKeys` spells them (see `otherTitles`). A title one of them could
+   * have does not identify this conversation. Null when chat.db could not be
+   * read, and then no title does.
+   */
+  otherTitles: ReadonlySet<string> | null;
   /** Shared notes this session's household owns: its grocery list. */
   ownNotes: string[];
   /** Every other household's list. Never edited from this session. */
@@ -59,37 +68,164 @@ export function describeConversation(c: Conversation | null): string {
   return c.name ? `the group chat "${c.name}" (members: ${who})` : `the group chat with ${who}`;
 }
 
+/** A number as Messages shows it when there is no card: "+1 (555) 555-0100". */
+const PHONE = /^\+?[\d\s().-]+$/;
+
 /**
- * Whether a Messages title is this conversation. A DM is titled with the
- * contact's name, or the number when there is no card; an unnamed group with
- * its members' first names, "Alex, Sam & Morgan".
+ * How Messages titles a conversation. A DM: the contact's name, or the
+ * number or address when there is no card. A named group: its name. An
+ * unnamed group: its members' first names, "Alex, Sam & Morgan", which two
+ * different groups can share. Each way is a key, so a title can be looked up
+ * against this conversation and against every other one (`titleKeys`).
  */
-export function isConversation(c: Conversation | null, title: string): boolean {
-  if (!c) return false;
-  const t = norm(title);
-  if (!t) return false;
+export function conversationKeys(c: Conversation): string[] {
   if (c.kind === "dm") {
-    if (norm(c.name) === t) return true;
     const d = digits(c.handle);
-    return d.length >= 7 && digits(title) === d;
+    return [
+      `title:${norm(c.name)}`,
+      ...(!c.handle.includes("@") && d.length >= 7 ? [`number:${d}`] : []),
+    ];
   }
-  if (c.name && norm(c.name) === t) return true;
-  const tokens = t.split(/\s*,\s*|\s+&\s+/).filter(Boolean);
-  const firsts = new Set(c.members.map((m) => norm(m).split(" ")[0]!));
-  return tokens.length === firsts.size && tokens.every((x) => firsts.has(x));
+  if (c.name) return [`title:${norm(c.name)}`];
+  return [`members:${c.members.map(memberKey).sort().join("|")}`];
+}
+
+/** Every conversation a title shown in Messages could be, as keys. */
+export function titleKeys(title: string): string[] {
+  const t = norm(title);
+  if (!t) return [];
+  const keys = [`title:${t}`];
+  if (PHONE.test(t) && digits(t).length >= 7) keys.push(`number:${digits(t)}`);
+  const members = titleMembers(t);
+  if (members) keys.push(`members:${members.sort().join("|")}`);
+  return keys;
+}
+
+/** A member as an unnamed group's title shows them: first name, else number or address. */
+function memberKey(name: string): string {
+  const t = norm(name);
+  return PHONE.test(t) && digits(t).length >= 7 ? `#${digits(t)}` : t.split(" ")[0]!;
 }
 
 /**
- * Whether a sidebar row is this conversation's. A row reads "title, preview",
- * and a group's title has commas of its own, so every comma is tried as the
- * end of the title.
+ * The members an unnamed group's title lists, or null when the text cannot
+ * be one: "Alex", "Alex & Sam", "Alex, Sam & Morgan", each a name, a number
+ * or an address. "Alex, Sam" (no "&") is not one, nor "Mac & cheese tonight?".
  */
-export function isConversationRow(c: Conversation | null, row: string): boolean {
-  const parts = row.split(",");
-  for (let i = 1; i <= parts.length; i++) {
-    if (isConversation(c, parts.slice(0, i).join(","))) return true;
+function titleMembers(t: string): string[] | null {
+  const parts = t.split(/\s*,\s*/);
+  const last = parts.pop()!.split(/\s+&\s+/);
+  if (last.length > 2 || (last.length === 1 && parts.length > 0)) return null;
+  const names: string[] = [];
+  for (const part of [...parts, ...last]) {
+    if (PHONE.test(part)) {
+      if (digits(part).length < 7) return null;
+      names.push(`#${digits(part)}`);
+    } else if (
+      part &&
+      part !== "unread" &&
+      !/[?!:;"“”()&,]/.test(part) &&
+      part.split(" ").length <= 3
+    ) {
+      names.push(part);
+    } else {
+      return null;
+    }
   }
-  return false;
+  return names;
+}
+
+/** The parts of a scope that say which conversation is this one. */
+type ConversationScope = Pick<Scope, "conversation" | "otherTitles">;
+
+/**
+ * Whose a Messages title is: this conversation's ("own"), one another
+ * conversation could have too ("shared"), or not this one's ("other"). Two
+ * unnamed groups with an Alex and a Sam are both "Alex & Sam", so that title
+ * identifies neither, and a shared title counts as someone else's.
+ */
+export function whoseTitle(scope: ConversationScope, title: string): "own" | "shared" | "other" {
+  if (!scope.conversation) return "other";
+  const keys = titleKeys(title);
+  const own = conversationKeys(scope.conversation);
+  if (!keys.some((k) => own.includes(k))) return "other";
+  const others = scope.otherTitles;
+  return !others || keys.some((k) => others.has(k)) ? "shared" : "own";
+}
+
+/** Whether a Messages title is this conversation's and no other's. */
+export function isConversation(scope: ConversationScope, title: string): boolean {
+  return whoseTitle(scope, title) === "own";
+}
+
+/**
+ * Whether a sidebar row is this conversation's. A row reads "title,
+ * preview", and a group's title has commas of its own, so every comma is
+ * tried as the end of the title. The row is this conversation's only when
+ * that is the one way to read it: a DM with Sam reads "Sam, see you at 6",
+ * but so does the group "Sam, Alex & Jordan" with the preview "see you at 6"
+ * after it. Any other reading (a title another conversation has, or a list
+ * of names that is not this conversation's) makes it someone else's.
+ */
+export function isConversationRow(scope: ConversationScope, row: string): boolean {
+  const { conversation, otherTitles: others } = scope;
+  if (!conversation || !others) return false;
+  const own = conversationKeys(conversation);
+  const parts = row.split(",");
+  let mine = false;
+  for (let i = 1; i <= parts.length; i++) {
+    const title = parts.slice(0, i).join(",");
+    const keys = titleKeys(title);
+    if (keys.some((k) => others.has(k))) return false;
+    if (keys.some((k) => own.includes(k))) mine = true;
+    else if ((titleMembers(norm(title))?.length ?? 0) > 1) return false;
+  }
+  return mine;
+}
+
+const keyCode = (name: string) => parseChord(name).keys[0]!;
+const SHIFT_MASK = parseChord("shift+a").modifiers[0]![1];
+/** Keys that edit a search field's text, move in it, or leave it. */
+const SEARCH_EDIT_KEYS = new Set(
+  ["delete", "forward_delete", "left", "right", "home", "end", "escape", "space"].map(keyCode),
+);
+/** The same with shift held: they select text. */
+const SEARCH_SELECT_KEYS = new Set(["left", "right", "home", "end"].map(keyCode));
+/** Keys that open whichever search result is selected. */
+const SEARCH_PICK_KEYS = new Set(["return", "kp_enter", "up", "down"].map(keyCode));
+const CHARACTER_KEYS = new Set(
+  [..."abcdefghijklmnopqrstuvwxyz0123456789`-=[]\\;',./"].map(keyCode),
+);
+
+/**
+ * What an input does in a search field. "edit": typing, deleting and moving
+ * in the search text, or leaving the field, so it cannot touch a
+ * conversation. "pick": Return, Enter or an arrow up or down, which open the
+ * selected result, a conversation nobody can check first. "other": anything
+ * else, a menu shortcut such as cmd+delete above all, which acts on
+ * whatever conversation is open whatever has focus. Pointer actions aimed at
+ * the field itself count as editing it.
+ */
+export function searchFieldInput(action: string, text?: string): "edit" | "pick" | "other" {
+  if (action === "type") {
+    if (/[\r\n]/.test(text ?? "")) return "pick";
+    return /\t/.test(text ?? "") ? "other" : "edit";
+  }
+  if (action !== "key" && action !== "hold_key") return "edit";
+  let chord: Chord;
+  try {
+    chord = parseChord(text ?? "");
+  } catch {
+    return "other";
+  }
+  if (chord.keys.length !== 1) return "other";
+  const key = chord.keys[0]!;
+  if (SEARCH_PICK_KEYS.has(key)) return "pick";
+  const masks = chord.modifiers.map(([, mask]) => mask);
+  if (masks.length === 0 && (SEARCH_EDIT_KEYS.has(key) || CHARACTER_KEYS.has(key))) return "edit";
+  const shiftOnly = masks.length === 1 && masks[0] === SHIFT_MASK;
+  if (shiftOnly && (CHARACTER_KEYS.has(key) || SEARCH_SELECT_KEYS.has(key))) return "edit";
+  return "other";
 }
 
 const sameNote = (a: string, b: string) => norm(a) === norm(b);
@@ -108,25 +244,34 @@ export function windowAt(
 }
 
 /**
- * The window a key press lands in. A key has no point, and the front window
- * is not always the one being typed in: with several checklist lines selected,
- * Notes puts a small untitled window in front of the note. So: the window
- * holding the focused element, else the frontmost one that has `holds` in it
- * (the note body, the conversation list), else the front one.
+ * The window a key press lands in: the one holding the focused element. A
+ * key has no point, and the front window is not always the one being typed
+ * in (with several checklist lines selected, Notes puts a small untitled
+ * window in front of the note), nor is the one with the sidebar (a
+ * conversation opened in its own window has none). So there is no fallback:
+ * undefined when focus names no window, names one this app does not have,
+ * or names a title several windows share and they differ in `identity` (the
+ * conversation or note each shows). The caller refuses then.
+ *
+ * The helper clips the focused element's window title at 80 characters and
+ * marks the cut with "…"; `inspect` reads titles to 200.
  */
 export function keyWindow(
   inspection: Inspection,
   focus: { window?: string } | null,
-  holds: string,
+  identity: (w: InspectedWindow) => string,
 ): InspectedWindow | undefined {
-  const has = (w: InspectedWindow) => !!w.frame && !!w.found[holds];
-  return (
-    (focus?.window
-      ? inspection.windows.find((w) => w.title === focus.window && has(w))
-      : undefined) ??
-    inspection.windows.find(has) ??
-    inspection.windows[0]
+  const title = focus?.window;
+  if (!title) return undefined;
+  const cut = title.endsWith("…") ? title.slice(0, -1) : null;
+  const matches = inspection.windows.filter(
+    (w) =>
+      !!w.frame &&
+      (w.title === title ||
+        (cut !== null && w.title.length > cut.length && w.title.startsWith(cut))),
   );
+  const first = matches[0];
+  return first && matches.every((w) => identity(w) === identity(first)) ? first : undefined;
 }
 
 /**
@@ -192,10 +337,8 @@ function windowRedactions(scope: Scope, app: string, w: InspectedWindow): Rect[]
   if (app === MESSAGES) {
     const list = w.found[IDS.conversationList];
     if (!list?.frame) return [frame];
-    const out = list.rows
-      .filter((r) => !isConversationRow(scope.conversation, r.text))
-      .map((r) => r.frame);
-    if (!isConversation(scope.conversation, w.title)) {
+    const out = list.rows.filter((r) => !isConversationRow(scope, r.text)).map((r) => r.frame);
+    if (!isConversation(scope, w.title)) {
       const left = list.frame.x + list.frame.width;
       out.push({ x: left, y: frame.y, width: frame.x + frame.width - left, height: frame.height });
     }
@@ -239,6 +382,9 @@ export async function loadScope(
       db.close();
     }
   }
+  const others = conversation
+    ? readOtherTitles(config.paths.chat_db, conversation, group?.[1] ?? null, contacts)
+    : null;
 
   const requester =
     conversation?.kind === "dm"
@@ -255,5 +401,101 @@ export async function loadScope(
     "screenScope",
   );
   const notes = notesFor ? await notesFor(sessionKey, config) : { own: [], others: [] };
-  return { requester, conversation, ownNotes: notes.own, otherNotes: notes.others };
+  return {
+    requester,
+    conversation,
+    otherTitles: others,
+    ownNotes: notes.own,
+    otherNotes: notes.others,
+  };
+}
+
+/**
+ * `otherTitles` from the chat.db at `path`, or null when it cannot be read:
+ * then no title identifies any conversation, and Messages stays closed.
+ */
+export function readOtherTitles(
+  path: string,
+  mine: Conversation,
+  mineGuid: string | null,
+  contacts: ContactBook,
+): Set<string> | null {
+  try {
+    const db = new ChatDb(path);
+    try {
+      return otherTitles(db, mine, mineGuid, {
+        name: (h) => contacts.displayName(h),
+        same: (a, b) => contacts.canon(a) === contacts.canon(b),
+      });
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    log.warn("computer", "could not read the other conversations; Messages stays closed", {
+      err: (err as Error).message,
+    });
+    return null;
+  }
+}
+
+const CHATS_SQL = `
+  SELECT c.guid AS guid, c.style AS style, c.display_name AS name,
+         c.chat_identifier AS ident, GROUP_CONCAT(h.id, char(10)) AS handles
+  FROM chat c
+  LEFT JOIN chat_handle_join chj ON chj.chat_id = c.ROWID
+  LEFT JOIN handle h             ON h.ROWID = chj.handle_id
+  GROUP BY c.ROWID
+`;
+
+/**
+ * Every title a conversation in chat.db other than `mine` can be shown under
+ * (see `conversationKeys`), so a title this conversation shares with one of
+ * them identifies neither. `mine`'s own rows are left out: the group's other
+ * rows for the same chat, and every DM with the same person. A DM with
+ * someone Messages names the same counts as the same person, since a phone
+ * and an address on one card look exactly like that; two different people
+ * with one name cannot be told apart by a title at all.
+ */
+export function otherTitles(
+  db: ChatDb,
+  mine: Conversation,
+  mineGuid: string | null,
+  people: { name(handle: string): string | null; same(a: string, b: string): boolean },
+): Set<string> {
+  const rows = db
+    .query<{
+      guid: string;
+      style: number | null;
+      name: string | null;
+      ident: string | null;
+      handles: string | null;
+    }>(CHATS_SQL)
+    .all();
+  const mineIdent = mineGuid ? rows.find((r) => r.guid === mineGuid)?.ident : undefined;
+  const keys = new Set<string>();
+  for (const r of rows) {
+    const handles = (r.handles ?? "").split("\n").filter(Boolean);
+    let c: Conversation;
+    if (r.style === 43) {
+      if (mine.kind === "group" && (r.guid === mineGuid || (!!mineIdent && r.ident === mineIdent)))
+        continue;
+      c = {
+        kind: "group",
+        name: r.name?.trim() || null,
+        members: handles.map((h) => people.name(h) ?? h),
+      };
+    } else {
+      const handle = handles[0] ?? r.ident ?? "";
+      if (!handle) continue;
+      const name = people.name(handle) ?? handle;
+      if (
+        mine.kind === "dm" &&
+        (people.same(handle, mine.handle) || norm(name) === norm(mine.name))
+      )
+        continue;
+      c = { kind: "dm", handle, name };
+    }
+    for (const k of conversationKeys(c)) keys.add(k);
+  }
+  return keys;
 }
