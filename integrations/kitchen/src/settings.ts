@@ -34,6 +34,19 @@ export function priceMaxAgeDays(): number {
   return maxPriceAge;
 }
 
+let origin: string | null = null;
+let routerPort = 4795;
+
+/** Where hosted sites are published, or null when the host is not set up. */
+export function siteOrigin(): string | null {
+  return origin;
+}
+
+/** The kitchen host's local router port. */
+export function hostPort(): number {
+  return routerPort;
+}
+
 /** Apply an already-loaded config (the MCP tools' path). */
 export function applyKitchenConfig(config: Config): void {
   if (!process.env.EDMUND_DATA_DIR) dataRoot = resolve(ROOT, config.paths.data_dir);
@@ -43,6 +56,8 @@ export function applyKitchenConfig(config: Config): void {
   if (typeof cfg.price_max_age_days === "number" && cfg.price_max_age_days > 0) {
     maxPriceAge = cfg.price_max_age_days;
   }
+  origin = cfg.site_origin ?? null;
+  routerPort = cfg.host_port;
 }
 
 /**

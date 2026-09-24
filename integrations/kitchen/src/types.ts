@@ -178,9 +178,13 @@ export type Account = {
    */
   dinners?: import("./schedules.ts").Dinner[];
   site?: {
-    /** instant-share artifact dir that serves this account's site. */
+    /** Directory the site is rendered into and served from. */
     artifact?: string | null;
     url?: string | null;
+    /** The `?key=` the kitchen host routes this household by (host.ts). */
+    key?: string | null;
+    /** The local port the host runs this household's share server on. */
+    port?: number | null;
   };
   /**
    * The member session that receives unattended work, such as the morning

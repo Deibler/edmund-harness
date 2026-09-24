@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { eaters, getAccount, listAccounts } from "./accounts.ts";
 import { loadCookbook } from "./cookbook.ts";
+import { siteStatus } from "./host.ts";
 import { readList } from "./list.ts";
 import { readWeather } from "./mood.ts";
 import { cookable, loadRecipes } from "./recipes.ts";
@@ -35,6 +36,9 @@ export type Finding = {
 export type Report = { account: string; title: string; findings: Finding[] };
 
 const ok = (what: string, detail: string): Finding => ({ level: "ok", what, detail });
+
+const HOST_FIX =
+  "check `scripts/launchd/service.sh kitchen-host status` and data/kitchen-host.log; kitchen_site re-publishes it";
 const absent = (what: string, detail: string, fix?: string): Finding => ({
   level: "absent",
   what,
@@ -187,11 +191,26 @@ export function checkAccount(id: string): Report {
         "site",
         "rendered, but no public URL is recorded, so nobody can open it and no button on " +
           "it can reach anything",
-        "share the artifact directory, then record the URL with kitchen_site url:...",
+        "kitchen_site publishes it and waits until it answers",
       ),
     );
   } else {
-    f.push(ok("site", `${acct.site.url}`));
+    const live = siteStatus({ ...acct, id });
+    if (live.state === "live") {
+      f.push(ok("site", `${live.url}, answered through the kitchen host at ${live.checked}`));
+    } else if (live.state === "down") {
+      f.push(broken("site", `${live.url} is not answering: ${live.why}`, HOST_FIX));
+    } else {
+      // A quick-tunnel link: its hostname changes whenever the tunnel restarts,
+      // so a recorded URL here says nothing about whether it works.
+      f.push(
+        absent(
+          "site",
+          `${acct.site.url} is a temporary link that stops working whenever its tunnel restarts`,
+          "kitchen_site host:true moves it to the permanent address",
+        ),
+      );
+    }
     const missing = book.filter((b) => !existsSync(join(dir, "recipe", `${b.id}.html`)));
     if (missing.length) {
       f.push(

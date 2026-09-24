@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { z } from "zod";
 import type { ToolContext } from "../../../src/mcp/context.ts";
 import type { ToolDef } from "../../../src/mcp/tools/types.ts";
+import { nameMembers } from "../src/accounts.ts";
 import { acceptStock, accountOf, provision, state, stockBrief } from "../src/onboard.ts";
 import { slug } from "../src/store.ts";
 import { CATEGORIES, LOCATIONS } from "../src/types.ts";
@@ -110,12 +111,15 @@ export function onboardTools(ctx: ToolContext): ToolDef[] {
                   ? { lat: a.lat, lon: a.lon, label: a.place ?? null }
                   : null,
             });
+            // Names the phone already knows are never asked for.
+            nameMembers(res.account, (h) => ctx.contacts?.displayName(h) ?? null);
+            const st = state(res.account);
             return text(
-              `${res.created ? "Created" : "Updated"} "${res.account}".\n\n${res.state.steps
+              `${res.created ? "Created" : "Updated"} "${res.account}".\n\n${st.steps
                 .map((s) => `  [${s.done ? "x" : " "}] ${s.id}${s.done ? "" : ` — ${s.next}`}`)
                 .join(
                   "\n",
-                )}\n\nNext: ask for a photo of the fridge and one of a cupboard, then kitchen_onboard action:"stock". After that kitchen_site to build their page.`,
+                )}\n\nNext: ask for a photo of the fridge and one of a cupboard, then kitchen_onboard action:"stock". After that kitchen_site, which publishes their page and returns the link once it answers.`,
             );
           } catch (e) {
             return failure(e);

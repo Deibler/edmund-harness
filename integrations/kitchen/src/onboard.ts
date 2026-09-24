@@ -11,8 +11,17 @@
  * volunteers them; they are never prompted for.
  */
 
-import { createAccount, getAccount, idOk, listAccounts, updateAccount } from "./accounts.ts";
+import {
+  createAccount,
+  eaters,
+  getAccount,
+  idOk,
+  listAccounts,
+  updateAccount,
+} from "./accounts.ts";
 import { loadCookbook } from "./cookbook.ts";
+import { siteStatus } from "./host.ts";
+import { siteOrigin } from "./settings.ts";
 import { append, live, readLog } from "./store.ts";
 import { type Account, CATEGORIES, type Category, LOCATIONS, type Location } from "./types.ts";
 
@@ -71,7 +80,11 @@ export function state(account: string | null): State {
   const acct = getAccount(account);
   if (!acct) throw new Error(`No household "${account}".`);
   const stock = live(account);
-  const named = Object.keys(acct.people ?? {}).length > 0;
+  const unnamed = eaters(acct).filter((e) => !acct.people?.[e.principal]);
+  // With a permanent address the site counts only once it answers there; a
+  // recorded URL alone is how a dead link passed for set up.
+  const site = siteOrigin() ? siteStatus({ ...acct, id: account }) : null;
+  const siteDone = site ? site.state === "live" : Boolean(acct.site?.url);
   const steps: Step[] = [
     {
       id: "shelves",
@@ -83,17 +96,18 @@ export function state(account: string | null): State {
     },
     {
       id: "people",
-      done: named,
+      done: unnamed.length === 0,
       what: "who eats here, so the page is titled for them and calories are per person",
-      next: 'kitchen_onboard action:"start" again with `people`, or kitchen_accounts',
+      next: `no name for ${unnamed.map((e) => e.label).join(", ")}, and contacts had none; ask what to call them, then kitchen_onboard action:"start" person:"<name>" from their chat`,
     },
     {
       id: "site",
-      done: Boolean(acct.site?.url),
+      done: siteDone,
       what: "their own page, which is where every button lives",
-      next: acct.site?.artifact
-        ? "the site is rendered but has no public link yet; share it and record the url"
-        : "kitchen_site to render it, then share it",
+      next:
+        site?.state === "down"
+          ? `published but not answering (${site.why}); kitchen_site re-publishes it, and if that fails the kitchen host is down`
+          : "kitchen_site renders it, publishes it and returns the link once it answers",
     },
     {
       id: "cooked",

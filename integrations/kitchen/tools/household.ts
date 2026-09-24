@@ -15,13 +15,16 @@ import {
   joinAccount,
   leaveAccount,
   listAccounts,
+  nameMembers,
   resolveAccount,
   updateAccount,
 } from "../src/accounts.ts";
 import { scanAssets } from "../src/assets.ts";
 import { STORES } from "../src/deals.ts";
 import { checkAccount, checkAll, format, summarise } from "../src/doctor.ts";
+import { publish, waitLive } from "../src/host.ts";
 import { learnedSchedule } from "../src/insights.ts";
+import { siteOrigin } from "../src/settings.ts";
 import { writeSite } from "../src/site.ts";
 import { readLog } from "../src/store.ts";
 import { table } from "../src/util.ts";
@@ -125,6 +128,7 @@ export function householdTools(ctx: ToolContext): ToolDef[] {
               note: a.note,
               members: [owner],
             });
+            nameMembers(a.account, contactName(ctx));
             return text(
               `Created "${a.account}" (${acct.name}) with ${acct.members.length} member(s). Its ledger starts empty — log groceries or a meal and every derived feature fills in by itself.`,
             );
@@ -134,8 +138,10 @@ export function householdTools(ctx: ToolContext): ToolDef[] {
             const who = a.member ?? me;
             const acct =
               a.action === "join" ? joinAccount(a.account, who) : leaveAccount(a.account, who);
+            const named =
+              a.action === "join" ? nameMembers(a.account, contactName(ctx))[who] : null;
             return text(
-              `${who} ${a.action === "join" ? "joined" : "left"} ${a.account}. ` +
+              `${who}${named ? ` (${named}, from contacts)` : ""} ${a.action === "join" ? "joined" : "left"} ${a.account}. ` +
                 `Now ${acct.members.length} member(s).`,
             );
           }
@@ -172,10 +178,11 @@ export function householdTools(ctx: ToolContext): ToolDef[] {
     {
       name: "kitchen_site",
       description:
-        "Render this household's own website — inventory, what to use first, eating, " +
-        "shopping and deals, their cooking rhythm, and the recap — as one self-contained " +
-        "page. Re-render into the SAME artifact directory to update a live link without " +
-        "minting a new URL. One site per household; never point two at one directory.",
+        "Render this household's own website (inventory, what to use first, eating, shopping " +
+        "and deals, their cooking rhythm, the recap) and publish it at the household's " +
+        "permanent address. It returns the link only once the page has answered through it: " +
+        "send that link and no other. Re-running refreshes the same page at the same " +
+        "address. One site per household; never point two at one directory.",
       inputSchema: z.object({
         account: Acct,
         dir: z
@@ -184,29 +191,71 @@ export function householdTools(ctx: ToolContext): ToolDef[] {
           .describe(
             "Artifact directory. Omit to use the household's saved one, or a new dir under this sandbox.",
           ),
-        url: z.string().optional().describe("Record the public URL once it is shared."),
+        host: z
+          .boolean()
+          .optional()
+          .describe(
+            "Move a site still on an old temporary link to the permanent address. Its link changes, so send the new one.",
+          ),
       }),
-      handler: ({ account, dir, url }) =>
-        withAccount(ctx, account, (id) => {
+      handler: ({ account, dir, host }) =>
+        withAccount(ctx, account, async (id) => {
           const acct = getAccount(id)!;
           const target = dir ?? acct.site?.artifact ?? join(ctx.sandboxPath, `kitchen-site-${id}`);
           mkdirSync(target, { recursive: true });
-          const path = join(target, "index.html");
           // Photos are scanned from the output directory so the page only links
           // images that exist.
           const assets = scanAssets(target);
           // One call writes the hub, every recipe page and the chat threads, so the
           // hub never links to a page that was not written.
           const { pages } = writeSite(id, acct, target);
-          if (target !== acct.site?.artifact || url) {
-            updateAccount(id, {
-              site: { artifact: target, url: url ?? acct.site?.url ?? null },
-            } as never);
+          if (target !== acct.site?.artifact) {
+            updateAccount(id, { site: { artifact: target } } as never);
+          }
+          const rendered = `Rendered "${householdTitle(acct)}": ${pages} recipe page(s), photos for ${assets.items.size} item(s) and ${assets.meals.size} meal(s).`;
+
+          const origin = siteOrigin();
+          if (!origin) {
+            return text(
+              `${rendered}\nNot published: [kitchen] site_origin is not set, so there is no permanent address to serve it from. Tell the operator.`,
+            );
+          }
+          const now = getAccount(id)!;
+          if (!now.site?.key && now.site?.url && !host && (await answers(now.site.url))) {
+            return text(
+              `${rendered}\nStill served at its temporary link ${now.site.url}, which stops working whenever its tunnel restarts. kitchen_site host:true moves it to the permanent address; the link changes, so send the new one.`,
+            );
+          }
+          const pub = publish(id, origin);
+          const live = await waitLive(id);
+          if (live.state !== "live") {
+            return text(
+              `${rendered}\nPublished to ${pub.url}, but it is not answering (${"why" in live ? live.why : "not checked yet"}). Do not send the link; tell the operator the kitchen host is down.`,
+              true,
+            );
           }
           return text(
-            `Rendered "${householdTitle(acct)}" to ${path}.\nPhotos found: ${assets.items.size} item, ${assets.meals.size} meal. Recipe pages: ${pages}.\nShare that directory to publish it; re-run this tool against the same dir to refresh it in place.`,
+            `${rendered}\nLive at ${pub.url} (it answered through that address just now).${
+              pub.previous
+                ? ` It replaces ${pub.previous}, which no longer works: send them the new link.`
+                : ""
+            }`,
           );
         }),
     },
   ];
+}
+
+/** The contact book's name for a handle, when the harness has one. */
+function contactName(ctx: ToolContext): (handle: string) => string | null {
+  return (handle) => ctx.contacts?.displayName(handle) ?? null;
+}
+
+/** Whether a URL answers 200 within a few seconds. */
+async function answers(url: string): Promise<boolean> {
+  try {
+    return (await fetch(url, { signal: AbortSignal.timeout(8_000) })).ok;
+  } catch {
+    return false;
+  }
 }

@@ -20,6 +20,14 @@ export const Schema = z
     dir: z.string().default(resolve(process.env.EDMUND_DATA_DIR ?? "./data", "kitchen")),
     /** How old an imported grocery price may be before it stops being quotable. */
     price_max_age_days: z.number().default(21),
+    /**
+     * Public origin the kitchen host serves every household's site from, e.g.
+     * "https://kitchen.example.com", through a named tunnel that survives
+     * restarts (src/host.ts). Unset: sites are rendered but not published.
+     */
+    site_origin: z.string().url().nullish(),
+    /** Local port of the host's router, which that tunnel points at. */
+    host_port: z.number().int().default(4795),
   })
   .default({});
 

@@ -14,6 +14,16 @@ dm = ["+15557654321", "friend@icloud.com"]
 # Trust decisions, in one place. These defaults are the safe choice for a new
 # install. Loosen them deliberately; each line is a decision other operators
 # may not want to make.
+[kitchen]
+enabled = true
+# dir = "/path/to/data/kitchen"   # default: <data_dir>/kitchen
+# Every household's site is served from this one address by the kitchen host
+# (scripts/launchd/service.sh kitchen-host install), through a named tunnel
+# whose token lives in data/kitchen-tunnel-token. Unset: sites are rendered but
+# not published.
+# site_origin = "https://kitchen.example.com"
+# host_port = 4795                 # the host's local router, which the tunnel points at
+
 [security]
 # What the model may touch on this Mac outside its own tools.
 #   "sandboxed"  Claude Code's built in Bash/Read/Write/Edit/Glob/Grep tools
