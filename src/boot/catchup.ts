@@ -1,6 +1,7 @@
-import { entryToInbound, parsePendingLine } from "../bridge/session-queue.ts";
+import { entryToInbound, parsePendingLine, toPendingEntry } from "../bridge/session-queue.ts";
 import type { Deps } from "../channels/deps.ts";
 import { handleBatch, shouldAccept } from "../channels/turn.ts";
+import type { TurnOpts } from "../channels/turn.ts";
 import type { AddressChecker } from "../gating/address-check.ts";
 import { guestGateFor } from "../gating/allowlist.ts";
 import { getGroupParticipants } from "../imessage/participants.ts";
@@ -26,7 +27,8 @@ import { log } from "../util/log.ts";
  * like a person whose phone just powered back on: scan the flood, reply once to what still matters,
  * or stay silent. Concurrency is bounded so a large pile-up drains steadily instead of swamping.
  *
- * Returns the new cursor (max rowId consumed) so the caller can start the LIVE watcher from there.
+ * Returns as soon as the backlog is read and queued: the new cursor (max rowId consumed), so the
+ * caller starts the LIVE watcher right away, and a promise for the turns themselves.
  */
 /**
  * Group accepted backlog messages per chat — dropping echoes / non-accepted exactly like the
@@ -114,18 +116,39 @@ export async function backlogGroups(
   return groupBacklog(messages, deps, admitted);
 }
 
+/** What boot catch-up hands the daemon. The live watcher starts from `cursor`
+ *  as soon as the backlog has been read, without waiting for any catch-up turn:
+ *  on 2026-09-24 waiting for them kept every chat silent for 87 minutes behind
+ *  two long turns in one DM. */
+export type CatchUp = {
+  /** Where the live watcher starts. Every backlog row at or below it is
+   *  either in a catch-up batch (with a durable ack) or was refused. */
+  cursor: number;
+  /** Folds a live message into its chat's catch-up batch while that batch is
+   *  still waiting to start, so the chat is answered once and in order. False
+   *  when the chat has no waiting batch; route the message as usual then. */
+  absorb(key: SessionKey, msg: InboundMessage): boolean;
+  /** Settles when every catch-up turn has finished. Never rejects. */
+  drained: Promise<void>;
+};
+
 export async function runCatchUp(params: {
   deps: Deps;
   locks: SessionLocks;
   startCursor: number;
   concurrency: number;
-  /** The live watcher's missed-name check, applied to the backlog too: after a
-   *  restart the watcher starts only once catch-up drains, which on
-   *  2026-09-24 took ten minutes, and every message in between came through here. */
+  /** The live watcher's missed-name check, applied to the backlog too, so an
+   *  un-named group message that arrived while the daemon was down gets the
+   *  same check as one that arrives live. */
   addressChecker?: AddressChecker;
-}): Promise<number> {
+  /** Test seams: the turn runner and the chat.db backlog read. */
+  handle?: (key: SessionKey, batch: InboundMessage[], opts?: TurnOpts) => Promise<void>;
+  read?: (startCursor: number) => { messages: InboundMessage[]; maxRowId: number };
+}): Promise<CatchUp> {
   const { deps, locks, startCursor, concurrency, addressChecker } = params;
-  const { config, chatDb, echoes, contacts } = deps;
+  const { config, chatDb } = deps;
+  const handle = params.handle ?? ((key, batch, opts) => handleBatch(key, batch, deps, opts));
+  const read = params.read ?? ((cursor) => readBacklog({ chatDb, startCursor: cursor }));
 
   // --- orphaned inbound_ack replay (post-2026-07-19 crash hardening) ---
   const orphanedBySession = extractOrphanAcks({
@@ -140,72 +163,102 @@ export async function runCatchUp(params: {
       sessions: orphanedBySession.size,
       messages: totalOrphans,
     });
-    const entries = [...orphanedBySession.entries()];
-    let cursor = 0;
-    const runOrphan = async (): Promise<void> => {
-      const i = cursor++;
-      if (i >= entries.length) return;
-      const [key, batch] = entries[i]!;
-      const opts = {
-        catchUp: {
-          count: batch.length,
-          downtimeMs: Math.max(0, Date.now() - batch[0]!.timestampMs),
-        },
-      };
-      try {
-        await locks.withLock(key, () => handleBatch(key, batch, deps, opts));
-      } catch (err) {
-        log.error("catchup", "orphan replay failed", { key, error: String(err) });
-      }
-      await runOrphan();
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(concurrency, entries.length) }, () => runOrphan()),
-    );
   }
-  // --- end orphan replay ---
 
-  const { messages, maxRowId } = readBacklog({ chatDb, startCursor });
-  if (messages.length === 0) return maxRowId;
+  const { messages, maxRowId } = read(startCursor);
+  const backlog =
+    messages.length > 0 ? await backlogGroups(messages, deps, addressChecker) : new Map();
 
-  const groups = await backlogGroups(messages, deps, addressChecker);
-  if (groups.size === 0) return maxRowId;
+  // The watcher is about to start past these rows, and the cursor with it,
+  // before their turns run. The same durable ack the live path writes lets a
+  // crash in between replay them at the next boot; handleBatch clears the
+  // acks for whatever its turn disposed of.
+  if (config.behavior.durable_pending_ack) {
+    for (const [key, batch] of backlog) {
+      for (const msg of batch) {
+        deps.state.writeInboundAck(msg.rowId, key, JSON.stringify(toPendingEntry(msg)));
+      }
+    }
+  }
 
-  const total = [...groups.values()].reduce((n, b) => n + b.length, 0);
-  log.warn("catchup", "recovery backlog", {
-    chats: groups.size,
-    messages: total,
-    concurrency,
-  });
+  // One batch, one turn per chat: its orphans (rows at or behind the cursor)
+  // then its backlog, in row order.
+  type Entry = { key: SessionKey; msgs: InboundMessage[]; orphans: number };
+  const entries = new Map<SessionKey, Entry>();
+  for (const [key, batch] of orphanedBySession) {
+    entries.set(key, { key, msgs: [...batch], orphans: batch.length });
+  }
+  for (const [key, batch] of backlog as Map<SessionKey, InboundMessage[]>) {
+    const entry = entries.get(key) ?? { key, msgs: [], orphans: 0 };
+    entry.msgs.push(...batch);
+    entries.set(key, entry);
+  }
+  for (const entry of entries.values()) entry.msgs.sort((a, b) => a.rowId - b.rowId);
 
+  if (backlog.size > 0) {
+    log.warn("catchup", "recovery backlog", {
+      chats: backlog.size,
+      messages: [...backlog.values()].reduce((n, b) => n + b.length, 0),
+      concurrency,
+    });
+  }
+
+  // A chat is `waiting` from now until its turn takes the session lock. Live
+  // messages for it fold into its batch meanwhile (absorb), exactly as a
+  // pipeline bucket collects messages until its lock comes free.
+  const waiting = new Map(entries);
+  const queue = [...entries.values()];
   // Bounded concurrency: at most `concurrency` chats catch up at once so a mass backlog drains
   // steadily and leaves worker-pool headroom rather than swamping the daemon on recovery.
-  const now = Date.now();
-  const entries = [...groups.entries()];
-  let cursor = 0;
+  // A chat waits for its slot WITHOUT its session lock: the lock's inactivity
+  // ceiling would release a silent holder after ~11 minutes, and a second
+  // run could start on the same session.
   const runNext = async (): Promise<void> => {
-    const i = cursor++;
-    if (i >= entries.length) return;
-    const [key, batch] = entries[i]!;
-    const downtimeMs = Math.max(0, now - batch[0]!.timestampMs);
-    // Always coalesce to ONE turn per chat. Only apply the "you were offline" framing when the
-    // gap is meaningful — otherwise a fast restart with a message or two would awkwardly announce
-    // a 3-second outage. Small/recent backlogs just run as a normal coalesced turn.
-    const meaningful =
-      batch.length >= Math.max(2, config.behavior.auto_catchup_threshold) || downtimeMs >= 300_000;
-    const opts = meaningful ? { catchUp: { count: batch.length, downtimeMs } } : undefined;
+    const entry = queue.shift();
+    if (!entry) return;
     try {
       // Hold the session lock so a cron/recovery fire can't collide with the catch-up turn.
-      await locks.withLock(key, () => handleBatch(key, batch, deps, opts));
+      await locks.withLock(entry.key, async () => {
+        waiting.delete(entry.key);
+        const batch = entry.msgs;
+        const downtimeMs = Math.max(0, Date.now() - batch[0]!.timestampMs);
+        // Always coalesce to ONE turn per chat. Only apply the "you were offline" framing when
+        // the gap is meaningful (or the batch holds orphans, which by definition waited out a
+        // crash) — otherwise a fast restart with a message or two would awkwardly announce a
+        // 3-second outage. Small/recent backlogs just run as a normal coalesced turn.
+        const meaningful =
+          entry.orphans > 0 ||
+          batch.length >= Math.max(2, config.behavior.auto_catchup_threshold) ||
+          downtimeMs >= 300_000;
+        await handle(
+          entry.key,
+          batch,
+          meaningful ? { catchUp: { count: batch.length, downtimeMs } } : undefined,
+        );
+      });
     } catch (err) {
-      log.error("catchup", "chat catch-up failed", { key, error: String(err) });
+      waiting.delete(entry.key);
+      log.error("catchup", "chat catch-up failed", { key: entry.key, error: String(err) });
     }
     await runNext();
   };
-  await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, () => runNext()));
+  const drained =
+    entries.size === 0
+      ? Promise.resolve()
+      : Promise.all(
+          Array.from({ length: Math.min(concurrency, entries.size) }, () => runNext()),
+        ).then(() => log.info("catchup", "recovery backlog drained", { chats: entries.size }));
 
-  log.info("catchup", "recovery backlog drained", { chats: groups.size });
-  return maxRowId;
+  return {
+    cursor: maxRowId,
+    absorb(key, msg) {
+      const entry = waiting.get(key);
+      if (!entry) return false;
+      entry.msgs.push(msg);
+      return true;
+    },
+    drained,
+  };
 }
 
 // -- export for testing --

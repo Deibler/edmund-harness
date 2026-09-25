@@ -50,7 +50,15 @@ export function wireRecall(args: {
   let provider: EmbedProvider | null = null;
 
   if (config.memory_recall.enabled && config.memory_recall.provider !== "none") {
-    store = new VectorStore(`${config.paths.data_dir}/${config.memory_recall.index_db}`);
+    // The daemon is the one process that repairs the FTS shadow; every MCP
+    // server and background job opens the same file read-mostly.
+    store = new VectorStore(
+      `${config.paths.data_dir}/${config.memory_recall.index_db}`,
+      undefined,
+      {
+        repair: true,
+      },
+    );
     provider = makeProvider({
       provider: config.memory_recall.provider,
       model: config.memory_recall.model,

@@ -3,7 +3,7 @@ import type { CronStore } from "./store.ts";
 import type { CronJob } from "./types.ts";
 
 export type SchedulerOptions = {
-  store: CronStore;
+  store: Pick<CronStore, "nextDue" | "markFired">;
   onFire: (job: CronJob) => Promise<void> | void;
   onError?: (err: unknown) => void;
 };
@@ -15,25 +15,31 @@ export type SchedulerOptions = {
  * Deliberately simple: no threading, no cluster. One process owns all jobs.
  * `poke()` lets callers (e.g. the MCP tool handler that just created a job)
  * re-evaluate the timer without waiting for the previous one to expire.
+ *
+ * Fires for one session run one after another, in due order; different
+ * sessions do not wait for each other. They used to: the drain awaited each
+ * fire, a whole model turn, so on 2026-09-25 one 38-minute bg-job-done turn
+ * in a DM held the mirror's 21:00 severe-weather check until it was 34
+ * minutes late and skipped as stale.
  */
 export class Scheduler {
-  private store: CronStore;
+  private store: SchedulerOptions["store"];
   private onFire: SchedulerOptions["onFire"];
   private onError: SchedulerOptions["onError"];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private armedForMs: number | null = null;
   private stopped = false;
   /**
-   * True while `fireDue` is awaiting an `onFire`. Guards against a nasty
-   * race: `onFire` can block for a minute+ while Claude generates. If an
-   * external `poke()` (the 15s heartbeat from main.ts) lands in that window,
-   * the old implementation would see `armedForMs===null`, pull the same
-   * still-unmarked job out of `nextDue()`, and arm a second `fireDue` that
-   * fires the SAME job concurrently — the user sees duplicate replies.
-   * Hold this flag across the whole drain loop; `fireDue` rearms once it
-   * finishes.
+   * True while `fireDue` drains. Guards a nasty race: a `poke()` (the 15s
+   * heartbeat from main.ts) landing mid-drain would see `armedForMs===null`,
+   * pull a still-unmarked job out of `nextDue()`, and fire the SAME job
+   * twice — the user sees duplicate replies. The drain marks each job fired
+   * before handing it on and never awaits a fire, so it is short now, but
+   * the flag still keeps a second drain out.
    */
   private firing = false;
+  /** Each session's chain of fires, while any is queued or running. */
+  private chains = new Map<string, Promise<void>>();
 
   constructor(opts: SchedulerOptions) {
     this.store = opts.store;
@@ -101,15 +107,29 @@ export class Scheduler {
         // at-least-once for the in-flight job; gains at-most-once across
         // restarts, which is what the user actually wants.
         this.store.markFired(job, Date.now());
-        try {
-          await this.onFire(job);
-        } catch (err) {
-          this.onError?.(err);
-        }
+        this.launch(job);
       }
     } finally {
       this.firing = false;
       this.rearm();
     }
+  }
+
+  /** Queue a fire behind its own session's earlier fires, never behind
+   *  another session's. */
+  private launch(job: CronJob): void {
+    const prev = this.chains.get(job.sessionKey) ?? Promise.resolve();
+    const run = async (): Promise<void> => {
+      try {
+        await this.onFire(job);
+      } catch (err) {
+        this.onError?.(err);
+      }
+    };
+    const next = prev.then(run);
+    this.chains.set(job.sessionKey, next);
+    void next.then(() => {
+      if (this.chains.get(job.sessionKey) === next) this.chains.delete(job.sessionKey);
+    });
   }
 }

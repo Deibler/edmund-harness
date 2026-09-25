@@ -117,7 +117,7 @@ describe("VectorStore basics", () => {
       raw.exec(`DELETE FROM rows_fts WHERE rowid = (SELECT MIN(rowid) FROM rows_fts)`);
       raw.close();
 
-      store = new VectorStore(path);
+      store = new VectorStore(path, undefined, { repair: true });
       store.upsert([row("msg:one", "one newtoken", v)]);
 
       const verify = new Database(path, { readonly: true });
@@ -137,6 +137,94 @@ describe("VectorStore basics", () => {
       expect(ftsCount).toBe(2);
     } finally {
       store?.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /** Map entries whose FTS row holds a different ref (or no row at all). */
+  function misfiled(path: string): number {
+    const db = new Database(path, { readonly: true });
+    const n =
+      db
+        .prepare<{ n: number }, []>(
+          `SELECT COUNT(*) AS n FROM rows_fts_refs AS map
+             LEFT JOIN rows_fts AS fts ON fts.rowid = map.fts_rowid
+            WHERE fts.ref IS NOT map.ref`,
+        )
+        .get()?.n ?? 0;
+    db.close();
+    return n;
+  }
+
+  test("a store opened without repair leaves a drifted shadow for the daemon", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "recall-test-"));
+    const path = join(dir, "recall.sqlite");
+    try {
+      const v = await embed("stable dense vector");
+      const first = new VectorStore(path);
+      first.upsert([row("msg:one", "one", v), row("msg:two", "two", v), row("msg:three", "3", v)]);
+      first.close();
+      const raw = new Database(path);
+      raw.exec("DELETE FROM rows_fts_refs WHERE ref != 'msg:one'");
+      raw.close();
+
+      // An MCP server or background job: must not rebuild on open.
+      new VectorStore(path).close();
+      const peek = new Database(path, { readonly: true });
+      const mapped = peek
+        .prepare<{ n: number }, []>("SELECT COUNT(*) AS n FROM rows_fts_refs")
+        .get()?.n;
+      peek.close();
+      expect(mapped).toBe(1);
+
+      // The daemon at boot: rebuilds.
+      new VectorStore(path, undefined, { repair: true }).close();
+      const after = new Database(path, { readonly: true });
+      const counts = after
+        .prepare<{ r: number; f: number; m: number }, []>(
+          `SELECT (SELECT COUNT(*) FROM rows) AS r, (SELECT COUNT(*) FROM rows_fts) AS f,
+                  (SELECT COUNT(*) FROM rows_fts_refs) AS m`,
+        )
+        .get();
+      after.close();
+      expect(counts).toEqual({ r: 3, f: 3, m: 3 });
+      expect(misfiled(path)).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("repair catches a same-sized map pointing at the wrong documents", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "recall-test-"));
+    const path = join(dir, "recall.sqlite");
+    try {
+      const v = await embed("stable dense vector");
+      const first = new VectorStore(path);
+      first.upsert([row("msg:one", "one alphatoken", v), row("msg:two", "two betatoken", v)]);
+      first.close();
+      // Swap the two map entries: every count still agrees.
+      const raw = new Database(path);
+      raw.exec(`UPDATE rows_fts_refs SET fts_rowid = -fts_rowid`);
+      raw.exec(
+        `UPDATE rows_fts_refs SET fts_rowid = (SELECT MAX(rowid) FROM rows_fts) + 1 + fts_rowid`,
+      );
+      raw.close();
+      expect(misfiled(path)).toBe(2);
+
+      const store = new VectorStore(path, undefined, { repair: true });
+      // An update to msg:one must replace msg:one's text, not msg:two's.
+      store.upsert([row("msg:one", "one gammatoken", v)]);
+      const zero = new Float32Array(v.length);
+      const sparse = (q: string) =>
+        store
+          .search(zero, { scope: { kind: "global" }, queryText: q, minScore: 1 })
+          .map((h) => h.ref);
+      expect(sparse("betatoken")).toEqual(["msg:two"]);
+      expect(sparse("alphatoken")).toEqual([]);
+      expect(sparse("gammatoken")).toEqual(["msg:one"]);
+      store.close();
+      expect(misfiled(path)).toBe(0);
+    } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });

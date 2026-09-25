@@ -8,9 +8,11 @@
  * store grows past that, swap the search() inner loop for sqlite-vec.
  */
 
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { openDb } from "../db/open.ts";
+import { log } from "../util/log.ts";
 
 /** `self-file` is SOUL.md and its archive — Edmund's notes about himself.
  *  Unlike `person-file` it is NOT scoped to a chat: it is relevant in every
@@ -181,10 +183,17 @@ export class VectorStore {
   constructor(
     private path: string,
     private readonly cacheIdleMs = 10 * 60_000,
+    /** `repair`: rebuild the FTS shadow when it disagrees with `rows`. Only
+     *  the daemon passes it, once, at boot. Every MCP server and background
+     *  job opens this store too, and when each of them rebuilt on open,
+     *  unlocked and outside a transaction, their rebuilds interleaved with
+     *  the daemon's writes: on 2026-09-24 the rowid map held 933 entries for
+     *  104,658 rows, and every semantic_search paid a 5-34 s rebuild. */
+    opts: { repair?: boolean } = {},
   ) {
     mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    this.db.exec("PRAGMA journal_mode = WAL");
+    // busy_timeout before WAL: other processes write this file constantly.
+    this.db = openDb(path);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS rows (
         ref       TEXT PRIMARY KEY,
@@ -234,32 +243,54 @@ export class VectorStore {
       );
     `);
 
-    // One-time backfill for stores created before the FTS table or rowid map
-    // existed. If counts ever diverge, rebuild both shadows from the canonical
-    // rows table rather than preserving an orphan or duplicate FTS entry.
-    let ftsCount =
-      this.db.prepare<{ n: number }, []>(`SELECT COUNT(*) AS n FROM rows_fts`).get()?.n ?? 0;
-    const rowCount =
-      this.db.prepare<{ n: number }, []>(`SELECT COUNT(*) AS n FROM rows`).get()?.n ?? 0;
-    let rebuiltFts = false;
-    if (ftsCount !== rowCount) {
-      this.db.exec(`DELETE FROM rows_fts`);
-      this.db.exec(`INSERT INTO rows_fts (ref, text) SELECT ref, text FROM rows`);
-      ftsCount = rowCount;
-      rebuiltFts = true;
+    // Only the repairing opener checks: the check costs ~200 ms at 100k rows
+    // and a reader could not act on what it found. Measured on a copy of the
+    // live index (2026-09-24): the rebuild itself takes ~9 s.
+    const drift = opts.repair ? this.shadowDrift() : null;
+    if (drift) {
+      const started = Date.now();
+      this.rebuildShadows();
+      log.warn("recall", "rebuilt the FTS shadow", { ...drift, ms: Date.now() - started });
     }
-    const mappedCount =
-      this.db.prepare<{ n: number }, []>(`SELECT COUNT(*) AS n FROM rows_fts_refs`).get()?.n ?? 0;
-    // A full FTS rebuild can assign different rowids even when the old map
-    // happened to have the same number of entries. Refresh it unconditionally
-    // in that case so a later point update cannot target the wrong document.
-    if (rebuiltFts || mappedCount !== ftsCount) {
-      this.db.exec(`
-        DELETE FROM rows_fts_refs;
-        INSERT INTO rows_fts_refs (ref, fts_rowid)
-        SELECT ref, rowid FROM rows_fts;
-      `);
-    }
+  }
+
+  /**
+   * Null when the FTS shadow and its rowid map agree with `rows`, otherwise
+   * the counts that disagree. Checks counts, then that every map entry names
+   * the FTS row holding its own ref: a same-sized map can still point every
+   * point update at the wrong document. Point lookups on integer and text
+   * primary keys, so it stays cheap at 100k rows.
+   */
+  private shadowDrift(): { rows: number; fts: number; mapped: number; misfiled: number } | null {
+    const count = (sql: string) => this.db.prepare<{ n: number }, []>(sql).get()?.n ?? 0;
+    const rows = count("SELECT COUNT(*) AS n FROM rows");
+    const fts = count("SELECT COUNT(*) AS n FROM rows_fts");
+    const mapped = count("SELECT COUNT(*) AS n FROM rows_fts_refs");
+    const misfiled =
+      rows === fts && fts === mapped
+        ? count(
+            `SELECT COUNT(*) AS n FROM rows_fts_refs AS map
+               LEFT JOIN rows_fts AS fts ON fts.rowid = map.fts_rowid
+              WHERE fts.ref IS NOT map.ref`,
+          )
+        : 0;
+    if (rows === fts && fts === mapped && misfiled === 0) return null;
+    return { rows, fts, mapped, misfiled };
+  }
+
+  /** Rebuild the FTS shadow and its rowid map from `rows`, as one IMMEDIATE
+   *  transaction: other writers wait on busy_timeout instead of landing a
+   *  point update between the FTS rebuild and the map rebuild (which is how
+   *  a stale map sent updates to the wrong document). */
+  private rebuildShadows(): void {
+    this.db
+      .transaction(() => {
+        this.db.exec("DELETE FROM rows_fts_refs");
+        this.db.exec("DELETE FROM rows_fts");
+        this.db.exec("INSERT INTO rows_fts (ref, text) SELECT ref, text FROM rows");
+        this.db.exec("INSERT INTO rows_fts_refs (ref, fts_rowid) SELECT ref, rowid FROM rows_fts");
+      })
+      .immediate();
   }
 
   close(): void {
@@ -684,13 +715,7 @@ export class VectorStore {
     // never re-embedded).
     this.setWatermark("artifact.mtime", 0);
     this.db.prepare(`DELETE FROM rows WHERE model != ?`).run(model);
-    this.db.exec(`DELETE FROM rows_fts_refs`);
-    this.db.exec(`DELETE FROM rows_fts`);
-    this.db.exec(`INSERT INTO rows_fts (ref, text) SELECT ref, text FROM rows`);
-    this.db.exec(`
-      INSERT INTO rows_fts_refs (ref, fts_rowid)
-      SELECT ref, rowid FROM rows_fts
-    `);
+    this.rebuildShadows();
     this.invalidateCache();
     this.setString("embed.model", model);
     this.setWatermark("embed.dim", dim);

@@ -23,7 +23,17 @@ const NoteInput = z.object({
   section: z
     .enum(SECTIONS as [PersonSection, ...PersonSection[]])
     .default("what-ive-learned")
-    .describe("Section to append under. Dates are added automatically."),
+    .describe(
+      [
+        "Section to append under; one of these five exactly. Dates are added automatically.",
+        "  • who-they-are      — personality, background, what they care about",
+        "  • our-dynamic       — how they like to be talked to; your posture with them",
+        "  • what-ive-learned  — preferences, quirks, recurring topics (the default)",
+        "  • shared-history    — dated events worth remembering",
+        "  • open-items        — follow-ups, promises, loose ends",
+        "There is no 'preferences' section: preferences go in what-ive-learned.",
+      ].join("\n"),
+    ),
   note: z.string().min(1).describe("Short prose line to append."),
 });
 
