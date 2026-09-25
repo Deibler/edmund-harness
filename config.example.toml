@@ -428,9 +428,12 @@ fire_defer_max_minutes = 15
 mode = "off"                     # "off" | "shadow" | "on"
 model = "typesafe/jev-1.13"
 window_minutes = 10
-reply_threshold = 0.6            # wake when "wants a reply" reaches this
+reply_threshold = 0.7            # wake when "wants a reply" reaches this
+addressed_floor = 0.5            # soon after he spoke, "said to him" must also reach this
 addressed_threshold = 0.7        # swipe-replies and misspelled names: "said to him" is enough
+streak_budget = 0.6              # expected wrong wakes per run since someone last named him
 max_wakes_per_group_per_day = 20
+# How the numbers were chosen, and how to recalibrate: docs/group-addressing.md
 
 # Semantic recall. Embeds message history locally (Transformers.js WASM by
 # default — no API key, no network) and injects the most relevant past context

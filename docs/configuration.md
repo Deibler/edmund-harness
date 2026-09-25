@@ -90,6 +90,23 @@ Off by default. See [recovery.md](recovery.md) for what a guest can do.
 | `max_spend_usd` | none | Lifetime cap through the spend ledger |
 | `max_messages_per_day` | none | Daily cap |
 
+### `[group_addressing]`
+
+Off by default. Lets a classifier wake the assistant for a group message that
+is for him but doesn't say his name. The approach and the measurements behind
+each default are in [group-addressing.md](group-addressing.md).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mode` | `"off"` | `"off"`, `"shadow"` (record decisions in `data/addressing.jsonl`, wake nobody) or `"on"` |
+| `model` | `"typesafe/jev-1.13"` | The decision model, through OpenRouter (`[keys].openrouter`) |
+| `window_minutes` | `10` | A message this soon after he spoke is a candidate |
+| `reply_threshold` | `0.7` | Wake when "wants a reply" reaches this |
+| `addressed_floor` | `0.5` | Soon after he spoke, "said to him" must also reach this |
+| `addressed_threshold` | `0.7` | For a swipe-reply to him or a misspelled name, "said to him" alone wakes him at this |
+| `streak_budget` | `0.6` | Expected wrong wakes allowed in one run of wakes since someone last named him or swipe-replied to him |
+| `max_wakes_per_group_per_day` | `20` | Each wake is a full turn; this bounds a bad day |
+
 ## The model
 
 ### `[claude]`

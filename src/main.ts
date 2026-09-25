@@ -868,7 +868,7 @@ async function main() {
   // message for a chat whose catch-up turn hasn't started joins that turn (routeAccepted).
   // The missed-name check for groups. One instance serves both inbound paths
   // (catch-up below, the live watcher after it) so the daily cap is shared.
-  const addressChecker = new AddressChecker({ config, chatDb });
+  const addressChecker = new AddressChecker({ config, chatDb, contacts });
   let watchCursor = startCursor;
   let catchUp: CatchUp | null = null;
   if (config.behavior.catchup_on_boot !== false) {
