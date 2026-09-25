@@ -897,6 +897,35 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   /**
+   * Extra MCP servers for the assistant's workers, beyond the ones the
+   * harness builds itself. Workers run with --strict-mcp-config, so a server
+   * added with `claude mcp add` never reaches them: it goes here instead.
+   * Guests never get these. Bearer tokens in `headers` belong in the
+   * gitignored config.toml, never config.example.toml; the generated
+   * data/mcp*.json files that carry them are written mode 0600.
+   */
+  mcp_servers: z
+    .record(
+      z.string().regex(/^[A-Za-z0-9_-]+$/, "server names are letters, digits, _ and -"),
+      z
+        .object({
+          type: z.enum(["http", "sse", "stdio"]).default("http"),
+          url: z.string().url().optional(),
+          headers: z.record(z.string(), z.string()).default({}),
+          command: z.string().optional(),
+          args: z.array(z.string()).default([]),
+          env: z.record(z.string(), z.string()).default({}),
+          /** Which sessions get it. Operator only by default: a remote server
+           *  can often change things, and it cannot tell who is asking. Add
+           *  "contact" to reach allowlisted people who are not the operator. */
+          tiers: z.array(z.enum(["operator", "contact"])).default(["operator"]),
+        })
+        .refine((srv) => (srv.type === "stdio" ? Boolean(srv.command) : Boolean(srv.url)), {
+          message: "an http or sse server needs url; a stdio server needs command",
+        }),
+    )
+    .default({}),
+  /**
    * Experimental: answer group messages that are for the assistant but don't
    * say his name. Code nominates a candidate (a swipe-reply to him, a word
    * close to his name, or a message soon after he spoke); Jev decides whether

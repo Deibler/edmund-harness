@@ -424,6 +424,17 @@ fire_defer_max_minutes = 15
 # checked message plus the eight before it go to OpenRouter. "shadow" only
 # records decisions to data/addressing.jsonl. Rerun
 # scripts/addressing-calibrate.ts after changing the model.
+# Extra MCP servers for the assistant's workers. Workers run with
+# --strict-mcp-config, so a server added with `claude mcp add` never reaches
+# them; declare it here. Guests never get these. `tiers` defaults to
+# ["operator"]; add "contact" to reach allowlisted people who aren't you.
+# Keep real tokens in config.toml only.
+# [mcp_servers.openskycam]
+# type = "http"                  # "http" | "sse" | "stdio"
+# url = "https://api.openskycam.org/v1/mcp"
+# headers = { Authorization = "Bearer svk_your_agent_key" }
+# tiers = ["operator"]
+
 [group_addressing]
 mode = "off"                     # "off" | "shadow" | "on"
 model = "typesafe/jev-1.13"

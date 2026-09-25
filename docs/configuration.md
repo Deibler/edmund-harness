@@ -90,6 +90,29 @@ Off by default. See [recovery.md](recovery.md) for what a guest can do.
 | `max_spend_usd` | none | Lifetime cap through the spend ledger |
 | `max_messages_per_day` | none | Daily cap |
 
+### `[mcp_servers]`
+
+MCP servers the assistant's workers load besides the ones the harness builds
+(its own tools, RadarOmega, screen control, the browser). Workers run with
+`--strict-mcp-config`, so a server added with `claude mcp add` reaches your
+own Claude Code sessions but never theirs. Declare it here instead, one table
+per server: `[mcp_servers.<name>]`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `type` | `"http"` | `"http"`, `"sse"` or `"stdio"` |
+| `url` | none | Required for `http` and `sse` |
+| `headers` | `{}` | Sent with every request, for example `{ Authorization = "Bearer …" }` |
+| `command`, `args`, `env` | none, `[]`, `{}` | For `stdio`: the process to start |
+| `tiers` | `["operator"]` | Which sessions get it. Add `"contact"` to reach allowlisted people who are not the operator |
+
+Guests never get these servers. A name the harness uses itself
+(`edmund-harness`, `radaromega`, `computer`, `chrome-devtools`, `robinhood`,
+`ghost`, and Claude Code's reserved `computer-use`) is refused with a warning.
+Tokens belong in `config.toml`, never the example file. The generated
+`data/mcp*.json` files that carry them are written with mode 0600. Changes
+take effect at the next daemon start.
+
 ### `[group_addressing]`
 
 Off by default. Lets a classifier wake the assistant for a group message that

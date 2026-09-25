@@ -9,14 +9,14 @@ import { modelProfileForSession } from "../model/profile.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
 import { classifyError } from "../recovery/classify.ts";
 import { HEALERS } from "../recovery/healers.ts";
-import { disallowedBuiltinTools, hostAccess } from "../security/policy.ts";
+import { disallowedBuiltinTools, hostAccess, tierForSessionKey } from "../security/policy.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { DEBUG, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import { type IterationUsage, contextTokens, iterationContextTokens } from "./auto-compact.ts";
 import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
-import { ensureMcpConfig, envelopeNeedsBrowser, toolEnv } from "./mcp-config.ts";
+import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
 import { personaFingerprint } from "./persona.ts";
 import { WorkerPool } from "./pool.ts";
 import {
@@ -333,13 +333,13 @@ export async function runClaude(
   // Trading sessions always get the trading loadout (Robinhood tools), which
   // takes precedence over the browser heuristic.
   const isTrading = isTradingSession(input.sessionKey);
-  const mcpConfigPath = isTrading
-    ? mcpConfigs.trading
-    : isGuest
-      ? mcpConfigs.guest
-      : needsBrowser
-        ? mcpConfigs.withBrowser
-        : mcpConfigs.default;
+  const mcpConfigPath = isGuest
+    ? mcpConfigs.guest
+    : pickMcpConfig(mcpConfigs, {
+        trading: isTrading,
+        tier: tierForSessionKey(config, input.sessionKey),
+        browser: needsBrowser,
+      });
   // Named-orchestrator sessions carry their persona + model override; main
   // resolves to the synthetic builtin entry (no overrides), trading/cron to
   // null. A deleted config entry behind a live orch: session also resolves
