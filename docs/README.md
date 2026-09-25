@@ -15,6 +15,7 @@ code looks the way it does, rather than how to operate it.
 | [context-economics.md](context-economics.md) | Why prompt composition is a pricing decision, and four wrong levers |
 | [proactive-economics.md](proactive-economics.md) | Gates, intensity, engagement decay, outcome backfill |
 | [failure-model.md](failure-model.md) | Sent is a claim; classified failures, guards, barge-in |
+| [group-addressing.md](group-addressing.md) | Waking him for group messages that forget his name: measured thresholds, and a budget against runaway misfires |
 | [skill-exchange.md](skill-exchange.md) | One person's playbook offered to another, and the consent gate |
 | [engineering-notes.md](engineering-notes.md) | Rules that cost days to learn, most of them not about messaging |
 

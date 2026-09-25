@@ -9,7 +9,7 @@ import { Database } from "bun:sqlite";
  * arrived with no parent (91 of 91 in the 90 days to 2026-09-24).
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backlogGroups } from "../src/boot/catchup.ts";
@@ -18,10 +18,17 @@ import { buildEnvelope } from "../src/channels/envelope.ts";
 import { passesGroupRegate } from "../src/channels/turn.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import {
+  ADDRESS_QUESTIONS_VERSION,
   AddressChecker,
+  type RateBand,
   addressState,
   candidateReason,
+  lastEngagedRow,
+  loadCalibration,
+  measuredRate,
   nameLikeWord,
+  opensWithOtherMember,
+  rateBands,
   shouldWake,
 } from "../src/gating/address-check.ts";
 import { ChatDb } from "../src/imessage/db.ts";
@@ -32,6 +39,7 @@ import { askJev, readAnswers } from "../src/jev/client.ts";
 const CREW = "any;+;crew";
 const OTHER = "any;+;other";
 const STRANGERS = "any;+;strangers";
+const RUN = "any;+;run";
 const DM = "any;-;+15550100001";
 const NOW = Date.now();
 const appleNs = (ms: number) => (ms - 978_307_200_000) * 1_000_000;
@@ -50,11 +58,13 @@ const dbPath = join(dir, "chat.db");
     CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, chat_identifier TEXT, style INTEGER);
     CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
     CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
+    CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
     CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, filename TEXT, total_bytes INTEGER, user_info BLOB);
     CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
     INSERT INTO chat VALUES (1, '${CREW}', 'crew', 43), (2, '${OTHER}', 'other', 43),
-      (3, '${STRANGERS}', 'strangers', 43), (4, '${DM}', '+15550100001', 45);
+      (3, '${STRANGERS}', 'strangers', 43), (4, '${DM}', '+15550100001', 45), (5, '${RUN}', 'run', 43);
     INSERT INTO handle VALUES (1, '+15550100001'), (2, '+15550100002');
+    INSERT INTO chat_handle_join VALUES (1, 1), (1, 2), (5, 1), (5, 2);
   `);
   const add = (
     row: number,
@@ -97,20 +107,65 @@ const dbPath = join(dir, "chat.db");
   add(11, 3, { handle: 2, at: NOW, text: "thanks, and what about tomorrow" });
   add(12, 4, { handle: 1, at: NOW, text: "what about tomorrow" });
   add(13, 1, { handle: 1, at: NOW, text: "edmund what about tomorrow" });
+  // RUN: one person keeps talking to him without his name, then names someone else.
+  add(20, 5, { handle: 1, at: NOW - 9 * min, text: "edmund what's the score" });
+  add(21, 5, { me: true, at: NOW - 8.5 * min, text: "3-1" });
+  add(22, 5, { handle: 1, at: NOW - 8 * min, text: "who scored" });
+  add(23, 5, { me: true, at: NOW - 7.5 * min, text: "Smith, twice" });
+  add(24, 5, { handle: 1, at: NOW - 7 * min, text: "and the other one" });
+  add(25, 5, { me: true, at: NOW - 6.5 * min, text: "Jones" });
+  add(26, 5, { handle: 1, at: NOW - 6 * min, text: "nice, when's the next game" });
+  add(27, 5, { handle: 1, at: NOW - 5.5 * min, text: "Sam who's driving tonight?" });
+  add(28, 5, { handle: 2, at: NOW - 5 * min, text: "Sam here, I can drive" });
+  add(29, 5, { handle: 1, at: NOW - 4.5 * min, text: "who's driving Sam" });
+  add(30, 5, { handle: 1, at: NOW - 4 * min, text: "edmund thanks" });
+  add(31, 5, { handle: 1, at: NOW - 3.5 * min, text: "one more thing" });
+  add(32, 5, { handle: 2, at: NOW - 3 * min, text: "ok", thread: "g25" });
+  add(33, 5, { handle: 1, at: NOW - 2.5 * min, text: "what about Sunday" });
   w.close();
 }
 const chatDb = new ChatDb(dbPath);
 
-function makeConfig(mode: "off" | "shadow" | "on", extra: Record<string, unknown> = {}) {
+function makeConfig(
+  mode: "off" | "shadow" | "on",
+  extra: Record<string, unknown> = {},
+  dataDir = dir,
+) {
   return ConfigSchema.parse({
     self: { handles: [] },
-    allowlist: { groups: [CREW, OTHER] },
+    allowlist: { groups: [CREW, OTHER, RUN] },
     identity: { names: ["edmund", "ed"] },
     keys: { openrouter: "test-key" },
-    paths: { data_dir: dir },
+    paths: { data_dir: dataDir },
     group_addressing: { mode, ...extra },
   });
 }
+
+/** A config with its own decision log, and optionally a measured table. */
+function freshConfig(rates?: RateBand[]) {
+  const d = mkdtempSync(join(dir, "fresh-"));
+  if (rates) {
+    mkdirSync(join(d, "addressing"), { recursive: true });
+    writeFileSync(
+      join(d, "addressing", `calibration-${ADDRESS_QUESTIONS_VERSION}.json`),
+      JSON.stringify({ version: ADDRESS_QUESTIONS_VERSION, rates }),
+    );
+  }
+  return makeConfig("on", {}, d);
+}
+
+const band = (from: number, n: number, yes: number): RateBand => ({
+  from,
+  to: from + 0.1,
+  n,
+  yes,
+  rate: (yes + 1) / (n + 2),
+});
+
+const contacts = {
+  displayName: (h: string) =>
+    h === "+15550100001" ? "Alex Kim" : h === "+15550100002" ? "Sam Rivera" : null,
+};
 
 const msg = (row: number): InboundMessage => {
   const m = readMessage(chatDb, row);
@@ -118,11 +173,14 @@ const msg = (row: number): InboundMessage => {
   return m;
 };
 
-/** A decisions endpoint that answers every call with these probabilities, and counts calls. */
-function jev(addressed: number, wantsReply: number, status = 200) {
+/** A decisions endpoint that answers every call with these probabilities, and counts calls.
+ *  `delays[i]` holds the i-th answer back that many ms, so answers can arrive out of order. */
+function jev(addressed: number, wantsReply: number, status = 200, delays: number[] = []) {
   const calls: unknown[] = [];
   const f = (async (_url: string, init: RequestInit) => {
+    const wait = delays[calls.length] ?? 0;
     calls.push(JSON.parse(String(init.body)));
+    if (wait > 0) await Bun.sleep(wait);
     return new Response(
       JSON.stringify({
         answers: {
@@ -204,11 +262,15 @@ describe("what Jev is shown", () => {
 describe("deciding to wake him", () => {
   const config = makeConfig("on");
 
-  test("soon after he spoke, only 'wants a reply' wakes him", () => {
-    expect(shouldWake("after-assistant", { addressed: 0.95, wants_reply: 0.2 }, config)).toBe(
-      false,
-    );
-    expect(shouldWake("after-assistant", { addressed: 0.3, wants_reply: 0.65 }, config)).toBe(true);
+  test("soon after he spoke, 'wants a reply' wakes him only with some 'said to him'", () => {
+    const wake = (addressed: number, wants_reply: number) =>
+      shouldWake("after-assistant", { addressed, wants_reply }, config);
+    expect(wake(0.95, 0.2)).toBe(false);
+    // A friend asking a friend: wants a reply, not from him.
+    expect(wake(0.3, 0.9)).toBe(false);
+    // 0.6-0.7 was for him 18% of the time.
+    expect(wake(0.6, 0.65)).toBe(false);
+    expect(wake(0.6, 0.75)).toBe(true);
   });
 
   test("a misspelled name or a swipe-reply to him: 'said to him' is enough", () => {
@@ -235,6 +297,7 @@ describe("the checker", () => {
       reason: "after-assistant",
       addressed: 0.9,
       wantsReply: 0.85,
+      streak: 1,
     });
   });
 
@@ -306,6 +369,10 @@ describe("the checker", () => {
     expect(records).toContain('"row":4');
     expect(records).not.toContain("when does it stop");
     expect(records).not.toContain("+1555");
+    const first = JSON.parse(records.split("\n")[0]!);
+    for (const k of ["rate", "rateSource", "streak", "streakBudget", "overBudget", "woke"]) {
+      expect(first).toHaveProperty(k);
+    }
   });
 });
 
@@ -334,7 +401,183 @@ describe("a woken message reaches the turn", () => {
     const marked = buildEnvelope({ ...base, messages: [{ ...msg(4), unnamedWake: wake }] });
     expect(marked).toContain("Not named:");
     expect(marked).toContain("KEEP_QUIET");
+    expect(marked).not.toContain("in a row");
     expect(buildEnvelope({ ...base, messages: [msg(4)] })).not.toContain("Not named:");
+  });
+
+  test("deep in an un-named run, the envelope says how deep", () => {
+    const base = { senderLabel: "Friend", lastInboundMs: null, isGroup: true };
+    const third = buildEnvelope({
+      ...base,
+      messages: [{ ...msg(4), unnamedWake: { ...wake, streak: 3 } }],
+    });
+    expect(third).toContain(
+      "the 3rd message in a row you were woken for without anyone saying your name",
+    );
+  });
+
+  test("the streak survives the pending queue; a malformed one is refused", () => {
+    const deep = { ...wake, streak: 2 };
+    const back = entryToInbound(
+      parsePendingLine(JSON.stringify(toPendingEntry({ ...msg(4), unnamedWake: deep })))!,
+    );
+    expect(back?.unnamedWake).toEqual(deep);
+    for (const bad of [0, 1.5, "2"]) {
+      const junk = parsePendingLine(
+        JSON.stringify({ ...toPendingEntry(msg(4)), unnamedWake: { ...wake, streak: bad } }),
+      );
+      expect(junk?.unnamedWake).toBeUndefined();
+    }
+  });
+});
+
+describe("who else is in the chat", () => {
+  const config = makeConfig("on");
+
+  test("a message opening with another member's first name is flagged, never named", async () => {
+    expect(opensWithOtherMember(msg(27), chatDb, contacts, config)).toBe(true);
+    // Sam saying his own name, or a name later in the message, is not the pattern.
+    expect(opensWithOtherMember(msg(28), chatDb, contacts, config)).toBe(false);
+    expect(opensWithOtherMember(msg(29), chatDb, contacts, config)).toBe(false);
+    expect(opensWithOtherMember(msg(27), chatDb, undefined, config)).toBe(false);
+
+    const { f, calls } = jev(0.1, 0.1);
+    const checker = new AddressChecker({ config: freshConfig(), chatDb, contacts, fetch: f });
+    await checker.check(msg(27), "after-assistant");
+    await checker.check(msg(29), "after-assistant");
+    const sent = calls as { state: { latestMessage: Record<string, unknown> } }[];
+    expect(sent[0]!.state.latestMessage.opensWithNameOf).toBe("someone else in this chat");
+    expect(sent[1]!.state.latestMessage.opensWithNameOf).toBeUndefined();
+    // Jev gets the fact, not the member list: no name the text doesn't hold.
+    expect(JSON.stringify(sent)).not.toContain("Rivera");
+    expect(JSON.stringify(sent)).not.toContain("Alex");
+  });
+});
+
+describe("measured rates", () => {
+  test("bands count only messages that pass the floor, smoothed so none claims certainty", () => {
+    const rows = [
+      { wantsReply: 0.75, addressed: 0.8, forHim: true },
+      { wantsReply: 0.72, addressed: 0.6, forHim: false },
+      { wantsReply: 0.78, addressed: 0.2, forHim: true },
+      { wantsReply: 1, addressed: 0.9, forHim: true },
+    ];
+    const bands = rateBands(rows, 0.5);
+    expect(bands[7]).toMatchObject({ n: 2, yes: 1, rate: 0.5 });
+    expect(bands[9]).toMatchObject({ n: 1, yes: 1, rate: 2 / 3 });
+  });
+
+  test("a score takes its band's rate; Jev's own probability where nothing was measured", () => {
+    const cal = { version: ADDRESS_QUESTIONS_VERSION, bands: [band(0.7, 25, 15), band(0.8, 0, 0)] };
+    expect(measuredRate(0.75, cal)).toEqual({ value: 16 / 27, source: "measured" });
+    expect(measuredRate(0.85, cal)).toEqual({ value: 0.85, source: "jev" });
+    expect(measuredRate(0.85, null)).toEqual({ value: 0.85, source: "jev" });
+  });
+
+  test("a table measured on another wording is not used", () => {
+    const d = mkdtempSync(join(dir, "cal-"));
+    mkdirSync(join(d, "addressing"));
+    const path = join(d, "addressing", `calibration-${ADDRESS_QUESTIONS_VERSION}.json`);
+    writeFileSync(path, JSON.stringify({ version: "older", rates: [band(0.7, 25, 15)] }));
+    expect(loadCalibration(d)).toBeNull();
+    writeFileSync(
+      path,
+      JSON.stringify({ version: ADDRESS_QUESTIONS_VERSION, rates: [band(0.7, 25, 15)] }),
+    );
+    expect(loadCalibration(d)?.bands).toHaveLength(1);
+  });
+});
+
+describe("the un-named streak", () => {
+  // 0.7-0.8 right about 59% of the time: each such wake costs ~0.41 of the 0.6 budget.
+  const middling = [band(0.7, 25, 15)];
+  // 0.9+ right 38 of 39: each costs ~0.03.
+  const confident = [band(0.9, 37, 37)];
+
+  test("it starts after the last message that named him or swipe-replied to him", () => {
+    expect(lastEngagedRow(chatDb, RUN, 22, makeConfig("on"))).toBe(20);
+    expect(lastEngagedRow(chatDb, RUN, 31, makeConfig("on"))).toBe(30);
+    expect(lastEngagedRow(chatDb, RUN, 33, makeConfig("on"))).toBe(32);
+    expect(lastEngagedRow(chatDb, CREW, 5, makeConfig("on"))).toBe(0);
+    // A tapback on his message is not addressing him.
+    expect(lastEngagedRow(chatDb, CREW, 8, makeConfig("on"))).toBe(5);
+  });
+
+  test("middling wakes stop once the expected misfires pass the budget; naming him resets it", async () => {
+    const checker = new AddressChecker({
+      config: freshConfig(middling),
+      chatDb,
+      fetch: jev(0.8, 0.75).f,
+    });
+    const first = await checker.check(msg(22), "after-assistant");
+    expect(first.wake).toBe(true);
+    expect(first.woken?.unnamedWake.streak).toBe(1);
+    const second = await checker.check(msg(24), "after-assistant");
+    expect(second).toMatchObject({ wake: false, overBudget: true });
+    expect(second.streak?.count).toBe(1);
+    expect((await checker.check(msg(26), "after-assistant")).overBudget).toBe(true);
+    // Row 30 says his name: a fresh streak.
+    const after = await checker.check(msg(31), "after-assistant");
+    expect(after.wake).toBe(true);
+    expect(after.streak).toEqual({ count: 0, expected: 0 });
+  });
+
+  test("a confident back-and-forth barely decays", async () => {
+    const checker = new AddressChecker({
+      config: freshConfig(confident),
+      chatDb,
+      fetch: jev(0.9, 0.95).f,
+    });
+    const streaks: (number | undefined)[] = [];
+    for (const row of [22, 24, 26]) {
+      const d = await checker.check(msg(row), "after-assistant");
+      expect(d.wake).toBe(true);
+      streaks.push(d.woken?.unnamedWake.streak);
+    }
+    expect(streaks).toEqual([1, 2, 3]);
+  });
+
+  test("without a measured table, Jev's own probability is the rate", async () => {
+    const checker = new AddressChecker({ config: freshConfig(), chatDb, fetch: jev(0.8, 0.75).f });
+    const a = await checker.check(msg(22), "after-assistant");
+    expect(a.rate).toEqual({ value: 0.75, source: "jev" });
+    expect(a.wake).toBe(true);
+    expect((await checker.check(msg(24), "after-assistant")).wake).toBe(true);
+    expect((await checker.check(msg(26), "after-assistant")).overBudget).toBe(true);
+  });
+
+  test("a restart loses nothing: the streak is read back from the decision log", async () => {
+    const config = freshConfig(middling);
+    await new AddressChecker({ config, chatDb, fetch: jev(0.8, 0.75).f }).check(
+      msg(22),
+      "after-assistant",
+    );
+    const restarted = new AddressChecker({ config, chatDb, fetch: jev(0.8, 0.75).f });
+    expect((await restarted.check(msg(24), "after-assistant")).overBudget).toBe(true);
+  });
+
+  test("two messages at once are judged in order, so both cannot spend the same budget", async () => {
+    // Jev answers the second message first, as a real one can.
+    const { f } = jev(0.8, 0.75, 200, [40, 0]);
+    const checker = new AddressChecker({ config: freshConfig(middling), chatDb, fetch: f });
+    const [a, b] = await Promise.all([
+      checker.check(msg(22), "after-assistant"),
+      checker.check(msg(24), "after-assistant"),
+    ]);
+    expect(a.wake).toBe(true);
+    expect(b.overBudget).toBe(true);
+  });
+
+  test("the budget is only for wakes soon after he spoke", async () => {
+    const checker = new AddressChecker({
+      config: freshConfig(middling),
+      chatDb,
+      fetch: jev(0.8, 0.75).f,
+    });
+    await checker.check(msg(22), "after-assistant");
+    const swipe = await checker.check(msg(32), "reply-to-assistant");
+    expect(swipe.wake).toBe(true);
+    expect(swipe.streak).toBeUndefined();
   });
 });
 

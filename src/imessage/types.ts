@@ -36,6 +36,9 @@ export type UnnamedWake = {
   addressed: number;
   /** P(the sender wants the assistant to reply or act). */
   wantsReply: number;
+  /** For a message soon after he spoke: its place in the run of wakes since
+   *  someone last named him or swipe-replied to him (1 = the first). */
+  streak?: number;
 };
 
 /** Hydrated parent-of-reply context: the message that a new inbound replies to. */

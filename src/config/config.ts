@@ -910,11 +910,20 @@ export const ConfigSchema = z.object({
       model: z.string().default("typesafe/jev-1.13"),
       /** A message this soon after the assistant spoke is a candidate. */
       window_minutes: z.number().positive().default(10),
-      /** Wake when Jev's "wants a reply" probability reaches this. */
-      reply_threshold: z.number().min(0).max(1).default(0.6),
+      /** Wake when Jev's "wants a reply" probability reaches this. Measured
+       *  2026-09-24: 0.6-0.7 was for him 18% of the time. */
+      reply_threshold: z.number().min(0).max(1).default(0.7),
+      /** Soon after he spoke, "said to him" must also reach this: Jev reads
+       *  "wants a reply" as from anybody. */
+      addressed_floor: z.number().min(0).max(1).default(0.5),
       /** For a misspelled name or a swipe-reply to him: wake when "said to
        *  him" reaches this, even if no reply is expected. */
       addressed_threshold: z.number().min(0).max(1).default(0.7),
+      /** Expected wrong wakes allowed in one un-named streak (wakes soon after
+       *  he spoke, since someone last named him or swipe-replied to him), each
+       *  counted as 1 minus its measured rate. Stops a runaway of misfires
+       *  without slowing a confident back-and-forth. */
+      streak_budget: z.number().min(0).default(0.6),
       /** Each wake is a full turn; this bounds a misbehaving day. */
       max_wakes_per_group_per_day: z.number().int().positive().default(20),
     })

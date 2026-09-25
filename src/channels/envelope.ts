@@ -131,7 +131,17 @@ export function describeUnnamedWake(w: UnnamedWake): string {
         ? "it has a word close to your name"
         : "it came in a few minutes after you last spoke";
   const scores = `said to you ${w.addressed.toFixed(2)}, wants a reply ${w.wantsReply.toFixed(2)}`;
-  return `this message doesn't say your name, but ${why}, and a classifier judged it's for you (${scores}). It can be wrong. If it isn't for you, or nothing needs saying, reply KEEP_QUIET.`;
+  const run =
+    w.streak && w.streak >= 2
+      ? ` It is the ${ordinal(w.streak)} message in a row you were woken for without anyone saying your name: each of your replies opens the way for the next, so the longer the run, the likelier one of them was never for you.`
+      : "";
+  return `this message doesn't say your name, but ${why}, and a classifier judged it's for you (${scores}). It can be wrong.${run} If it isn't for you, or nothing needs saying, reply KEEP_QUIET.`;
+}
+
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
 }
 
 export function buildEnvelope(ctx: EnvelopeContext): string {
