@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.3.3
+
+### Patch Changes
+
+- 76c7713: After a restart, live messages are answered while the boot catch-up is still running. Before, the watcher started only after every catch-up turn had finished. On 2026-09-24 two long turns in one DM kept every other chat unanswered for 87 minutes.
+  
+  Catch-up now:
+  - reads the backlog and writes a durable ack for each row;
+  - hands the watcher its cursor at once, and runs the turns in the background;
+  - merges each chat's orphans and backlog into one turn;
+  - adds a live message to its chat's catch-up turn if that turn hasn't started, so the chat is answered once, oldest first.
+  
+  The recovery loops still start only once catch-up has drained.
+- 76c7713: Scheduled fires for one chat no longer hold up other chats. Before, the scheduler waited for each fire, a whole model turn, before starting the next. On 2026-09-25 a 38-minute background-job turn in one DM delayed the mirror's severe-weather check by 34 minutes, so it was skipped as stale. Each session's fires still run one at a time, in order.
+- 96fa970: Experimental `[group_addressing]`, off by default. It lets a group message through when it's meant for the assistant but doesn't say his name. Code picks the candidates: a swipe-reply to one of his messages, a word within two letters of one of his names, or a message soon after he spoke. Jev (`typesafe/jev-1.13` on OpenRouter) decides whether each one is for him. A message it lets through reaches his turn marked as un-named, and he still decides whether to answer. `"shadow"` mode only records decisions, to `data/addressing.jsonl`.
+  
+  On the hand labels, a 0.6 threshold caught 37 of 49 missed messages and woke him wrongly for 17 of 708 other messages. `scripts/addressing-calibrate.ts` reruns that measurement after the wording or model changes.
+  
+  Swipe replies now carry their parent. iMessage stores the parent in `thread_originator_guid`, which the watcher never read, so every inline reply arrived with no parent: 91 of 91 in 90 days.
+- 76c7713: The `remember_about_subject` `outcome` field now says it takes one word: worked, rejected, mixed or untested. The story goes in `learned`. The `remember_about_person` `section` field now lists its five sections and says preferences go in `what-ive-learned`. Edmund had been writing a sentence as the outcome (8 times since 2026-09-19) and naming a "preferences" section that doesn't exist.
+- 76c7713: The recall index's keyword (FTS) table is repaired only by the daemon, and the repair runs as one transaction. Before, every process that opened the store, including each MCP server and each generated image, rebuilt the table whenever the counts disagreed. Those rebuilds ran without a lock timeout and outside a transaction, and they interleaved with the daemon's writes. On 2026-09-24 the rowid map held 933 entries for 104,658 rows, so updates added duplicate entries and each `semantic_search` took 5–34 s.
+  
+  What changed:
+  - The store opens through `openDb`, which sets `busy_timeout`.
+  - The boot check also catches a same-sized map that points at the wrong documents.
+  - The indexer skips `pending.json`, which the kitchen drain rewrites every pass, so it no longer re-embeds three files a minute.
+- 76c7713: A turn is no longer ended by a result that belongs to a turn the CLI started itself. When a session is resumed after its last process was killed with a background shell running, the CLI first delivers a "stopped" notification as its own turn and prints a result with `num_turns` 0. That happens before it reads our message. On 2026-09-25 that result ended a turn after 1 second. The model kept working untracked, and the memory governor evicted the "idle" worker in the middle of a render.
+  
+  Workers now:
+  - pass `--replay-user-messages`;
+  - stamp each message with a uuid;
+  - skip a result with `num_turns` 0 that arrives before that message's echo.
+  
+  This applies to both the resident worker and the per-turn process.
+- 96fa970: The spend ledger now books each turn's actual cost. The Claude CLI's `total_cost_usd` is the running total for the whole model session, carried across process restarts. Turns, cron fires and proactive fires resume a conversation, and they were booking that total as each turn's cost. One DM logged $99.03 for a turn that cost $0.11, and the ledger summed to 4-11x the real spend.
+  
+  Those callers now pass the total as `sessionTotalUsd`, along with the model session id, and the ledger books the rise since that session's last total. When that can't be known, the cost is recorded as unknown (null):
+  - the total dropped, because a killed process restored an older total;
+  - or a resumed session has no earlier total in the ledger.
+  
+  The log field is now `session_total` instead of `cost`. `scripts/spend-ledger-repair.ts` repairs rows booked before the fix; it dry-runs by default, and `--apply` backs up `spend.db` first.
+
 ## 0.3.2
 
 ### Patch Changes
