@@ -1,60 +1,95 @@
 ---
 name: skycam
-description: Snapshot and review the SkyStream live sky camera (Lancaster County, PA). Use when someone asks what the sky/weather looks like right now, to "show me the camera", check for planes/birds/anything overhead, or confirm the camera is up. Grabs a fresh still, lets you describe what's visible, and can send it into the chat. Not for historical sightings, recorded clips, detections, reports, or stats — that's the `skystream` skill.
+description: The sky camera over the house (openskycam, camera sky01, Lancaster County PA), through the `mcp__openskycam__*` tools. Use when someone asks what the sky looks like, to see the camera, for a picture of the sky at some moment, for recorded footage, for what the detection models found (planes, birds, meteors), or to build and run a detection workflow. Photos come from recorded video, one to three minutes behind live.
 ---
 
 # skycam
 
-One fresh frame off the live sky camera, then look at it and (optionally) send it.
+The camera records the sky continuously. Video goes to openskycam (SkyVision:
+a Pi uploads 60-second segments to Cloudflare R2), and the Mac mini runs
+detection workflows over it. You reach all of it through the openskycam MCP
+server: `guide`, `footage`, `workflows`, `runs`, `images`, `buckets`,
+`models`. Each takes an `action`.
+
+The tools load on first use (search for `openskycam` if they aren't listed). The
+server's rules come with its instructions, and they bind: read `guide` before
+acting, times are UTC, preview before any delete, verify every change by
+reading it back.
 
 ## Triggers
 
-- "what's the sky look like" / "how's the weather out" (a real look, not a forecast — that's `weather`)
-- "show me the camera" / "snapshot the sky cam" / "what's overhead right now"
-- "anything in the sky?" / "any planes / birds / UFOs right now?"
-- "is the camera working / online?"
+- "what's the sky look like", "show me the camera", "anything overhead": a photo of now
+- "what did the sky look like at sunset / at 3 this morning": a photo at that time
+- "did the camera catch anything", "any planes / birds / meteors today": detections from runs
+- "send me the video from 9pm": footage download
+- "run the plane detector on last night": a workflow run
+- "is the camera working": `footage`, action `cameras`
 
-## Flow
+## A photo of right now
 
-1. Capture a frame:
+1. `footage` with action `cameras`. Take `newest_recording` for camera `sky01`.
+   It is one to three minutes behind real time; say so if it matters.
+   If `receiving` is false, the camera or its uploader is down. Say that
+   rather than sending an old frame.
+2. `footage` with action `photo`, `camera: "sky01"`, and `at` about 30 seconds
+   after `newest_recording`, since the time must fall inside a recording. It
+   takes about 5 seconds. If only a `photo_id` comes back, call `photo` again
+   with that `photo_id`.
+3. Look at the preview it returns and describe what is actually there: cloud
+   cover, light, anything in frame. Report `captured_at` in Eastern time,
+   not UTC.
+4. To show it, download the full frame into this conversation's folder and
+   send the file:
    ```bash
-   SHOT=$(bash skills/skycam/scripts/snap.sh)
+   curl -fsSL -o "sky-$(date +%Y%m%d-%H%M%S).jpg" "<full_size.url>"
    ```
-   `$SHOT` is the absolute path to a JPEG in the conversation sandbox. The script self-heals
-   across capture methods (app API → camsnap → direct RTSP), so just run it.
-2. **Review it** — view `$SHOT` and describe what's actually visible: time of day, cloud/clear,
-   anything notable in frame (aircraft, birds, contrails, the moon). Be specific and brief.
-3. If they wanted to *see* it (not just hear about it), send it:
-   ```
-   send_attachment(file_path=$SHOT, caption="<one-line what's up there>")
-   ```
-   Your final text reply is auto-sent, so a short caption + a sentence of description is plenty.
+   Then `send_attachment(file_path=<that file>, caption=<one line>)`. The file
+   is 3840x2160, about 1 MB.
 
-## Example
+**Never paste a download link into a chat.** Links grant access to their file
+for an hour, and the server's rule is to give them only to the user. Download
+and send the file instead.
 
-```bash
-SHOT=$(bash skills/skycam/scripts/snap.sh)
-# -> <repo>/sandbox/<conversation>/skycam-20260531-2312.jpg
-```
-Then look at the image and reply, e.g. "Clear night, no traffic overhead right now — just a few
-stars." Attach it if they asked to see it.
+## A past moment
 
-## Notes
+Use `footage` with action `days` for the month, then action `list` with
+`from`/`to` around the moment. Then take a `photo` inside a listed recording,
+between `start` and `start + seconds`. For a series of frames, such as a
+sunset or a before and after, take several photos. For many frames at a fixed
+interval, build a workflow instead.
 
-- The camera host comes from `$SKYCAM_CAMERA_HOST` and the SkyStream app from `$SKYSTREAM_API_HOSTS`
-  (space-separated, first reachable wins; defaults to `http://127.0.0.1:8080`). The app is the primary
-  source and always points at the current camera, so prefer letting the script handle it.
-- For "is anything flying right now", the live answer is in the SkyStream app's tracked-objects
-  feed, but a snapshot is the quick visual confirmation.
-- If the ask drifts to *what's been detected*, a *clip/report*, *stats*, or the *live model/cloud
-  status* — that's the `skystream` skill (`bash skills/skystream/scripts/sky.sh`), not a snapshot.
+## What the models found
 
-## Anti-patterns
+- `images`, action `search`: filter by `class`, `min_confidence`, `camera`,
+  `from`/`to`, `bucket_id` or `run_id`. Newest first.
+- `images`, action `view`: shows up to four images at 768 px, with their
+  detections drawn in.
+- `images`, action `link`: full size. Download it and send the file, as above.
 
-- Using this for the *forecast* — that's the `weather` skill. This is a literal look at the sky.
-- Hardcoding or guessing the camera IP / building your own ffmpeg line — run `snap.sh`; it has the
-  fallbacks and the right URL.
-- Sending the snapshot without looking at it first. Review, then decide whether a still even helps
-  (a pitch-black night frame isn't worth sending — say so instead).
-- Capturing a burst of frames. One still answers "what's up there"; only loop if explicitly asked
-  to watch for motion.
+Say what was detected and when, and how confident the model was. Don't claim
+a detection is a specific object when the class is generic.
+
+## Workflows and runs
+
+Follow `guide` with `build-a-workflow` and `verify-changes`. The order is
+fixed: `runs` action `test` before `start`, then `watch` until the run
+finishes. Each `watch` waits at most 45 seconds, so call it again. The Mac
+mini runs one workflow at a time: a new run waits behind an unfinished one,
+and `waiting_behind` says which. Starting a long run is the operator's call;
+check before starting one someone else asked for.
+
+## Changes and deletes
+
+Create, update or delete workflows, buckets, models or devices only when you
+were asked to, in so many words. Edits carry the revision you last read; on a
+conflict, read again and reapply. A delete returns a preview first. Confirm
+only what was asked for, then read it back and report what you observed.
+
+## When it's broken
+
+- `receiving: false`, or no recording in the last few minutes: the camera or
+  its Pi uploader is down.
+- Photos never finish: `runs`, action `runtimes`. The Mac mini processor
+  (launchd `org.openskycam.workshop`) must have checked in recently.
+
+Tell the person what is down. Don't describe a frame you didn't get.

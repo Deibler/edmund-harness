@@ -102,6 +102,7 @@ where every allowlisted contact was the operator.
 | Conversation turns | Anthropic or OpenAI, through the CLI you are logged into | Every turn |
 | Media generation, transcription, video understanding | OpenRouter, or the provider you configure | When a tool is called or a voice memo arrives |
 | Group messages that don't name the assistant | OpenRouter (Jev), the new message and the eight before it, senders as letters | If `[group_addressing].mode` is on or shadow; see [group-addressing.md](group-addressing.md#what-leaves-the-machine) |
+| Tool calls to servers under `[mcp_servers]` | The server's `url`, with its configured headers | When the model calls one of its tools; never from guest sessions |
 | Web search | Brave | When the model searches |
 | Web fetch | The URL the model chose | When the model fetches |
 | Payments | Stripe | When a person tops up credits |

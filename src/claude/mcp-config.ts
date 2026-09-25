@@ -1,10 +1,10 @@
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config/config.ts";
 import * as intSettings from "../integrations/settings.ts";
-import { hostAccess, tierForSessionKey } from "../security/policy.ts";
+import { type SessionTier, hostAccess, tierForSessionKey } from "../security/policy.ts";
 import { log } from "../util/log.ts";
 import { directClaudeEnv } from "./direct-env.ts";
 
@@ -53,8 +53,13 @@ const COMPUTER_USE_PATH = resolve(
  * daemon's env — loadout-check.ts warns at boot if either leaks in.
  */
 export type McpConfigPaths = {
+  /** Operator sessions. */
   default: string;
   withBrowser: string;
+  /** Contact-tier sessions: the same, minus configured servers whose
+   *  `tiers` leave contacts out. */
+  contact: string;
+  contactWithBrowser: string;
   trading: string;
   /** Guest sessions: the in-repo server ONLY. RadarOmega and chrome-devtools
    *  are foreign server processes that in-server filtering can't touch, so
@@ -62,9 +67,80 @@ export type McpConfigPaths = {
   guest: string;
 };
 
+/** Names the harness builds itself, plus the one Claude Code reserves. A
+ *  configured server may not take one: it would silently replace, or be
+ *  dropped in favour of, the built-in. */
+const RESERVED_SERVER_NAMES = new Set([
+  "edmund-harness",
+  "radaromega",
+  "computer",
+  "computer-use",
+  "chrome-devtools",
+  "robinhood",
+  "ghost",
+]);
+
+/**
+ * `[mcp_servers]` from config.toml, in Claude Code's JSON shape, for one
+ * session tier. Workers run with --strict-mcp-config, so this is the only way
+ * a server added outside the harness reaches them.
+ */
+export function configuredMcpServers(
+  config: Config,
+  tier: "operator" | "contact",
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, srv] of Object.entries(config.mcp_servers ?? {})) {
+    if (RESERVED_SERVER_NAMES.has(name)) {
+      log.warn("mcp-config", "configured MCP server skipped: the name is reserved", { name });
+      continue;
+    }
+    if (!srv.tiers.includes(tier)) continue;
+    out[name] =
+      srv.type === "stdio"
+        ? {
+            command: srv.command,
+            args: srv.args,
+            ...(Object.keys(srv.env).length > 0 ? { env: srv.env } : {}),
+          }
+        : {
+            type: srv.type,
+            url: srv.url,
+            ...(Object.keys(srv.headers).length > 0 ? { headers: srv.headers } : {}),
+          };
+  }
+  return out;
+}
+
+/** These files can carry bearer tokens ([mcp_servers] headers, the trading
+ *  headers), so only this user may read them. chmod as well as mode: mode
+ *  applies only when the file is created. */
+function writePrivate(path: string, servers: Record<string, unknown>): void {
+  writeFileSync(path, JSON.stringify({ mcpServers: servers }, null, 2), { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
+
+/**
+ * The loadout for a non-guest session: trading first, then the session's
+ * tier, then whether this turn looks like it needs a browser. Both the Claude
+ * and the Codex runners choose through here, so the tier split can't hold on
+ * one backend and leak on the other. Guests are chosen by the caller: each
+ * backend spells "nothing but the harness" its own way.
+ */
+export function pickMcpConfig(
+  paths: McpConfigPaths,
+  opts: { trading: boolean; tier: SessionTier; browser: boolean },
+): string {
+  if (opts.trading) return paths.trading;
+  if (opts.tier === "contact") return opts.browser ? paths.contactWithBrowser : paths.contact;
+  return opts.browser ? paths.withBrowser : paths.default;
+}
+
 export function ensureMcpConfig(config: Config): McpConfigPaths {
   const defaultPath = join(config.paths.data_dir, "mcp.json");
   const browserPath = join(config.paths.data_dir, "mcp-browser.json");
+  const contactPath = join(config.paths.data_dir, "mcp-contact.json");
+  const contactBrowserPath = join(config.paths.data_dir, "mcp-contact-browser.json");
   const tradingPath = join(config.paths.data_dir, "mcp-trading.json");
   const guestPath = join(config.paths.data_dir, "mcp-guest.json");
 
@@ -76,7 +152,7 @@ export function ensureMcpConfig(config: Config): McpConfigPaths {
       args: [SERVER_PATH],
     },
   };
-  writeFileSync(guestPath, JSON.stringify({ mcpServers: harnessOnly }, null, 2));
+  writePrivate(guestPath, harnessOnly);
 
   const coreServers: Record<string, unknown> = { ...harnessOnly };
   const radarOmegaServer = radarOmegaMcpServer(config);
@@ -91,7 +167,10 @@ export function ensureMcpConfig(config: Config): McpConfigPaths {
     coreServers.computer = { command: findBin("bun") ?? "bun", args: [COMPUTER_USE_PATH] };
   }
 
-  writeFileSync(defaultPath, JSON.stringify({ mcpServers: coreServers }, null, 2));
+  const operatorExtras = configuredMcpServers(config, "operator");
+  const contactExtras = configuredMcpServers(config, "contact");
+  writePrivate(defaultPath, { ...coreServers, ...operatorExtras });
+  writePrivate(contactPath, { ...coreServers, ...contactExtras });
 
   // Trading loadout — core edmund-harness server PLUS the hosted Robinhood MCP,
   // declared EXPLICITLY here. Workers run with --strict-mcp-config (they don't
@@ -103,7 +182,7 @@ export function ensureMcpConfig(config: Config): McpConfigPaths {
   // token may also be supplied via [trading.mcp_headers].
   const robinhoodUrl = intSettings.trading(config)?.mcp_url ?? "";
   const robinhoodHeaders = intSettings.trading(config)?.mcp_headers ?? {};
-  const tradingServers: Record<string, unknown> = { ...coreServers };
+  const tradingServers: Record<string, unknown> = { ...coreServers, ...operatorExtras };
   if (robinhoodUrl) {
     tradingServers.robinhood = {
       type: "http",
@@ -112,7 +191,7 @@ export function ensureMcpConfig(config: Config): McpConfigPaths {
     };
   }
   Object.assign(tradingServers, intSettings.trading(config)?.mcp_servers ?? {});
-  writeFileSync(tradingPath, JSON.stringify({ mcpServers: tradingServers }, null, 2));
+  writePrivate(tradingPath, tradingServers);
 
   // Browser control — Chrome DevTools MCP. Uses installed Google Chrome via
   // --channel stable; profile persists at ~/.cache/chrome-devtools-mcp/
@@ -131,8 +210,16 @@ export function ensureMcpConfig(config: Config): McpConfigPaths {
     );
   }
 
-  writeFileSync(browserPath, JSON.stringify({ mcpServers: browserServers }, null, 2));
-  return { default: defaultPath, withBrowser: browserPath, trading: tradingPath, guest: guestPath };
+  writePrivate(browserPath, { ...browserServers, ...operatorExtras });
+  writePrivate(contactBrowserPath, { ...browserServers, ...contactExtras });
+  return {
+    default: defaultPath,
+    withBrowser: browserPath,
+    contact: contactPath,
+    contactWithBrowser: contactBrowserPath,
+    trading: tradingPath,
+    guest: guestPath,
+  };
 }
 
 /**

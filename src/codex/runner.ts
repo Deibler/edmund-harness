@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type InlineImage, prepareInlineImages } from "../claude/inline-images.ts";
-import { ensureMcpConfig, envelopeNeedsBrowser, toolEnv } from "../claude/mcp-config.ts";
+import {
+  ensureMcpConfig,
+  envelopeNeedsBrowser,
+  pickMcpConfig,
+  toolEnv,
+} from "../claude/mcp-config.ts";
 import { personaFingerprint } from "../claude/persona.ts";
 import type { RunInput, RunResult, RunUsage } from "../claude/runner.ts";
 import { type ModelActivity, activityDetailForTool, textDeltaForBlock } from "../claude/worker.ts";
@@ -12,7 +17,7 @@ import { buildRunSystemPrompt } from "../model/context.ts";
 import { type ModelEffort, modelProfileForSession } from "../model/profile.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
 import { classifyError } from "../recovery/classify.ts";
-import { hostAccess } from "../security/policy.ts";
+import { hostAccess, tierForSessionKey } from "../security/policy.ts";
 import { isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { humanCount, humanMs, log, snippet } from "../util/log.ts";
@@ -218,13 +223,13 @@ export async function runCodex(
   const isGuest = input.guest != null;
   const configs = ensureMcpConfig(config);
   const needsBrowser = !isGuest && (input.browserHint ?? envelopeNeedsBrowser(input.envelope));
-  const mcpConfig = isTradingSession(input.sessionKey)
-    ? configs.trading
-    : isGuest
-      ? '{"mcpServers":{}}'
-      : needsBrowser
-        ? configs.withBrowser
-        : configs.default;
+  const mcpConfig = isGuest
+    ? '{"mcpServers":{}}'
+    : pickMcpConfig(configs, {
+        trading: isTradingSession(input.sessionKey),
+        tier: tierForSessionKey(config, input.sessionKey),
+        browser: needsBrowser,
+      });
   const orchestrator = orchestratorForSession(input.sessionKey, config);
   const orchestratorModel =
     orchestrator && !orchestrator.builtin && orchestrator.model ? orchestrator.model : null;
