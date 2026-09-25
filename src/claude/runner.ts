@@ -31,7 +31,9 @@ import {
   type WorkerResult,
   type WorkerSpawnArgs,
   type WorkerTurn,
+  isUnsolicitedResult,
   modelActivityForBlock,
+  stampTurnUuid,
   textDeltaForBlock,
 } from "./worker.ts";
 
@@ -376,6 +378,11 @@ export async function runClaude(
     // text or send_message tool_use, and goes dark on any other block
     // start or on `content_block_stop`. See worker.ts / runProcess.
     "--include-partial-messages",
+    // Echo each message we write, stamped with our uuid: the echo marks where
+    // our turn starts, so a result from a turn the CLI started by itself (a
+    // resumed session replaying a killed background shell) is not taken as
+    // ours. See isUnsolicitedResult. Stream-json input only.
+    ...(useStreamJsonInput ? ["--replay-user-messages"] : []),
     "--permission-mode",
     "bypassPermissions",
     // Workers must not spawn Claude Code subagents — the harness has its own
@@ -913,12 +920,18 @@ type ClaudeEvent =
        *  subagent's context, not this session's. */
       parent_tool_use_id?: string | null;
     }
-  | { type: "user"; message: { content: Array<ContentBlock> } }
+  | {
+      type: "user";
+      message: { content: Array<ContentBlock> };
+      isReplay?: boolean;
+      uuid?: string;
+    }
   | {
       type: "result";
       subtype: "success" | "error";
       result?: string;
       is_error?: boolean;
+      num_turns?: number;
       usage?: {
         input_tokens?: number;
         cache_creation_input_tokens?: number;
@@ -949,6 +962,10 @@ function runProcess(
   signal?: AbortSignal,
   onHeartbeat?: () => void,
 ): Promise<RunResult> {
+  // Same guard as the resident worker: only a result after our message's
+  // echo is ours (text-mode input has no echo; see isUnsolicitedResult).
+  const stamped = stampTurnUuid(input);
+  let echoed = false;
   return new Promise((resolve) => {
     // cwd = sandbox: relative paths the model writes default into the
     // session's own directory. Absolute escapes are blocked by the
@@ -1153,6 +1170,10 @@ function runProcess(
             }
           }
         } else if (evt.type === "user") {
+          if (evt.isReplay && evt.uuid && evt.uuid === stamped.uuid) {
+            echoed = true;
+            continue;
+          }
           // Tool results come back as role=user with tool_result blocks.
           for (const b of evt.message.content) {
             if (b.type === "tool_result") {
@@ -1168,6 +1189,13 @@ function runProcess(
             }
           }
         } else if (evt.type === "result") {
+          if (isUnsolicitedResult(evt, echoed)) {
+            log.warn("claude", "skipped a result for a turn the CLI started itself", {
+              session: sessionKey,
+              num_turns: evt.num_turns,
+            });
+            continue;
+          }
           // Turn ended — typing off regardless of whether a stream
           // content_block_stop already fired (defensive).
           setTyping(false);
@@ -1247,7 +1275,7 @@ function runProcess(
       }
     });
 
-    proc.stdin.end(input);
+    proc.stdin.end(stamped.payload);
   });
 }
 

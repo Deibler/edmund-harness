@@ -52,6 +52,47 @@ export type WorkerSpawnArgs = {
 
 export type ModelActivity = "thinking" | "working" | "responding";
 
+/**
+ * Stamp a stream-json user event with a uuid, so its `--replay-user-messages`
+ * echo can be told apart from anything else on stdout. A payload that is not
+ * one stream-json user event (text-mode input) comes back unchanged with a
+ * null uuid.
+ */
+export function stampTurnUuid(payload: string): { payload: string; uuid: string | null } {
+  let evt: unknown;
+  try {
+    evt = JSON.parse(payload.trim());
+  } catch {
+    return { payload, uuid: null };
+  }
+  if (!evt || typeof evt !== "object" || (evt as { type?: unknown }).type !== "user") {
+    return { payload, uuid: null };
+  }
+  const own = (evt as { uuid?: unknown }).uuid;
+  const uuid = typeof own === "string" ? own : crypto.randomUUID();
+  return { payload: `${JSON.stringify({ ...evt, uuid })}\n`, uuid };
+}
+
+/**
+ * True for a `result` that ends a turn the CLI started by itself rather than
+ * the message we wrote. Resuming a session whose last process was killed with
+ * a background shell still running makes the CLI first deliver a "stopped"
+ * task notification as a turn of its own (task_notification, init, then a
+ * success result with num_turns 0) before it reads our message. Taken as our
+ * result, it ended a turn after 1 s on 2026-09-25 while the model went on
+ * working untracked, until the memory governor evicted the "idle" worker
+ * mid-render. Our message's turn is marked by its --replay-user-messages
+ * echo; /compact is echoed too, just before its own num_turns 0 result. An
+ * error result is never skipped: failing a turn beats waiting out the idle
+ * timeout on one.
+ */
+export function isUnsolicitedResult(
+  evt: { is_error?: boolean; num_turns?: number },
+  echoed: boolean,
+): boolean {
+  return !echoed && !evt.is_error && evt.num_turns === 0;
+}
+
 export function modelActivityForBlock(type: string, toolName?: string): ModelActivity {
   if (type === "text" || (type === "tool_use" && toolName === "send_message")) {
     return "responding";
@@ -161,12 +202,20 @@ type ClaudeEvent =
        *  its usage describes the SUBAGENT's context, not this session's. */
       parent_tool_use_id?: string | null;
     }
-  | { type: "user"; message: { content: Array<ContentBlock> } }
+  | {
+      type: "user";
+      message: { content: Array<ContentBlock> };
+      /** Set on the --replay-user-messages echo of a message we wrote. */
+      isReplay?: boolean;
+      uuid?: string;
+    }
   | {
       type: "result";
       subtype: "success" | "error";
       result?: string;
       is_error?: boolean;
+      /** Model round-trips in the turn; 0 when it never reached the model. */
+      num_turns?: number;
       session_id?: string;
       usage?: UsageStats;
       total_cost_usd?: number;
@@ -239,6 +288,10 @@ export class Worker {
     hasStreamedText: boolean;
     textBlockNeedsSeparator: boolean;
     removeAbort?: () => void;
+    /** The uuid stamped on this turn's message, and whether its echo has
+     *  arrived: a result before the echo may belong to another turn. */
+    turnUuid: string | null;
+    echoed: boolean;
   } | null = null;
   /** The session id observed on the FIRST init event. Subsequent events
    *  must match it; if they don't, the worker is poisoned and must be
@@ -363,6 +416,7 @@ export class Worker {
         durationMs: 0,
       });
     }
+    const stamped = stampTurnUuid(payload.stdinPayload);
     return new Promise<WorkerResult>((resolve) => {
       const startedAt = Date.now();
       const finish = (r: WorkerResult) => {
@@ -410,6 +464,8 @@ export class Worker {
         onHeartbeat: payload.onHeartbeat,
         hasStreamedText: false,
         textBlockNeedsSeparator: false,
+        turnUuid: stamped.uuid,
+        echoed: false,
       };
       if (payload.signal) {
         const onAbort = () => this.die(`turn interrupted: ${abortReason(payload.signal!)}`);
@@ -419,7 +475,7 @@ export class Worker {
       armIdle();
 
       this.proc.stdin.write(
-        payload.stdinPayload.endsWith("\n") ? payload.stdinPayload : `${payload.stdinPayload}\n`,
+        stamped.payload.endsWith("\n") ? stamped.payload : `${stamped.payload}\n`,
         (err) => {
           if (err)
             finish({
@@ -661,6 +717,10 @@ export class Worker {
     }
     if (evt.type === "user") {
       if (!this.pending) return;
+      if (evt.isReplay && evt.uuid && evt.uuid === this.pending.turnUuid) {
+        this.pending.echoed = true;
+        return;
+      }
       for (const b of evt.message.content) {
         if (b.type === "tool_result") {
           this.setActivity("thinking");
@@ -678,6 +738,14 @@ export class Worker {
     }
     if (evt.type === "result") {
       if (!this.pending) return;
+      if (isUnsolicitedResult(evt, this.pending.echoed)) {
+        log.warn("claude-worker", "skipped a result for a turn the CLI started itself", {
+          session: this.sessionKey,
+          num_turns: evt.num_turns,
+          after: humanMs(Date.now() - this.pending.startedAt),
+        });
+        return;
+      }
       // Turn done — typing must be off regardless of whether content_block_stop
       // already fired (defensive against malformed/missing partial events).
       this.setTyping(false);

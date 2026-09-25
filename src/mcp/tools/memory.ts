@@ -195,7 +195,7 @@ const RememberSubjectInput = z.object({
   outcome: z
     .enum(["worked", "rejected", "mixed", "untested"])
     .describe(
-      "What happened when this met reality. Record rejections, they are the valuable ones.",
+      "One word, not a sentence: worked, rejected, mixed or untested. The story of what happened goes in `learned`. Record rejections, they are the valuable ones.",
     ),
   source: z
     .string()

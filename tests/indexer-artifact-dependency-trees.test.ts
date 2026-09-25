@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ChatDb } from "../src/imessage/db.ts";
 import { HashEmbedProvider } from "../src/memory/embed-provider.ts";
-import { Indexer, purgeDependencyArtifacts } from "../src/memory/indexer.ts";
+import { Indexer, artifactPurgeKey, purgeDependencyArtifacts } from "../src/memory/indexer.ts";
 import { type IndexRow, VectorStore } from "../src/memory/vector-store.ts";
 import { DEPENDENCY_DIRS, underDependencyDir } from "../src/persona/sandbox.ts";
 
@@ -128,10 +128,29 @@ describe("dependency trees in the sandbox", () => {
       const refs = store.refsWithPrefix("artifact:");
       expect(refs.filter(underDependencyDir)).toEqual([]);
       expect(refs).toContain(keep);
-      expect(store.getWatermarkString("artifact.dependency_purge")).toBe(
-        [...DEPENDENCY_DIRS].sort().join(","),
-      );
+      expect(store.getWatermarkString("artifact.dependency_purge")).toBe(artifactPurgeKey());
+      expect(artifactPurgeKey()).toContain([...DEPENDENCY_DIRS].sort().join(","));
       expect(purgeDependencyArtifacts(store)).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a heartbeat file the kitchen drain rewrites every pass is never indexed", async () => {
+    const { sessionDir, put, store, indexer, cleanup } = setup();
+    try {
+      put("artifact_site/index.md", "the household's kitchen page notes");
+      put("artifact_site/pending.json", '{"at":"2026-09-24T22:13:00Z","waiting":[]}');
+      // Indexed by the old walk, before it learned to skip the file.
+      const old = `artifact:${join(sessionDir, "other/pending.json")}#0`;
+      store.upsert([fakeRow(old)]);
+      const t = await indexer.tick();
+      expect(t.artifacts).toBe(1);
+      const refs = store.refsWithPrefix("artifact:");
+      expect(refs).toEqual([`artifact:${join(sessionDir, "artifact_site/index.md")}#0`]);
+      // Rewritten again: still nothing to embed.
+      put("artifact_site/pending.json", '{"at":"2026-09-24T22:14:00Z","waiting":[]}');
+      expect((await indexer.tick()).artifacts).toBe(0);
     } finally {
       cleanup();
     }

@@ -9,7 +9,7 @@ import { AlertStore } from "./alerts/store.ts";
 import { UndeliveredAlert } from "./alerts/undelivered.ts";
 import { BgJobStore } from "./background/store.ts";
 import { banner, highWaterMark } from "./boot/banner.ts";
-import { runCatchUp } from "./boot/catchup.ts";
+import { type CatchUp, runCatchUp } from "./boot/catchup.ts";
 import { hardenHarnessPermissions } from "./boot/harden-permissions.ts";
 import {
   ResourceGovernor,
@@ -862,21 +862,25 @@ async function main() {
   // Recovery catch-up: if a backlog piled up while the daemon was down, coalesce it per chat
   // into ONE turn each (bounded concurrency) and tell the model it was offline — instead of
   // replaying message-by-message, which fired one reply per missed message (group-chat spam)
-  // and swamped the worker pool on recovery. The live watcher then starts from the post-catch-up
-  // cursor so it only handles genuinely new messages. No-op when nothing was missed.
+  // and swamped the worker pool on recovery. The live watcher starts from the post-catch-up
+  // cursor as soon as the backlog is read, NOT when its turns finish: waiting for them kept
+  // every chat silent for 87 minutes on 2026-09-24 behind two long turns in one DM. A live
+  // message for a chat whose catch-up turn hasn't started joins that turn (routeAccepted).
   // The missed-name check for groups. One instance serves both inbound paths
   // (catch-up below, the live watcher after it) so the daily cap is shared.
   const addressChecker = new AddressChecker({ config, chatDb });
   let watchCursor = startCursor;
+  let catchUp: CatchUp | null = null;
   if (config.behavior.catchup_on_boot !== false) {
     try {
-      watchCursor = await runCatchUp({
+      catchUp = await runCatchUp({
         deps,
         locks,
         startCursor,
         concurrency: config.behavior.catchup_concurrency ?? 3,
         addressChecker,
       });
+      watchCursor = catchUp.cursor;
       state.setCursor(CURSOR_KEY, watchCursor);
     } catch (err) {
       console.error("[catchup] recovery catch-up failed; falling back to live replay", err);
@@ -888,20 +892,28 @@ async function main() {
   // backlog: a chat whose coalesced catch-up turn was still queued looked
   // "stuck" — old unanswered inbound, no lock held yet — so recovery fired
   // a second model turn (double reply) and the fallback sweep could spray
-  // "still on it" notices across every backlogged thread at boot.
-  const { recoveryInterval, reaperInterval, outboxDrainInterval } = wireRecovery({
-    config,
-    state,
-    chatDb,
-    contacts,
-    echoes,
-    crons,
-    alert,
-    locks,
-    agentStore,
-    bgJobStore,
-    activeSessions,
-  });
+  // "still on it" notices across every backlogged thread at boot. The live
+  // watcher does not wait for this; only the recovery loops do.
+  let recoveryTimers: ReturnType<typeof wireRecovery> | null = null;
+  let shuttingDown = false;
+  const startRecovery = (): void => {
+    if (shuttingDown) return;
+    recoveryTimers = wireRecovery({
+      config,
+      state,
+      chatDb,
+      contacts,
+      echoes,
+      crons,
+      alert,
+      locks,
+      agentStore,
+      bgJobStore,
+      activeSessions,
+    });
+  };
+  if (catchUp) void catchUp.drained.then(startRecovery);
+  else startRecovery();
 
   // Everything after the gate: which session owns the message, durable ack,
   // park-or-enqueue. It never moves the watcher cursor; the watcher does,
@@ -1002,6 +1014,10 @@ async function main() {
     if (config.behavior.durable_pending_ack) {
       state.writeInboundAck(msg.rowId, key, JSON.stringify(toPendingEntry(msg)));
     }
+    // A chat still waiting for its boot catch-up turn takes this message into
+    // that turn: routed on its own it could run first, answering the newest
+    // message before the older backlog.
+    if (catchUp?.absorb(key, msg)) return;
     if (activeSessions.has(key)) {
       writePending(key, msg, config.paths.data_dir);
       // Barge-in: a clear cancel/redirect aborts the in-flight turn NOW
@@ -1081,6 +1097,7 @@ async function main() {
 
   const shutdown = async () => {
     console.log("[edmund-harness] shutting down");
+    shuttingDown = true;
     clearInterval(externalPoke);
     clearInterval(outcomeSweep);
     clearInterval(poolStatsTimer);
@@ -1097,9 +1114,11 @@ async function main() {
     refreshStore.close();
     clearInterval(sandboxReapInterval);
     clearInterval(instantShareReapInterval);
-    clearInterval(reaperInterval);
-    clearInterval(outboxDrainInterval);
-    clearInterval(recoveryInterval);
+    if (recoveryTimers) {
+      clearInterval(recoveryTimers.reaperInterval);
+      clearInterval(recoveryTimers.outboxDrainInterval);
+      clearInterval(recoveryTimers.recoveryInterval);
+    }
     if (recall.interval) clearInterval(recall.interval);
     if (recall.store) recall.store.close();
     await bridgeControl.close();

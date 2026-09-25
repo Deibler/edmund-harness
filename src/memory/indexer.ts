@@ -936,15 +936,33 @@ export class Indexer {
   }
 }
 
+/** Files a machine rewrites on a clock: their text is state, not anything
+ *  someone would recall. The kitchen drain rewrites each site's pending.json
+ *  on every pass as its heartbeat, so indexing them re-embedded three files a
+ *  minute, every minute (2026-09-24). Matched on the file name. */
+export const MACHINE_STATE_FILES = new Set(["pending.json"]);
+
+function isMachineStateRef(ref: string): boolean {
+  const path = ref.replace(/#\d+$/, "");
+  return MACHINE_STATE_FILES.has(path.slice(path.lastIndexOf("/") + 1).toLowerCase());
+}
+
+/** What the artifact purge last swept for. Extending either skip list
+ *  changes it, which re-runs the sweep. */
+export function artifactPurgeKey(): string {
+  return [...[...DEPENDENCY_DIRS].sort(), ...[...MACHINE_STATE_FILES].sort()].join(",");
+}
+
 /** Per-call cap on purged rows. deleteRefs is synchronous on the daemon's
  *  event loop, and the first sweep of a long-lived index found ~105k rows;
  *  paying that across ticks beats one multi-minute stall. */
 export const DEPENDENCY_PURGE_BATCH = 2000;
 
 /**
- * Drop artifact chunks indexed under a dependency tree before the walk
- * learned to skip it. Keyed on the skip list itself, so extending
- * DEPENDENCY_DIRS re-runs the sweep with no version constant to bump.
+ * Drop artifact chunks indexed under a dependency tree, or for a machine-state
+ * file, before the walk learned to skip them. Keyed on the skip lists
+ * themselves, so extending either re-runs the sweep with no version constant
+ * to bump.
  * Returns rows deleted this call; the key is only recorded once nothing
  * is left, so a partial sweep resumes on the next tick.
  */
@@ -952,9 +970,11 @@ export function purgeDependencyArtifacts(
   store: VectorStore,
   limit = DEPENDENCY_PURGE_BATCH,
 ): number {
-  const key = [...DEPENDENCY_DIRS].sort().join(",");
+  const key = artifactPurgeKey();
   if (store.getWatermarkString("artifact.dependency_purge") === key) return 0;
-  const stale = store.refsWithPrefix("artifact:").filter(underDependencyDir);
+  const stale = store
+    .refsWithPrefix("artifact:")
+    .filter((ref) => underDependencyDir(ref) || isMachineStateRef(ref));
   const batch = stale.slice(0, limit);
   store.deleteRefs(batch);
   if (batch.length > 0) {
@@ -1007,6 +1027,7 @@ function walkArtifacts(
       }
       if (!ent.isFile()) continue;
       const lower = ent.name.toLowerCase();
+      if (MACHINE_STATE_FILES.has(lower)) continue;
       const dot = lower.lastIndexOf(".");
       if (dot < 0) continue;
       const ext = lower.slice(dot);
