@@ -910,6 +910,7 @@ async function main() {
       agentStore,
       bgJobStore,
       activeSessions,
+      recentThread: (key, guid) => recentThreadLines(key, guid, deps),
     });
   };
   if (catchUp) void catchUp.drained.then(startRecovery);

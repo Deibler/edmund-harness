@@ -115,6 +115,29 @@ export function disallowedBuiltinTools(access: HostAccess, guest: boolean): stri
 }
 
 /**
+ * `--plugin-dir` arguments for the configured Claude Code plugins. A
+ * plugin's skills do their work through the shell, so a worker without one
+ * (sandboxed, or any guest) gets none: the descriptions would cost tokens on
+ * every turn for skills it could not run.
+ */
+export function pluginDirArgs(dirs: string[], access: HostAccess, guest: boolean): string[] {
+  if (access === "sandboxed" || guest) return [];
+  return dirs.flatMap((dir) => ["--plugin-dir", dir]);
+}
+
+/** The plugin list a sub-agent inherits through `EDMUND_PLUGIN_DIRS`.
+ *  Anything malformed means no plugins, never a failed spawn. */
+export function pluginDirsFromEnv(raw: string | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((d): d is string => typeof d === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Environment variable names (or prefixes, ending in `_`) a sandboxed worker
  * may inherit from the daemon. Everything else in the daemon's environment
  * (Twilio credentials, whatever the shell exported) stays behind.

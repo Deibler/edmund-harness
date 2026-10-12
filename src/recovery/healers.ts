@@ -46,6 +46,7 @@ export const HEALERS: Record<FailureClass, Healer | null> = {
   bad_tool_ids: healBadToolIds,
   invalid_tool_schema: null, // static server code — only a code fix + restart helps
   empty_content_block: null, // no structural fix yet; classified for visibility
+  thread_refused: healRefusedThread,
   transient_api: null, // wait + retry, no structural fix
   send_failed: healSendFailed,
   unknown: null,
@@ -136,6 +137,23 @@ async function healStaleSessionId(sessionKey: SessionKey, deps: HealerDeps): Pro
   deps.state.setClaudeSessionId(sessionKey, null);
   log.info("heal", "stale_session_id", { session: sessionKey, dropped: sess.claudeSessionId });
   return { ok: true, changed: true, detail: `dropped ${sess.claudeSessionId}` };
+}
+
+/**
+ * The provider refuses to continue this thread, so start a new one: the same
+ * re-anchor auto-compact uses. The next turn cold-starts and carries the
+ * recent chat instead of the refused history. The Codex runner already does
+ * this the moment a turn is refused; this covers anything that persisted a
+ * refused thread id anyway.
+ */
+async function healRefusedThread(sessionKey: SessionKey, deps: HealerDeps): Promise<HealResult> {
+  const sess = deps.state.getSession(sessionKey);
+  if (!sess?.claudeSessionId) {
+    return { ok: true, changed: false, detail: "already on a fresh thread" };
+  }
+  deps.state.setClaudeSessionId(sessionKey, null);
+  log.info("heal", "thread_refused", { session: sessionKey, dropped: sess.claudeSessionId });
+  return { ok: true, changed: true, detail: `dropped refused thread ${sess.claudeSessionId}` };
 }
 
 /**

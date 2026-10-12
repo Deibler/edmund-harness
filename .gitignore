@@ -94,6 +94,9 @@ docs/private/
 # camera dump carrying agency staff emails. Both stay on disk for this
 # deployment and out of the tree.
 skills/lancaster-loop/
+# Written by Edmund in the operator's DM and scoped to it: it drives a CLI in
+# that DM's sandbox, whose path carries the operator's phone number.
+skills/draftkings/
 skills/radaromega/scripts/.cams511.json
 skills/radaromega/scripts/.stations.json
 

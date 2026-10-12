@@ -4,6 +4,7 @@ import type { BgJobStore } from "../background/store.ts";
 import type { Config } from "../config/config.ts";
 import { cancelInboundRetries, isInboundRetryEvent } from "../cron/retry-marker.ts";
 import type { CronStore } from "../cron/store.ts";
+import type { RecentThread } from "../cron/wake-thread.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
@@ -73,7 +74,23 @@ export type SweeperDeps = {
   locks: SessionLocks;
   alert: OperatorAlert;
   activeSessions: Set<SessionKey>;
+  /** The chat's latest messages, for a recovery turn that starts cold. */
+  recentThread?: RecentThread;
+  /** Test seam: the recovery turn itself. */
+  runTurn?: typeof runRecoveryTurn;
 };
+
+/**
+ * Sessions a sweep is recovering right now. The sweep runs on a fixed
+ * interval that does not wait for the previous pass, so a recovery turn
+ * longer than the interval used to meet a second sweep that saw the same
+ * session still owing the same rows (nothing is marked replayed until the
+ * turn delivers). That sweep queued on the session lock and answered them
+ * again the moment the first released it: 33 back-to-back recovery
+ * deliveries to one session in the daemon log by 2026-10-02, chains of up to
+ * six in 40s. One recovery per session at a time; other sessions proceed.
+ */
+const recovering = new Set<SessionKey>();
 
 export async function sweepStuckSessions(
   deps: SweeperDeps,
@@ -90,6 +107,8 @@ export async function sweepStuckSessions(
   // possibly need recovery — query that set directly rather than scanning
   // every session each sweep. `evaluateSession` re-checks everything anyway.
   for (const session of deps.state.listSessionsNeedingRecovery(now - cfg.staleThresholdMs)) {
+    if (recovering.has(session.sessionKey)) continue;
+    recovering.add(session.sessionKey);
     try {
       await sweepOne(session, cfg, deps, now);
     } catch (err) {
@@ -97,6 +116,8 @@ export async function sweepStuckSessions(
         session: session.sessionKey,
         err: String(err).slice(0, 200),
       });
+    } finally {
+      recovering.delete(session.sessionKey);
     }
   }
 }
@@ -205,7 +226,8 @@ async function sweepOne(
   }
 
   // 3. Recovery turn — model sees the recovery envelope and decides.
-  const result = await runRecoveryTurn(
+  const runTurn = deps.runTurn ?? runRecoveryTurn;
+  const result = await runTurn(
     session.sessionKey,
     {
       errorClass,
@@ -220,6 +242,7 @@ async function sweepOne(
       chatDb: deps.chatDb,
       echoes: deps.echoes,
       locks: deps.locks,
+      recentThread: deps.recentThread,
     },
   );
 

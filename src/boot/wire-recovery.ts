@@ -6,6 +6,7 @@ import { reapStuckBgJobs } from "../background/reaper.ts";
 import type { BgJobStore } from "../background/store.ts";
 import type { Config } from "../config/config.ts";
 import type { CronStore } from "../cron/store.ts";
+import type { RecentThread } from "../cron/wake-thread.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { sweepFallbackNotices } from "../recovery/fallback.ts";
 import { startOutboxDrainer } from "../recovery/outbox-drainer.ts";
@@ -46,6 +47,7 @@ export function wireRecovery(args: {
   agentStore: AgentStore;
   bgJobStore: BgJobStore;
   activeSessions: Set<SessionKey>;
+  recentThread?: RecentThread;
 }): {
   recoveryInterval: ReturnType<typeof setInterval>;
   reaperInterval: ReturnType<typeof setInterval>;
@@ -63,6 +65,7 @@ export function wireRecovery(args: {
     agentStore,
     bgJobStore,
     activeSessions,
+    recentThread,
   } = args;
 
   if (config.recovery.enabled) {
@@ -104,6 +107,7 @@ export function wireRecovery(args: {
       locks,
       alert,
       activeSessions,
+      recentThread,
     });
     await sweepFallbackNotices({
       config,
