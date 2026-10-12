@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
@@ -217,6 +217,13 @@ export const ConfigSchema = z.object({
        *  `model_context_window`; omit to trust the CLI's model metadata. */
       context_window_tokens: z.number().int().positive().optional(),
       /**
+       * Claude Code plugin directories (each holding `.claude-plugin/
+       * plugin.json`) loaded into every Claude worker and sub-agent that has
+       * a shell, via `--plugin-dir`. Relative paths resolve against this
+       * config file's directory. Codex gets none: its runner turns plugins off.
+       */
+      plugin_dirs: z.array(z.string()).default([]),
+      /**
        * Model for detached sub-agents (scripts/agent-runner.ts — the
        * `agent` MCP tool's research workers). Separate knob so agent burn
        * doesn't have to ride the operator's model. Empty = agent-runner's
@@ -266,6 +273,7 @@ export const ConfigSchema = z.object({
       model: "claude-opus-4-8[1m]",
       timeout_seconds: 180,
       effort: "high",
+      plugin_dirs: [],
       agent_model: "claude-sonnet-5",
       pool: { enabled: false, max_workers: 6, idle_evict_ms: 600_000 },
       auto_compact: {
@@ -1432,7 +1440,22 @@ export function loadConfig(path = "./config.toml"): Config {
   parsed.paths.chat_db = expandHome(parsed.paths.chat_db);
   parsed.paths.data_dir = expandHome(parsed.paths.data_dir);
   validateGuestCampaignContexts(parsed, dirname(resolved));
+  parsed.claude.plugin_dirs = resolvePluginDirs(parsed.claude.plugin_dirs, dirname(resolved));
   return parsed;
+}
+
+/**
+ * Absolute plugin directories, checked at boot: a typo here would otherwise
+ * surface as every Claude turn failing, or a plugin silently missing.
+ */
+export function resolvePluginDirs(dirs: string[], baseDir: string): string[] {
+  return dirs.map((dir) => {
+    const abs = dir.startsWith("~") ? expandHome(dir) : resolve(baseDir, dir);
+    if (!existsSync(join(abs, ".claude-plugin", "plugin.json"))) {
+      throw new Error(`[claude] plugin_dirs: no .claude-plugin/plugin.json in ${abs}`);
+    }
+    return abs;
+  });
 }
 
 /**

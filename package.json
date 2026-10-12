@@ -58,7 +58,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
-    "@modelcontextprotocol/sdk": "~1.29.0",
+    "@modelcontextprotocol/sdk": "~1.31.0",
     "ajv": "^8.20.0",
     "cloudflare": "^7.1.0",
     "hono": "^4.13.5",
@@ -72,15 +72,17 @@
     "ip-address": "^10.7.0",
     "adm-zip": "^0.6.1",
     "protobufjs": "^7.6.3",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "js-yaml": "^4.3.1",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "proxy-addr": "^2.0.8",
+    "shell-quote": "^1.11.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@changesets/cli": "^3.0.1",
     "@types/bun": "latest",
-    "concurrently": "^10.0.5",
+    "concurrently": "^10.0.6",
     "knip": "^6.34.0",
     "typescript": "^7.0.2"
   },

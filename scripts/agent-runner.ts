@@ -31,7 +31,12 @@ import { buildCodexExecArgs, codexExecutable, parseCodexJsonLine } from "../src/
 import { CronStore } from "../src/cron/store.ts";
 import { backendForModel } from "../src/model/backend.ts";
 import type { ModelEffort } from "../src/model/profile.ts";
-import { type HostAccess, disallowedBuiltinTools } from "../src/security/policy.ts";
+import {
+  type HostAccess,
+  disallowedBuiltinTools,
+  pluginDirArgs,
+  pluginDirsFromEnv,
+} from "../src/security/policy.ts";
 import { recordSpend } from "../src/spend/ledger.ts";
 import { installLogSinkFromEnv } from "../src/util/log-sink.ts";
 import { log } from "../src/util/log.ts";
@@ -152,6 +157,11 @@ const args =
         mcpConfig,
         // Only the file's servers — don't inherit user/project MCP servers.
         "--strict-mcp-config",
+        ...pluginDirArgs(
+          pluginDirsFromEnv(process.env.EDMUND_PLUGIN_DIRS),
+          hostAccessFromEnv,
+          false,
+        ),
         "--append-system-prompt",
         systemPrompt,
       ];

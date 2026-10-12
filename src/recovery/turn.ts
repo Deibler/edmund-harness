@@ -1,5 +1,6 @@
 import { deliverReply } from "../channels/deliver.ts";
 import type { Config } from "../config/config.ts";
+import { type RecentThread, wakeThreadBlock } from "../cron/wake-thread.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { decodeMessageText } from "../imessage/decode.ts";
 import { isPermanentSendError } from "../imessage/send.ts";
@@ -52,6 +53,10 @@ export type RecoveryDeps = {
   chatDb: ChatDb;
   echoes: EchoCache;
   locks: SessionLocks;
+  /** Reads the chat's latest messages, for a turn that starts without its
+   *  provider thread (a healer dropped it, or it was never stored). Absent →
+   *  the envelope carries only the unanswered messages. */
+  recentThread?: RecentThread;
 };
 
 export type RecoveryResult =
@@ -108,7 +113,11 @@ export async function runRecoveryTurn(
           lastOutboundMs: Date.now(),
         });
         deps.state.clearError(sessionKey);
-        for (const id of ids) deps.state.markReplayed(sessionKey, id, ctx.nowMs);
+        // Same bookkeeping as markRecovered, inside this transaction.
+        for (const id of ids) {
+          deps.state.markReplayed(sessionKey, id, ctx.nowMs);
+          deps.state.deleteInboundAck(id);
+        }
         deps.state.pruneReplayed(sessionKey, REPLAYED_KEEP);
       });
       log.info("recovery", "outbox flushed", {
@@ -157,7 +166,8 @@ export async function runRecoveryTurn(
     }
   }
 
-  const envelope = buildRecoveryEnvelope(ctx);
+  const chatGuid = sess?.chatGuid ?? ctx.unanswered[0]!.chatGuid;
+  const envelope = recoveryTurnEnvelope(sessionKey, chatGuid, ctx, deps);
 
   const result = await deps.locks.withLock(sessionKey, async () => {
     const started = Date.now();
@@ -212,7 +222,6 @@ export async function runRecoveryTurn(
       deps.state.clearError(sessionKey);
       return { ok: true as const, sent: 0, silenced: true };
     }
-    const chatGuid = sess?.chatGuid ?? ctx.unanswered[0]!.chatGuid;
     const delivery = await deliverReply(
       {
         to: isGroup ? chatGuid : chatIdFromKey(sessionKey),
@@ -269,13 +278,8 @@ export async function runRecoveryTurn(
 
   // Mark every replayed rowId so a follow-up sweep tick doesn't churn
   // on the same batch — true whether the model spoke or stayed silent.
-  // Wrapped in a tx so a crash mid-loop can't leave half the batch
-  // flagged (and so it pays one fsync instead of N).
   const ids = ctx.unanswered.map((m) => m.rowId);
-  deps.state.transact(() => {
-    for (const id of ids) deps.state.markReplayed(sessionKey, id, ctx.nowMs);
-    deps.state.pruneReplayed(sessionKey, REPLAYED_KEEP);
-  });
+  markRecovered(deps.state, sessionKey, ids, ctx.nowMs);
 
   return {
     ok: true,
@@ -286,6 +290,47 @@ export async function runRecoveryTurn(
 }
 
 export const REPLAYED_KEEP = 50;
+
+/**
+ * The recovery envelope, plus the recent chat when this turn starts without
+ * its provider thread. A healer that drops the thread (stale id, refused
+ * thread) makes the turn cold, and without the chat it would answer a bare
+ * "you there?" with no idea what was being discussed, the way scheduled
+ * wake-ups once did.
+ */
+export function recoveryTurnEnvelope(
+  sessionKey: SessionKey,
+  chatGuid: string,
+  ctx: RecoveryContext,
+  deps: Pick<RecoveryDeps, "config" | "state" | "recentThread">,
+): string {
+  const envelope = buildRecoveryEnvelope(ctx);
+  if (!deps.recentThread) return envelope;
+  const thread = wakeThreadBlock(sessionKey, chatGuid, deps.config, deps.state, deps.recentThread);
+  return thread ? `${envelope}\n\n${thread}` : envelope;
+}
+
+/**
+ * Record that recovery disposed of these rows. Their durable acks go too:
+ * boot replay reads inbound_ack without consulting replayed_inbound, so a
+ * restart inside the ack window would answer the same messages a second
+ * time, framed as "you were offline". One transaction, so a crash can't
+ * leave half the batch flagged (and it pays one fsync instead of N).
+ */
+export function markRecovered(
+  state: StateStore,
+  sessionKey: SessionKey,
+  rowIds: number[],
+  nowMs: number,
+): void {
+  state.transact(() => {
+    for (const id of rowIds) {
+      state.markReplayed(sessionKey, id, nowMs);
+      state.deleteInboundAck(id);
+    }
+    state.pruneReplayed(sessionKey, REPLAYED_KEEP);
+  });
+}
 
 /**
  * Build the recovery-context envelope. Snapshot-tested so any change to

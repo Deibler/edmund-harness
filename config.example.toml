@@ -100,6 +100,10 @@ timeout_seconds = 180
 effort = "high"
 # Optional explicit context window passed to Codex. Omit to trust model metadata.
 # context_window_tokens = 272000
+# Claude Code plugins (directories holding .claude-plugin/plugin.json) loaded
+# into every Claude worker and sub-agent with a shell. Relative to this file.
+# Each plugin's skill descriptions ride along on every turn. Codex: none.
+# plugin_dirs = ["data/plugins/example-plugin"]
 # Detached research/sub-agent model. Uses the same automatic CLI selection.
 agent_model = "claude-sonnet-5"
 # Omit to inherit `effort`.

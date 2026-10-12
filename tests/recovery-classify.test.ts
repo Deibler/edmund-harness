@@ -44,6 +44,12 @@ const CASES: Array<{ msg: string; cls: FailureClass }> = [
     msg: "API Error: 400 messages: text content blocks must be non-empty",
     cls: "empty_content_block",
   },
+  // thread_refused — verbatim from the Codex stream, 2026-10-02: a provider
+  // safety refusal judged on the thread's history, 10 of 10 resumes.
+  {
+    msg: "This request was blocked by our safety systems. Reason: Potentially unintended activity.",
+    cls: "thread_refused",
+  },
   // transient_api
   { msg: "Rate limit exceeded — retry later", cls: "transient_api" },
   { msg: "got 429 Too Many Requests", cls: "transient_api" },
@@ -84,6 +90,7 @@ describe("describeErrorClass", () => {
       "session_in_use",
       "bad_tool_ids",
       "empty_content_block",
+      "thread_refused",
       "transient_api",
       "unknown",
     ];

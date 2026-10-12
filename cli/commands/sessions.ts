@@ -11,6 +11,7 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
+import { recentThreadLines } from "../../src/channels/history.ts";
 import {
   TARGET_AFTER_COMPACT,
   compactSession,
@@ -94,10 +95,10 @@ export async function sessionsCommand(p: Parsed): Promise<void> {
         await healSubcmd(state, requireKey(p));
         return;
       case "invoke":
-        await invokeSubcmd(cfg, state, requireKey(p), { forceIgnoreCooldown: false });
+        await invokeSubcmd(cfg, state, contacts, requireKey(p), { forceIgnoreCooldown: false });
         return;
       case "rerun":
-        await invokeSubcmd(cfg, state, requireKey(p), { forceIgnoreCooldown: true });
+        await invokeSubcmd(cfg, state, contacts, requireKey(p), { forceIgnoreCooldown: true });
         return;
       case "wipe":
         await wipeSubcmd(state, requireKey(p));
@@ -230,6 +231,7 @@ async function healSubcmd(state: StateStore, key: string): Promise<void> {
 async function invokeSubcmd(
   cfg: ReturnType<typeof loadConfig>,
   state: StateStore,
+  contacts: ContactBook,
   key: string,
   opts: { forceIgnoreCooldown: boolean },
 ): Promise<void> {
@@ -279,7 +281,15 @@ async function invokeSubcmd(
         unanswered,
         nowMs: Date.now(),
       },
-      { config: cfg, state, chatDb, echoes, locks },
+      {
+        config: cfg,
+        state,
+        chatDb,
+        echoes,
+        locks,
+        recentThread: (k, guid) =>
+          recentThreadLines(k, guid, { config: cfg, chatDb, contacts, state }),
+      },
     );
     if (!result.ok) {
       fail(`invoke failed: ${classifyError(result.error)} — ${result.error}`);

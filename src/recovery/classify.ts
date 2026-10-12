@@ -14,6 +14,7 @@ export type FailureClass =
   | "bad_tool_ids"
   | "invalid_tool_schema"
   | "empty_content_block"
+  | "thread_refused"
   | "transient_api"
   | "send_failed"
   | "unknown";
@@ -59,6 +60,14 @@ const CLASSIFIERS: ClassifierRow[] = [
   // resume. No healer yet; classified so it stops polluting `unknown` and
   // reads honestly in the recovery envelope.
   { pattern: /text content blocks must be non-empty/i, cls: "empty_content_block" },
+  // The provider's safety system refused the request outright ("This request
+  // was blocked by our safety systems. Reason: Potentially unintended
+  // activity."). On a resume it judges the thread's accumulated history, so
+  // every turn on that thread fails identically, whatever the new message
+  // says: one DM failed 10 of 10 in 4-11s with zero tool calls for
+  // 3h+ on 2026-10-02 while every other Codex thread ran clean. Resuming
+  // cannot help; the one lever the harness has is a fresh thread.
+  { pattern: /blocked by our safety systems/i, cls: "thread_refused" },
   // imsg IMCore bridge wedge: dylib in Messages.app stopped ACK'ing RPCs.
   // Heal by relaunching Messages with `imsg launch` (re-injects the dylib).
   // Matched BEFORE the generic /timeout/ pattern so it wins over transient_api.
@@ -112,6 +121,10 @@ export function describeErrorClass(
       return `An earlier attempt to reply was rejected because a tool's published input schema is not valid JSON Schema draft 2020-12. This is a harness code bug, not a transient error — every request that includes the tool fails the same way, so retrying cannot help until the harness is fixed and restarted.`;
     case "empty_content_block":
       return `An earlier attempt to resume failed because a persisted turn contained an empty text block the API rejects. The conversation may need a fresh start if this recurs.`;
+    // Same sentence healed or not: whichever of the runner or the healer
+    // dropped the refused thread, this turn runs on a fresh one.
+    case "thread_refused":
+      return `An earlier attempt to reply was refused by the model provider while continuing this conversation's previous thread. This turn runs on a fresh thread, so that thread's tool work is not in your context; rely on the chat itself and your files.`;
     case "transient_api":
       return `An earlier attempt hit a transient API issue (rate limit / overload / network). The condition has likely cleared.`;
     case "send_failed":

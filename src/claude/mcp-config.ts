@@ -354,6 +354,9 @@ export function toolEnv(
     // Detached agents (spawned from the MCP server, which inherits this
     // env) read their model from here — see scripts/agent-runner.ts.
     EDMUND_AGENT_MODEL: config.claude.agent_model,
+    // Sub-agents load the same Claude Code plugins as the worker that
+    // spawned them (scripts/agent-runner.ts applies the host-access gate).
+    EDMUND_PLUGIN_DIRS: JSON.stringify(config.claude.plugin_dirs ?? []),
     EDMUND_AGENT_EFFORT: config.claude.agent_effort ?? config.claude.effort,
     ...(config.claude.context_window_tokens
       ? { EDMUND_CONTEXT_WINDOW_TOKENS: String(config.claude.context_window_tokens) }

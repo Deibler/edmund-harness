@@ -9,7 +9,12 @@ import { modelProfileForSession } from "../model/profile.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
 import { classifyError } from "../recovery/classify.ts";
 import { HEALERS } from "../recovery/healers.ts";
-import { disallowedBuiltinTools, hostAccess, tierForSessionKey } from "../security/policy.ts";
+import {
+  disallowedBuiltinTools,
+  hostAccess,
+  pluginDirArgs,
+  tierForSessionKey,
+} from "../security/policy.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
@@ -411,6 +416,7 @@ export async function runClaude(
     // Robinhood server) and scoped to trading sessions only (mcp-trading.json
     // adds it explicitly). Deterministic regardless of cwd / registration scope.
     "--strict-mcp-config",
+    ...pluginDirArgs(config.claude.plugin_dirs, hostAccess(config), isGuest),
     "--append-system-prompt",
     buildRunSystemPrompt(input, config, orch),
   ];
