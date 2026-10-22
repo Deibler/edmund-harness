@@ -400,7 +400,7 @@ function buildPrompt(args: {
     .map((m) => {
       const who = m.fromMe
         ? "Edmund"
-        : (args.deps.contacts.displayName(m.fromHandle) ?? m.fromHandle ?? "?");
+        : (args.deps.contacts.label(m.fromHandle) ?? m.fromHandle ?? "?");
       const ts = easternDateTime(new Date(m.timestampMs));
       return `[${ts}] ${who}: ${m.text.replace(/\s+/g, " ").slice(0, 400)}`;
     })

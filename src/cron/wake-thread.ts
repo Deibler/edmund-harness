@@ -4,8 +4,16 @@ import type { SessionKey } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { log } from "../util/log.ts";
 
-/** Reads a session's latest messages as envelope lines (see recentThreadLines). */
-export type RecentThread = (sessionKey: SessionKey, chatGuid: string) => string[];
+/** What a cold wake-up is shown about its conversation (see wakeThread). */
+export type WakeThread = {
+  /** `Participants:` labels for a group; empty for a DM. */
+  participants: string[];
+  /** The latest messages as envelope lines. */
+  lines: string[];
+};
+
+/** Reads a session's roster and latest messages (see channels/history.ts wakeThread). */
+export type RecentThread = (sessionKey: SessionKey, chatGuid: string) => WakeThread;
 
 /**
  * The envelope block for a scheduled or proactive wake-up that starts cold.
@@ -24,9 +32,9 @@ export function wakeThreadBlock(
   recentThread: RecentThread,
 ): string {
   if (!startsCold(sessionKey, config, state)) return "";
-  let lines: string[];
+  let thread: WakeThread;
   try {
-    lines = recentThread(sessionKey, chatGuid);
+    thread = recentThread(sessionKey, chatGuid);
   } catch (err) {
     log.warn("wake", "could not read the recent thread for a cold wake-up", {
       session: sessionKey,
@@ -34,13 +42,24 @@ export function wakeThreadBlock(
     });
     return "";
   }
-  if (lines.length === 0) return "";
+  const { participants, lines } = thread;
+  if (lines.length === 0 && participants.length === 0) return "";
   log.info("wake", "cold wake-up carries the recent thread", {
     session: sessionKey,
     lines: lines.length,
+    participants: participants.length,
   });
+  // Same `Participants:` line an inbound group envelope carries. Without it a
+  // reminder written days earlier can only guess who is in the room from
+  // who happened to speak lately, and people merely talked about read as
+  // present.
   return [
-    "Recent thread (this turn starts without the conversation's earlier context, so here are its latest messages):",
-    ...lines,
+    ...(participants.length > 0 ? [`Participants: ${participants.join(", ")}`] : []),
+    ...(lines.length > 0
+      ? [
+          "Recent thread (this turn starts without the conversation's earlier context, so here are its latest messages):",
+          ...lines,
+        ]
+      : []),
   ].join("\n");
 }

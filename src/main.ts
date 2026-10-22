@@ -22,7 +22,7 @@ import { toPendingEntry, writePending } from "./bridge/session-queue.ts";
 import { isBargeIn } from "./channels/barge-in.ts";
 import { deliverReply, setSmsDeliverer } from "./channels/deliver.ts";
 import type { Deps } from "./channels/deps.ts";
-import { recentThreadLines } from "./channels/history.ts";
+import { wakeThread } from "./channels/history.ts";
 import { SessionPipeline } from "./channels/pipeline.ts";
 import { handleBatch, shouldAccept } from "./channels/turn.ts";
 import { checkLoadout, formatLoadoutReport } from "./claude/loadout-check.ts";
@@ -77,6 +77,7 @@ import {
   normalizeHandle,
   tradingKeyFor,
 } from "./sessions/key.ts";
+import { LearnedNames } from "./sessions/learned-names.ts";
 import { SkillCurator } from "./skills/curator-observer.ts";
 import { createSmsChannel } from "./sms/channel.ts";
 import { resolveTwilioCreds } from "./sms/creds.ts";
@@ -164,7 +165,11 @@ async function main() {
   state.pruneRouting(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const crons = new CronStore(config.paths.data_dir);
   const addressBook = new AddressBook();
-  const contacts = new ContactBook(config.contacts, addressBook);
+  const contacts = new ContactBook(
+    config.contacts,
+    addressBook,
+    new LearnedNames(config.paths.data_dir),
+  );
   // Keyed guest access: activations, vouches, buffered unknown-sender
   // messages, caps. Shares state.db (the GhostPrefsStore pattern).
   const guests = new GuestStore(config.paths.data_dir);
@@ -226,7 +231,9 @@ async function main() {
   // Start the ghost observer. Phase 3: when ghost says act:true, the
   // observer enqueues a brown-nose cron row that the existing scheduler
   // picks up — fireJob routes [BROWN_NOSE] events to src/proactive/fire.ts.
-  const ghostObserver = new GhostObserver({
+  // Named so the SMS block below can attach its transcript reader once the
+  // channel is up (the same late wiring deps.sms gets).
+  const ghostDeps: ConstructorParameters<typeof GhostObserver>[0] = {
     config,
     chatDb,
     contacts,
@@ -234,7 +241,8 @@ async function main() {
     crons,
     state,
     isExcludedSession: isGuestExcludedSession,
-  });
+  };
+  const ghostObserver = new GhostObserver(ghostDeps);
   ghostObserver.start();
   // Engagement-outcome backfill: stamp engaged/ignored on proactive fires
   // from observable behavior (did the user text back within the window?).
@@ -499,6 +507,7 @@ async function main() {
       });
       setSmsDeliverer(smsChannel.deliverer);
       deps.sms = smsChannel.depsProviders;
+      ghostDeps.sms = smsChannel.depsProviders;
       // Public origin resolution: an explicit public_base_url (a stable named
       // tunnel, someday) wins; otherwise the quick-tunnel URL file written by
       // run-sms-tunnel.sh is read PER REQUEST, because that hostname rotates
@@ -583,7 +592,7 @@ async function main() {
     store: crons,
     onFire: (job) =>
       fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs, (key, guid) =>
-        recentThreadLines(key, guid, deps),
+        wakeThread(key, guid, deps),
       ),
   });
   scheduler.start();
@@ -910,7 +919,7 @@ async function main() {
       agentStore,
       bgJobStore,
       activeSessions,
-      recentThread: (key, guid) => recentThreadLines(key, guid, deps),
+      recentThread: (key, guid) => wakeThread(key, guid, deps),
     });
   };
   if (catchUp) void catchUp.drained.then(startRecovery);

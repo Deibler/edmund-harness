@@ -12,6 +12,15 @@ import {
 } from "../../orchestrators/visibility.ts";
 import { StateStore } from "../../sessions/store.ts";
 import type { ToolContext } from "../context.ts";
+import {
+  SMS_NO_ATTACHMENTS,
+  smsCatchUp,
+  smsGetMessage,
+  smsGuidToTimestamp,
+  smsHistoryFor,
+  smsSearch,
+  smsThreadContext,
+} from "./sms-history.ts";
 import type { ToolDef } from "./types.ts";
 
 const DateLike = z
@@ -82,6 +91,8 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
         "Search prior messages in THIS conversation. Scoped to the current chat (group) or contact's DMs (including alias handles). Returns msg_guid, time, sender, text, and whether the message has attachments. Use when the user references something they said earlier, asks you to recall a past discussion, or needs context you don't have in your working memory.",
       inputSchema: SearchInput,
       handler: (args) => {
+        const sms = smsHistoryFor(ctx);
+        if (sms) return textResult(smsSearch(sms, ctx.contacts, args));
         const outcome = searchMessages(ctx.chatDb, {
           chatGuids: ctx.chatGuids,
           query: args.query,
@@ -100,7 +111,7 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
             : "nothing to search";
         if (hits.length === 0) return textResult(`no matches (${depth})`);
         const lines = hits.map((h) => {
-          const who = h.fromMe ? "You" : (ctx.contacts.displayName(h.fromHandle) ?? h.fromHandle);
+          const who = h.fromMe ? "You" : (ctx.contacts.label(h.fromHandle) ?? h.fromHandle);
           const att = h.hasAttachments ? " [attachment]" : "";
           const text = h.text.length > 200 ? `${h.text.slice(0, 200)}…` : h.text;
           return `${h.msgGuid}  ${new Date(h.timestampMs).toISOString()}  ${who}${att}: ${text}`;
@@ -115,12 +126,14 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
         "Fetch the full text and attachment file paths for one message (by msg_guid from search_history). Useful when the search preview was truncated or you need the attachment paths to Read.",
       inputSchema: GetMessageInput,
       handler: (args) => {
+        const sms = smsHistoryFor(ctx);
+        if (sms) return textResult(smsGetMessage(sms, ctx.contacts, args.msg_guid));
         const m = getMessage(ctx.chatDb, args.msg_guid);
         if (!m) return textResult(`not found: ${args.msg_guid}`);
         // Hidden-by-visibility reads identically to absent — don't leak that
         // another orchestrator's message exists at this guid.
         if (!visibilityFilter(ctx)(m)) return textResult(`not found: ${args.msg_guid}`);
-        const who = m.fromMe ? "You" : (ctx.contacts.displayName(m.fromHandle) ?? m.fromHandle);
+        const who = m.fromMe ? "You" : (ctx.contacts.label(m.fromHandle) ?? m.fromHandle);
         const attachments = m.attachments
           .map((a) => `  ${a.path}${a.mime ? ` (${a.mime})` : ""}`)
           .join("\n");
@@ -141,6 +154,19 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
         "Scroll-back tool. Returns prior messages in THIS chat in chronological order (oldest → newest), in the same speaker-tagged format the envelope uses ([Name · Day HH:MM] text) — so you can mentally splice the output onto what you already see. Two ways to anchor: `before_time` (most common — get me everything before this moment) or `before_msg_guid` (anchor to a specific message you saw earlier). Defaults to the last 30 messages before now. Use this when the History scope descriptor mentions earlier omitted messages, or when something in the thread references context outside your envelope window. Cheap (pure SQL); call it multiple times to page back further.",
       inputSchema: ThreadContextInput,
       handler: (args) => {
+        const sms = smsHistoryFor(ctx);
+        if (sms) {
+          const anchor = args.before_msg_guid
+            ? smsGuidToTimestamp(sms, args.before_msg_guid)
+            : args.before_time;
+          return textResult(
+            smsThreadContext(sms, ctx.contacts, {
+              beforeMs: anchor ?? Date.now(),
+              limit: args.limit,
+              topicShiftMinutes: ctx.config.behavior.topic_shift_minutes,
+            }),
+          );
+        }
         if (ctx.chatGuids.length === 0) return textResult("no chats in scope");
         // Resolve anchor → an effective rowId. Multi-chat sessions (DMs
         // with several alias handles) take the union: we resolve per-guid
@@ -190,6 +216,15 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
         "Spawn a fast Haiku sub-worker to read everything in THIS chat since you last spoke (or since `since`), look at any load-bearing images, and return a structured recap (participants, topics, unresolved questions, media highlights, tone). Use this when the History scope tells you there's been a long gap with a lot of activity and the inbound references context you weren't around for. Synchronous — blocks the current turn ~5-15s. DON'T reach for it reflexively: if a direct reply doesn't require knowing what happened in the gap, just answer.",
       inputSchema: CatchMeUpInput,
       handler: async (args) => {
+        const sms = smsHistoryFor(ctx);
+        if (sms) {
+          return textResult(
+            smsCatchUp(sms, ctx.contacts, {
+              sinceMs: args.since ?? defaultCatchUpSince(ctx),
+              maxMessages: args.max_messages ?? 200,
+            }),
+          );
+        }
         if (ctx.chatGuids.length === 0) return errResult("no chats in scope");
         const sinceMs = args.since ?? defaultCatchUpSince(ctx);
         const res = await runCatchUp({
@@ -225,6 +260,7 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
         "List files/images/audio shared in THIS conversation. Filter by mime_prefix (e.g. 'image/'), sender, or date range. Returns absolute paths you can pass to the Read tool. Use when the user asks about a photo they sent, or you want to ground a reply in visual context.",
       inputSchema: ListAttachmentsInput,
       handler: (args) => {
+        if (smsHistoryFor(ctx)) return textResult(SMS_NO_ATTACHMENTS);
         const visible = visibilityFilter(ctx);
         const hits = listAttachments(ctx.chatDb, {
           chatGuids: ctx.chatGuids,
@@ -238,7 +274,7 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
         }).filter((h) => visible({ rowId: h.rowId, fromMe: h.fromMe, text: "" }));
         if (hits.length === 0) return textResult("no attachments");
         const lines = hits.map((h) => {
-          const who = h.fromMe ? "You" : (ctx.contacts.displayName(h.fromHandle) ?? h.fromHandle);
+          const who = h.fromMe ? "You" : (ctx.contacts.label(h.fromHandle) ?? h.fromHandle);
           return `${new Date(h.timestampMs).toISOString()}  ${who}  ${h.mimeType || "?"}  ${h.filePath}`;
         });
         return textResult(lines.join("\n"));

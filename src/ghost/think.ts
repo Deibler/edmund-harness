@@ -14,7 +14,7 @@ import { segmentByGaps } from "../imessage/segment.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
 import { ensureSandbox, sandboxDir } from "../persona/sandbox.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
-import { type SessionKey, chatIdFromKey, isGroupSession } from "../sessions/key.ts";
+import { type SessionKey, chatIdFromKey, isGroupSession, isSmsSession } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import { recordSpend } from "../spend/ledger.ts";
 import { log } from "../util/log.ts";
@@ -136,7 +136,35 @@ export type GhostDeps = {
   chatDb: ChatDb;
   contacts: ContactBook;
   prefs: GhostPrefsStore;
+  /** SMS transcript reader, attached by main.ts once the channel is up.
+   *  chat.db has no rows for a Twilio conversation: without this the ghost
+   *  read an SMS group holding 25+ messages as "a fresh session with zero
+   *  message history". */
+  sms?: GhostSmsHistory;
 };
+
+export type GhostSmsHistory = {
+  history: (conversationId: string, limit: number) => HistoryLine[];
+};
+
+/**
+ * A session's recent messages, oldest → newest, from wherever that channel
+ * keeps them: the SMS store for `sms:` sessions, chat.db for the rest.
+ */
+function sessionHistory(
+  sessionKey: SessionKey,
+  deps: { chatDb: ChatDb; contacts: ContactBook; sms?: GhostSmsHistory },
+  limit: number,
+): HistoryLine[] {
+  if (isSmsSession(sessionKey)) {
+    return deps.sms ? deps.sms.history(chatIdFromKey(sessionKey), limit) : [];
+  }
+  const history = chatGuidsForSession(sessionKey, deps.chatDb, deps.contacts).flatMap((g) =>
+    getRecentMessages(deps.chatDb, g, Number.MAX_SAFE_INTEGER, limit),
+  );
+  history.sort((a, b) => a.timestampMs - b.timestampMs);
+  return history;
+}
 
 /** Telemetry stamped by runGhostTick on every decision (additive — old
  *  persisted rows simply lack them). */
@@ -316,14 +344,10 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
     // One open proactive thread at a time: if the last fire is still
     // unanswered, don't even wake the model. Runs AFTER the cheap gates
     // (it touches chat.db) and only when they all passed.
-    const guids = chatGuidsForSession(input.sessionKey, chatDb, contacts);
-    let lastInboundMs = 0;
-    for (const g of guids) {
-      const latest = getRecentMessages(chatDb, g, Number.MAX_SAFE_INTEGER, 10)
+    const lastInboundMs =
+      sessionHistory(input.sessionKey, deps, 10)
         .filter((m) => !m.fromMe)
-        .at(-1);
-      if (latest && latest.timestampMs > lastInboundMs) lastInboundMs = latest.timestampMs;
-    }
+        .at(-1)?.timestampMs ?? 0;
     const outstanding = checkOutstandingFire(recentFires, lastInboundMs);
     if (!outstanding.ok) {
       const dec: GhostDecision = {
@@ -345,6 +369,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
     config,
     chatDb,
     contacts,
+    sms: deps.sms,
     recentFires,
     // Cross-session tag→outcome rollup: 90 days is enough history for
     // stable per-tag rates without letting ancient behavior dominate.
@@ -507,15 +532,16 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
 /**
  * Build the JSON-ish prompt body the ghost reads after its system prompt.
  * Newline-separated sections so the ghost model has clear structure
- * without burning tokens on JSON syntax overhead.
+ * without burning tokens on JSON syntax overhead. Exported for tests.
  */
-function buildPromptInput(args: {
+export function buildPromptInput(args: {
   sessionKey: SessionKey;
   sessionPrefs: ReturnType<GhostPrefsStore["get"]> & object;
   nowMs: number;
   config: Config;
   chatDb: ChatDb;
   contacts: ContactBook;
+  sms?: GhostSmsHistory;
   recentFires: ReturnType<GhostPrefsStore["recentFires"]>;
   /** Scored fires across ALL sessions for the tag rollup. Optional so
    *  prompt-shape tests don't need a populated store. */
@@ -638,9 +664,13 @@ function buildPromptInput(args: {
   // Tapbacks on the bot's messages — the lightest feedback channel
   // iMessage offers. A ❤️/😂 says the move landed even when no reply
   // came; a 👎 is push-back that never showed up as text.
+  // chat.db rows only. An SMS session has none of its own, and an SMS DM's
+  // handle would otherwise pull in that person's iMessage thread.
+  const chatGuids = isSmsSession(args.sessionKey)
+    ? []
+    : chatGuidsForSession(args.sessionKey, args.chatDb, args.contacts);
   try {
-    const guids = chatGuidsForSession(args.sessionKey, args.chatDb, args.contacts);
-    const reactions = recentReactionsToMe(args.chatDb, guids, {
+    const reactions = recentReactionsToMe(args.chatDb, chatGuids, {
       sinceMs: args.nowMs - 14 * 86_400_000,
       limit: 6,
     });
@@ -680,11 +710,7 @@ function buildPromptInput(args: {
   //
   //   3. RECENT_HISTORY: the last TAIL_HISTORY_LINES speaker-tagged
   //      lines verbatim, so the ghost sees the actual fresh content.
-  const chatGuids = chatGuidsForSession(args.sessionKey, args.chatDb, args.contacts);
-  const history = chatGuids.flatMap((g) =>
-    getRecentMessages(args.chatDb, g, Number.MAX_SAFE_INTEGER, HISTORY_LIMIT),
-  );
-  history.sort((a, b) => a.timestampMs - b.timestampMs);
+  const history = sessionHistory(args.sessionKey, args, HISTORY_LIMIT);
 
   const segments = segmentByGaps(history, SEGMENT_BREAK_MIN * 60_000);
   lines.push(`CONVERSATION_ARC: ${history.length} msgs across ${segments.length} episodes`);
@@ -1111,7 +1137,7 @@ function describeSegment(
   const span = humanGap(seg.endMs - seg.startMs) || "instant";
   const bySpeaker = new Map<string, number>();
   for (const l of seg.lines) {
-    const who = l.fromMe ? "You" : (contacts.displayName(l.fromHandle) ?? l.fromHandle ?? "?");
+    const who = l.fromMe ? "You" : (contacts.label(l.fromHandle) ?? l.fromHandle ?? "?");
     bySpeaker.set(who, (bySpeaker.get(who) ?? 0) + 1);
   }
   const speakerStr = [...bySpeaker.entries()]
