@@ -199,6 +199,12 @@ export type Account = {
    */
   wake?: string | null;
   /**
+   * Set when the household was created through `kitchen_onboard`: when, and
+   * the chat it happened in, which is where the first week's check-ins go.
+   * Absent for a household set up any other way.
+   */
+  onboarded?: { at: string; via: string } | null;
+  /**
    * Title of the household's shared Apple Note; set it to adopt an existing
    * note. Edmund edits that note on screen, and the screen tools use the
    * title to tell this household's list from another's.

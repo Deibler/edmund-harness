@@ -1,30 +1,43 @@
 /**
  * Onboarding: turning somebody who asks for recipes into a household with a
- * kitchen, from one question and a few photos.
+ * kitchen, from one question and a few photos, then a first week of check-ins.
  */
 
 import { existsSync } from "node:fs";
 import { z } from "zod";
+import { getGroupParticipants } from "../../../src/imessage/participants.ts";
 import type { ToolContext } from "../../../src/mcp/context.ts";
 import type { ToolDef } from "../../../src/mcp/tools/types.ts";
-import { nameMembers } from "../src/accounts.ts";
-import { acceptStock, accountOf, provision, state, stockBrief } from "../src/onboard.ts";
+import { dmKeyFor } from "../../../src/sessions/key.ts";
+import { joinAccount, nameMembers } from "../src/accounts.ts";
+import {
+  HOW_IT_WORKS,
+  acceptStock,
+  accountOf,
+  checkinBrief,
+  provision,
+  scheduleCheckins,
+  state,
+  stockBrief,
+} from "../src/onboard.ts";
+import { decline, forget } from "../src/prospects.ts";
 import { slug } from "../src/store.ts";
 import { CATEGORIES, LOCATIONS } from "../src/types.ts";
-import { Acct, failure, text, withAccount } from "./shared.ts";
+import { Acct, failure, noKitchen, text, withAccount } from "./shared.ts";
 
 export function onboardTools(ctx: ToolContext): ToolDef[] {
   return [
     {
       name: "kitchen_onboard",
       description:
-        "Turn somebody who keeps asking for recipes into somebody with a kitchen. " +
-        "Call `check` the moment a food question comes from a chat with no household — " +
-        "it says whether to offer and what is missing, and never throws for a stranger. " +
-        "Then, only after they have said yes: `start` provisions the whole thing at once, " +
-        "`stock` hands you the brief for reading photos of their fridge and cupboards " +
-        "into a list of what is visible (you look, they confirm), and `accept` puts the " +
-        "confirmed ones on the shelves as one undoable batch.\n\n" +
+        "Turn somebody who asks about food into somebody with a kitchen. A chat with no " +
+        "household is told by kitchen_status (or `check`) to answer first and whether to " +
+        "offer one this time; `decline` records a no, which is final. Only after a yes: " +
+        "`start` provisions the whole thing at once (in a small group, everyone in it is " +
+        "linked) and queues three first-week check-ins, `stock` hands you the brief for " +
+        "reading photos of their fridge and cupboards into a list of what is visible (you " +
+        "look, they confirm), and `accept` puts the confirmed ones on the shelves as one " +
+        "undoable batch. `checkin` is what those wake-ups call.\n\n" +
         "ASK FOR TWO THINGS AND NO MORE: who eats there, and photographs. Everything " +
         "else — when they eat, what they spend, how often they cook, what they like — " +
         "is derived from the log and asking for it up front makes the answer worse, not " +
@@ -32,7 +45,7 @@ export function onboardTools(ctx: ToolContext): ToolDef[] {
         "in conversation, never a checklist to run through them.",
       inputSchema: z.object({
         account: Acct,
-        action: z.enum(["check", "start", "stock", "accept"]),
+        action: z.enum(["check", "decline", "start", "stock", "accept", "checkin"]),
         id: z
           .string()
           .nullish()
@@ -69,19 +82,17 @@ export function onboardTools(ctx: ToolContext): ToolDef[] {
           )
           .optional()
           .describe("accept: the proposals a human actually confirmed."),
+        kind: z
+          .enum(["dinner", "receipt", "recap"])
+          .nullish()
+          .describe("checkin: which one, as the wake-up names it."),
       }),
       handler: async (a) => {
-        // `check` must answer for somebody with no household; the rest go through
-        // withAccount.
+        // These answer for a chat with no household, so they run before withAccount.
         if (a.action === "check") {
-          const who = a.principal ?? ctx.sessionKey ?? null;
-          const id = a.account ?? accountOf(who);
+          const id = a.account ?? accountOf(a.principal ?? ctx.sessionKey ?? null);
+          if (!id) return noKitchen(ctx);
           const st = state(id);
-          if (!id) {
-            return text(
-              `${who ?? "This chat"} has no kitchen.\n\nIf they are asking about food for the second or third time, this is the moment to offer — in your own words, roughly: you have been asking me what to cook, and I can keep answering from nothing, or I can actually track what is in your kitchen and answer from that. Say what it gets them (what is actually cookable tonight, what is about to go off, what they spend) and that setting it up is two photos and one question.\n\nDo NOT provision anything until they say yes. If they do: kitchen_onboard action:"start" id:"<something-short>" person:"<their name>".`,
-            );
-          }
           return text(
             `${st.summary}\n\n${st.steps
               .map(
@@ -92,6 +103,19 @@ export function onboardTools(ctx: ToolContext): ToolDef[] {
                 "\n",
               )}${st.ready ? "\n\nSet up. Answer their food questions from the ledger." : ""}`,
           );
+        }
+
+        if (a.action === "decline") {
+          if (!ctx.sessionKey) return text("This chat session did not identify itself.", true);
+          decline(ctx.sessionKey);
+          return text(
+            "Noted. Do not offer a kitchen in this chat again unless they bring it up themselves.",
+          );
+        }
+
+        if (a.action === "checkin") {
+          if (!a.kind) return text('Which check-in? kind:"dinner", "receipt" or "recap".', true);
+          return text(checkinBrief(accountOf(ctx.sessionKey ?? null), a.kind));
         }
 
         if (a.action === "start") {
@@ -111,15 +135,42 @@ export function onboardTools(ctx: ToolContext): ToolDef[] {
                   ? { lat: a.lat, lon: a.lon, label: a.place ?? null }
                   : null,
             });
+            // In a small group that said yes, everyone in it shares the kitchen,
+            // so each of them can ask about it from their own chat too.
+            const linked: string[] = [];
+            const guid = ctx.chatGuids?.[0];
+            if (res.created && who.startsWith("imessage:group:") && ctx.chatDb && guid) {
+              for (const h of getGroupParticipants(ctx.chatDb, guid)) {
+                const dm = dmKeyFor(h);
+                if (accountOf(dm)) continue;
+                joinAccount(res.account, dm);
+                linked.push(ctx.contacts?.displayName(h)?.trim().split(/\s+/)[0] || h);
+              }
+            }
             // Names the phone already knows are never asked for.
             nameMembers(res.account, (h) => ctx.contacts?.displayName(h) ?? null);
+            forget(who);
+            const checkins =
+              res.created && ctx.cron
+                ? scheduleCheckins(res.account, who, (input) => ctx.cron.create(input))
+                : [];
             const st = state(res.account);
             return text(
-              `${res.created ? "Created" : "Updated"} "${res.account}".\n\n${st.steps
-                .map((s) => `  [${s.done ? "x" : " "}] ${s.id}${s.done ? "" : ` — ${s.next}`}`)
-                .join(
-                  "\n",
-                )}\n\nNext: ask for a photo of the fridge and one of a cupboard, then kitchen_onboard action:"stock". After that kitchen_site, which publishes their page and returns the link once it answers.`,
+              [
+                `${res.created ? "Created" : "Updated"} "${res.account}".`,
+                st.steps
+                  .map((s) => `  [${s.done ? "x" : " "}] ${s.id}${s.done ? "" : ` — ${s.next}`}`)
+                  .join("\n"),
+                linked.length
+                  ? `Linked ${linked.join(" and ")}'s own chats too, so any of them can ask you about this kitchen.`
+                  : null,
+                checkins.length
+                  ? "Queued three first-week check-ins in this chat: tomorrow afternoon a dinner from their shelves, day 4 a receipt nudge if none has come in, day 7 a short recap. Each decides when it fires whether it is still needed."
+                  : null,
+                'Next: if their original question is still unanswered, answer it now. Then ask for a photo of the fridge and one of a cupboard (more is welcome), then kitchen_onboard action:"stock". After that kitchen_site, which publishes their page and returns the link once it answers.',
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
             );
           } catch (e) {
             return failure(e);
@@ -166,7 +217,11 @@ export function onboardTools(ctx: ToolContext): ToolDef[] {
                 ? `On the shelves: ${res.added.map((p) => p.name).join(", ")} (batch ${res.batch}, undo with kitchen_undo).`
                 : "Everything there was already tracked.") +
               (res.skipped.length ? `\nAlready had: ${res.skipped.join(", ")}.` : "")
-            }\n\n${st.summary}`,
+            }\n\n${st.summary}${
+              st.steps.find((x) => x.id === "site")?.done
+                ? ""
+                : `\n\nNext: kitchen_site publishes their page and returns the link.\n\n${HOW_IT_WORKS}`
+            }`,
           );
         });
       },

@@ -9,20 +9,26 @@
  * Everything else (meal times, spend, tastes) is folded from the log once one
  * exists. The optional arguments below capture those details when somebody
  * volunteers them; they are never prompted for.
+ *
+ * The offer is made on the first food question, after it is answered, and the
+ * first week after setup has three check-ins (see `CHECKINS`).
  */
 
+import type { JobInput } from "../../../src/cron/types.ts";
 import {
   createAccount,
   eaters,
   getAccount,
+  householdTitle,
   idOk,
   listAccounts,
   updateAccount,
 } from "./accounts.ts";
 import { loadCookbook } from "./cookbook.ts";
 import { siteStatus } from "./host.ts";
+import type { Decision } from "./prospects.ts";
 import { siteOrigin } from "./settings.ts";
-import { append, live, readLog } from "./store.ts";
+import { append, droppedBatches, live, readLog } from "./store.ts";
 import { type Account, CATEGORIES, type Category, LOCATIONS, type Location } from "./types.ts";
 
 /* ── is this person a candidate ──────────────────────────────────────────── */
@@ -35,6 +41,80 @@ export function accountOf(principal: string | null): string | null {
   if (!principal) return null;
   for (const a of listAccounts()) if (a.members.includes(principal)) return a.id;
   return null;
+}
+
+/* ── the offer ───────────────────────────────────────────────────────────── */
+
+/** Who is asking, as far as the offer is concerned. */
+export type Caller = {
+  /** Other people in a group chat, by name. Absent in a direct message. */
+  group?: string[] | null;
+  /** People in that group who already have a kitchen. */
+  housed?: Array<{ name: string; account: string }>;
+};
+
+/** A group bigger than this is not offered a kitchen at all. */
+export const MAX_GROUP = 3;
+
+/** What the service is, for the model to say in its own words. */
+export const PITCH = [
+  "What to get across, briefly, in your own words, tied to what they just asked:",
+  "- What it is: you keep track of what is in their kitchen, so food answers come from what they actually have instead of from nothing.",
+  '- What they get: "what can I make tonight" answered from their own shelves, a heads-up before something goes off, a shopping list that fills itself as things run out, and their own page with what is in the kitchen, recipes written for them and what they spend. Dinner texted at a time they pick, if they want it.',
+  "- What it takes: a photo of the fridge and one of a cupboard now, then a photo of the receipt when they shop. No logging and no forms; you work out the rest and ask a quick yes or no when unsure.",
+  "Two or three sentences, not a brochure, ending on an easy yes or no. If they want detail, give it.",
+].join("\n");
+
+const day = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+/**
+ * What a chat with no kitchen is told on a food question. The answer always
+ * comes first: holding it back until setup was done once cost somebody a
+ * meatloaf time for 46 minutes.
+ */
+export function offerBrief(c: Caller, d: Decision, asks: string[] = []): string {
+  const head =
+    "No kitchen is set up for this chat yet. Answer what they asked in full, from what you know. Never hold an answer back for setup.";
+  if (c.group && c.group.length > MAX_GROUP) {
+    return `${head}\n\nThis group has ${c.group.length} people, too many to share one kitchen. Do not offer one here.`;
+  }
+  if (d.kind === "stop") {
+    const why =
+      d.why === "declined"
+        ? `They said no to a kitchen on ${day(d.since)}.`
+        : `They were offered a kitchen twice, last on ${day(d.since)}, and never took it up.`;
+    return `${head}\n\n${why} Do not bring it up again. If they raise it themselves, kitchen_onboard action:"start".`;
+  }
+  if (d.kind === "wait") {
+    return `${head}\n\nYou offered them a kitchen on ${day(d.since)}. Do not offer it again yet. If this message answers it, a yes is kitchen_onboard action:"start" and a no is kitchen_onboard action:"decline".`;
+  }
+
+  const lines = [head, ""];
+  if (c.group?.length) {
+    lines.push(
+      `This is a group chat with ${c.group.length > 1 ? `${c.group.slice(0, -1).join(", ")} and ${c.group.at(-1)}` : c.group[0]}. Offer only if they plausibly share one kitchen: a couple, or people who live together. You know them; if you are not sure, do not offer, just answer.`,
+    );
+    for (const h of c.housed ?? []) {
+      lines.push(
+        `${h.name} already has a kitchen ("${h.account}"). If this group eats from it, ask whether to link this chat to it instead, and on a yes: kitchen_accounts action:"join" account:"${h.account}".`,
+      );
+    }
+    lines.push("");
+  }
+  if (asks.length > 1) {
+    lines.push(`They have asked you about food ${asks.length} times since ${day(asks[0]!)}.`);
+  }
+  lines.push(
+    d.again
+      ? "They heard this offer once and did not answer. Make it one more time, in the same message as your answer, from a different angle: how what you just answered would have gone with their kitchen tracked. After this it stops."
+      : "Then, in the same message as your answer, offer to keep track of their kitchen.",
+    "",
+    PITCH,
+    "",
+    'On a yes: kitchen_onboard action:"start" id:"<short-name>" person:"<their name>". On a no: kitchen_onboard action:"decline", and that is final.',
+  );
+  return lines.join("\n");
 }
 
 /* ── the checklist ───────────────────────────────────────────────────────── */
@@ -181,6 +261,7 @@ export function provision(
   }
 
   const patch: Partial<Account> = {};
+  if (!had) patch.onboarded = { at: new Date().toISOString(), via: opts.principal };
   if (opts.person?.trim()) {
     patch.people = { ...(getAccount(id)!.people ?? {}), [opts.principal]: opts.person.trim() };
   }
@@ -192,6 +273,122 @@ export function provision(
   if (Object.keys(patch).length) updateAccount(id, patch);
 
   return { account: id, created: !had, state: state(id) };
+}
+
+/**
+ * What to tell somebody when their page goes out. The first setup through this
+ * file ended with a bare link: three receipts that week, none after.
+ */
+export const HOW_IT_WORKS = [
+  "When you send the link, say in a few short lines how it works from here. This message decides whether they use it:",
+  "- When they shop: a photo of the receipt. That is the one habit, and it keeps the kitchen true.",
+  "- When they wonder what to cook: just ask. You answer from what they have and the recipe lands on their page.",
+  "- Nothing to keep up: no logging. You work out what got used and ask a quick yes or no when unsure.",
+  "- The page: what is in the kitchen, their recipes, the shopping list and what they spend. Worth saving to the home screen.",
+  "- Offer once, at the end: dinner texted at a time they pick (kitchen_schedule).",
+].join("\n");
+
+/* ── the first week ──────────────────────────────────────────────────────── */
+
+/**
+ * Three check-ins after setup, because a new kitchen gets used for about a week
+ * and then forgotten: the two households set up for other people both went
+ * quiet after their first week. Each is a wake-up in the chat where setup happened,
+ * and what it asks for is decided from the ledger when it fires, so one that
+ * is no longer needed ends quietly.
+ */
+export const CHECKINS = [
+  { kind: "dinner", day: 1, hour: 16, minute: 0 },
+  { kind: "receipt", day: 4, hour: 17, minute: 30 },
+  { kind: "recap", day: 7, hour: 16, minute: 0 },
+] as const;
+
+export type CheckinKind = (typeof CHECKINS)[number]["kind"];
+
+/** A check-in this late is skipped: a dinner idea at nine at night helps nobody. */
+export const CHECKIN_GRACE_MS = 2 * 3_600_000;
+
+const NOTHING = "Nothing to send. Reply with exactly KEEP_QUIET.";
+const SKIP = "reply with exactly KEEP_QUIET instead";
+
+/** Queue the first week's check-ins in local time, counted in days from `from`. */
+export function scheduleCheckins(
+  account: string,
+  via: string,
+  create: (input: JobInput) => { id: string },
+  from = new Date(),
+): Array<{ kind: CheckinKind; atMs: number; job: string }> {
+  const acct = getAccount(account);
+  if (!acct) throw new Error(`No household "${account}".`);
+  return CHECKINS.map((c) => {
+    const at = new Date(from);
+    at.setDate(at.getDate() + c.day);
+    at.setHours(c.hour, c.minute, 0, 0);
+    const job = create({
+      sessionKey: via,
+      systemEvent: `[Kitchen · ${householdTitle(acct)}] Day ${c.day} since setup. Call kitchen_onboard action:"checkin" kind:"${c.kind}" and do what it says.`,
+      schedule: { kind: "once", atMs: at.getTime() },
+      gracePeriodMs: CHECKIN_GRACE_MS,
+      harnessWritten: true,
+    });
+    return { kind: c.kind, atMs: at.getTime(), job: job.id };
+  });
+}
+
+/** What a check-in asks for, from what the household has done since setup. */
+export function checkinBrief(account: string | null, kind: CheckinKind): string {
+  const acct = account ? getAccount(account) : null;
+  if (!account || !acct) return `This chat has no kitchen any more. ${NOTHING}`;
+  const since = acct.onboarded?.at ?? acct.created;
+  // Parsed, not compared as text: the ledger writes whole seconds and "+00:00",
+  // this has milliseconds and "Z".
+  const t0 = Math.floor(Date.parse(since) / 1000) * 1000;
+  const log = readLog(account);
+  const undone = droppedBatches(log);
+  const after = log.filter((e) => Date.parse(e.ts) >= t0 && !undone.has(e.batch));
+  const receipts = new Set(
+    after.filter((e) => /^(receipt|trip):/.test(e.src ?? "")).map((e) => e.src),
+  ).size;
+  const cooked = new Set(after.filter((e) => e.src === "cooked").map((e) => e.batch)).size;
+  const planned = after.filter((e) => e.op === "plan").length;
+
+  if (kind === "dinner") {
+    if (cooked || planned) {
+      return `They have already ${cooked ? "cooked" : "planned a meal"} with it since setup. ${NOTHING}`;
+    }
+    return [
+      "First full day with their kitchen tracked. Show them what it is for:",
+      "one dinner idea for tonight built from what is on their shelves (kitchen_status, then kitchen_plan so every ingredient is checked against stock).",
+      "One short text ending in a yes or no, like asking whether they want it tonight. No recipe until they say yes.",
+      `If you already talked food with them today, ${SKIP}.`,
+    ].join("\n");
+  }
+
+  if (kind === "receipt") {
+    if (receipts) return `A receipt has come in since setup. ${NOTHING}`;
+    return [
+      `No receipt since setup on ${day(since)}, so the kitchen still only knows the first photos.`,
+      "One line: if they have been shopping, a photo of the receipt keeps the kitchen current. Nothing more.",
+      `If they have said they have not shopped yet, or you already talked food with them today, ${SKIP}.`,
+    ].join("\n");
+  }
+
+  const stock = live(account);
+  const low = stock.filter((i) => i.level === "low" || i.level === "out").map((i) => i.name);
+  return [
+    `One week in: ${stock.length} things tracked, ${receipts} receipt${receipts === 1 ? "" : "s"} and ${cooked} meal${cooked === 1 ? "" : "s"} logged since setup.`,
+    low.length ? `Running low: ${low.slice(0, 6).join(", ")}.` : "",
+    "A short text: one useful thing from their kitchen right now (what to use up first, or a dinner it can make tonight).",
+    acct.dinners?.length
+      ? ""
+      : "Then offer once to text them dinner at a time they pick (kitchen_schedule).",
+    receipts || cooked
+      ? ""
+      : 'They have not used it yet this week, so make the easiest next step obvious: "just ask me what to make".',
+    "Your reply goes to them as a text.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /* ── a first stock-up from photographs ───────────────────────────────────── */
