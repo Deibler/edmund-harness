@@ -169,26 +169,29 @@ household boundary does that.
     kitchen_status                        # which household this session resolves to
     kitchen_accounts action:"list"        # every household, members, event counts
 
-**No household.** Every tool refuses and says who is asking. That is correct:
-there is no default household. Which recovery is right is a question for the
-person, not a guess:
-
-    kitchen_accounts action:"join"   account:"<id>"   # they share an existing kitchen
-    kitchen_onboard  action:"check"                   # they might want their own
-
-A principal belongs to at most one household; every write path refuses a
-second.
+**No household.** Nothing is read or written: there is no default household.
+Instead of an error, the tools answer with what to do, which is always to
+answer the question first, from what you know, and then whether to offer a
+kitchen this time (see *Onboarding*). If they belong in an existing household
+instead, `kitchen_accounts action:"join" account:"<id>"`. A principal belongs
+to at most one household; every write path refuses a second.
 
 ### Onboarding
 
-Offer a kitchen the second or third time somebody asks what to cook from
-nothing. **Set nothing up until they say yes**; an empty household is worse
-than none.
+**Offer on the first food question, after answering it, in the same message.**
+Never hold the answer back for setup. `kitchen_status` (or `kitchen_onboard
+check`) in a chat with no kitchen says whether to offer, and carries what to
+say: what it is, what they get, and what it takes (two photos now, a receipt
+photo when they shop). An offer is made at most twice, a week apart; a no is
+final (`kitchen_onboard action:"decline"`) unless they raise it. An offer that
+never reached the chat does not count. In a group of two or three, offer only
+if they plausibly share one kitchen, such as a couple; never in a bigger group.
+**Set nothing up until they say yes**; an empty household is worse than none.
 
-    kitchen_onboard action:"check"     # should I offer? what is missing? never throws
     kitchen_onboard action:"start"     # provisions everything, only after a yes
     kitchen_onboard action:"stock"     # their photos -> proposed items
     kitchen_onboard action:"accept"    # the confirmed ones, as one undoable batch
+    kitchen_onboard action:"checkin"   # what the first-week wake-ups call
 
 Ask for two things only: who eats there, and photographs. Everything else
 (meal times, spend, tastes, headcount) is derived from the log once it exists.
@@ -196,10 +199,18 @@ The optional `start` arguments are for what somebody volunteers later, never a
 form. Order: `start` with an id and their name, ask for one fridge photo and
 one cupboard photo, `stock` them, show the list and drop what is wrong,
 `accept`, then `kitchen_site`, which publishes their page at its permanent
-address and returns the link once the page has answered there: send that link.
-Names come from the contact book when the phone already knows them; ask only
-for the ones it does not. `check` after each step says what is still missing,
-from what actually answers rather than what is recorded.
+address and returns the link once the page has answered there. Send that link
+with a few lines on how it works from here (`accept` says what): receipts when
+they shop, ask what to cook, nothing to keep up. Names come from the contact
+book when the phone already knows them; ask only for the ones it does not.
+`check` after each step says what is still missing, from what actually answers
+rather than what is recorded.
+
+`start` in a small group links each member's own chat too, unless they already
+belong to a kitchen. It also queues three check-ins in the chat where setup
+happened: day 1 a dinner from their shelves, day 4 a receipt nudge, day 7 a
+short recap with an offer of dinner texts. Each reads the ledger when it fires
+and ends with `KEEP_QUIET` when it is no longer needed.
 
 ## Writing to the ledger
 

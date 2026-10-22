@@ -181,10 +181,11 @@ export function resolveAccount(explicit?: string | null, sessionKey?: string | n
     }
     return id;
   }
-  // No household: the message doubles as the onboarding offer, since every
-  // session without a kitchen reaches it.
+  // No household. The tools never show this message to the model: they answer
+  // a chat with no kitchen through `noKitchen` (tools/shared.ts), which says
+  // whether to offer one. This text is for every other caller.
   throw new NoAccountError(
-    `No kitchen is registered for ${p ?? "(unknown caller)"}.\n\nDo not route around this and do not answer their food question from nothing. It means nobody has said whose kitchen this is, and reading someone else's would be worse than failing.\n\nIf they have asked about food more than once, OFFER: you can keep answering from nothing, or you can track what is actually in their kitchen and answer from that — what is cookable tonight, what is about to turn, what they spend. Setup is two photos and one question. Then kitchen_onboard action:"check" for the exact next move, and action:"start" once they say yes.\n\nIf they belong in an existing household instead, kitchen_accounts action:"join".`,
+    `No kitchen is registered for ${p ?? "(unknown caller)"}, so nothing was read or written. There is no default household: reading someone else's would be worse than failing. kitchen_onboard action:"check" says whether to offer them one, and kitchen_accounts action:"join" adds them to an existing one.`,
   );
 }
 

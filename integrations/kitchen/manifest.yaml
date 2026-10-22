@@ -74,7 +74,7 @@ instructions:
   envelope_note: >-
     Any food, cooking, recipe, grocery, meal-planning or "what do we have"
     question starts with kitchen_status — in every chat, not just Alex's.
-    Never answer from memory or from a photo: a photo is a sample, not an
+    Never claim what a kitchen has from memory or from a photo: a photo is a sample, not an
     audit, and "not tracked" is never the same claim as "you do not have it".
     Write back in the same turn anything you watched change. Before sending a
     recipe, run kitchen_plan so ingredients are checked against real stock, and
