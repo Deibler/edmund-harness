@@ -60,6 +60,49 @@ export type GroupInfo = {
   participants: string[];
 };
 
+/** A transcript message as the history tools present it. */
+export type SmsTranscriptMessage = {
+  /** `sms-<Twilio SID>`, or `sms-row-<id>` for a row recorded without one. */
+  guid: string;
+  timestampMs: number;
+  /** Sender for inbound; '' for our own messages. */
+  fromHandle: string;
+  fromMe: boolean;
+  text: string;
+};
+
+type TranscriptRow = {
+  id: number;
+  from_handle: string;
+  direction: SmsDirection;
+  body: string;
+  at_ms: number;
+  message_sid: string | null;
+};
+
+function toHistoryLine(r: TranscriptRow): HistoryLine {
+  return {
+    rowId: r.id,
+    timestampMs: r.at_ms,
+    fromHandle: r.from_handle,
+    fromMe: r.direction === "out",
+    text: r.body,
+    isTapback: false,
+    tapbackTargetIsMe: false,
+    tapbackTargetHandle: "",
+  };
+}
+
+function toTranscriptMessage(r: TranscriptRow): SmsTranscriptMessage {
+  return {
+    guid: r.message_sid ? `sms-${r.message_sid}` : `sms-row-${r.id}`,
+    timestampMs: r.at_ms,
+    fromHandle: r.from_handle,
+    fromMe: r.direction === "out",
+    text: r.body,
+  };
+}
+
 export class SmsStore {
   private db: Database;
   private stmtCache = new Map<string, ReturnType<Database["query"]>>();
@@ -307,26 +350,82 @@ export class SmsStore {
    * segmentation compares it only within one list.
    */
   recentLines(conversation: string, limit: number): HistoryLine[] {
+    return this.linesBefore(conversation, Number.MAX_SAFE_INTEGER, limit);
+  }
+
+  /**
+   * The `limit` messages strictly before `beforeMs`, oldest → newest. The
+   * scroll-back read behind get_thread_context: the history tools used to
+   * ask chat.db, which has no rows for a Twilio conversation and so answered
+   * "no earlier messages" for a group text with dozens of them.
+   */
+  linesBefore(conversation: string, beforeMs: number, limit: number): HistoryLine[] {
     const rows = this.q(
-      `SELECT id, from_handle, direction, body, at_ms FROM sms_messages
-       WHERE conversation = ? ORDER BY at_ms DESC, id DESC LIMIT ?`,
-    ).all(conversation, Math.max(0, limit)) as {
-      id: number;
-      from_handle: string;
-      direction: SmsDirection;
-      body: string;
-      at_ms: number;
-    }[];
-    return rows.reverse().map((r) => ({
-      rowId: r.id,
-      timestampMs: r.at_ms,
-      fromHandle: r.from_handle,
-      fromMe: r.direction === "out",
-      text: r.body,
-      isTapback: false,
-      tapbackTargetIsMe: false,
-      tapbackTargetHandle: "",
-    }));
+      `SELECT id, from_handle, direction, body, at_ms, message_sid FROM sms_messages
+       WHERE conversation = ? AND at_ms < ? ORDER BY at_ms DESC, id DESC LIMIT ?`,
+    ).all(conversation, beforeMs, Math.max(0, limit)) as TranscriptRow[];
+    return rows.reverse().map(toHistoryLine);
+  }
+
+  /** How many messages precede `beforeMs` — the "page back further" hint. */
+  countBefore(conversation: string, beforeMs: number): number {
+    const row = this.q(
+      "SELECT COUNT(*) AS n FROM sms_messages WHERE conversation = ? AND at_ms < ?",
+    ).get(conversation, beforeMs) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Transcript rows matching a case-insensitive substring and/or sender,
+   * newest first. Outbound rows have no sender handle, so a `sender` filter
+   * only ever matches inbound.
+   */
+  search(
+    conversation: string,
+    opts: { query?: string; sender?: string; sinceMs?: number; untilMs?: number; limit: number },
+  ): SmsTranscriptMessage[] {
+    const where = ["conversation = ?"];
+    const params: (string | number)[] = [conversation];
+    if (opts.query) {
+      where.push("LOWER(body) LIKE ? ESCAPE '\\'");
+      params.push(`%${opts.query.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    }
+    if (opts.sender) {
+      where.push("from_handle = ?");
+      params.push(normalizeHandle(opts.sender));
+    }
+    if (opts.sinceMs !== undefined) {
+      where.push("at_ms >= ?");
+      params.push(opts.sinceMs);
+    }
+    if (opts.untilMs !== undefined) {
+      where.push("at_ms <= ?");
+      params.push(opts.untilMs);
+    }
+    params.push(Math.max(0, opts.limit));
+    const rows = this.q(
+      `SELECT id, from_handle, direction, body, at_ms, message_sid FROM sms_messages
+       WHERE ${where.join(" AND ")} ORDER BY at_ms DESC, id DESC LIMIT ?`,
+    ).all(...params) as TranscriptRow[];
+    return rows.map(toTranscriptMessage);
+  }
+
+  /** One message by the guid `search` handed out, scoped to its conversation. */
+  messageByGuid(conversation: string, guid: string): SmsTranscriptMessage | null {
+    const rowId = /^sms-row-(\d+)$/.exec(guid)?.[1];
+    const sid = rowId ? null : guid.startsWith("sms-") ? guid.slice("sms-".length) : guid;
+    const row = (
+      rowId
+        ? this.q(
+            `SELECT id, from_handle, direction, body, at_ms, message_sid FROM sms_messages
+             WHERE conversation = ? AND id = ?`,
+          ).get(conversation, Number(rowId))
+        : this.q(
+            `SELECT id, from_handle, direction, body, at_ms, message_sid FROM sms_messages
+             WHERE conversation = ? AND message_sid = ?`,
+          ).get(conversation, sid)
+    ) as TranscriptRow | undefined;
+    return row ? toTranscriptMessage(row) : null;
   }
 
   /** Unix ms of the last message either way, or null if never. */

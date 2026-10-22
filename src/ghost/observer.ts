@@ -20,7 +20,12 @@ import {
   DEFAULT_ACTIVE_HOURS_GROUP,
   type GhostPrefsStore,
 } from "./prefs.ts";
-import { type GhostDecision, recordDecisionNote, runGhostTick } from "./think.ts";
+import {
+  type GhostDecision,
+  type GhostSmsHistory,
+  recordDecisionNote,
+  runGhostTick,
+} from "./think.ts";
 
 /**
  * Ghost observer — runs periodic + event-driven ghost ticks.
@@ -74,6 +79,8 @@ export class GhostObserver {
        *  Wired by main.ts to keep guest/vouched DM handles out of proactive
        *  outreach entirely — they are never ghost targets, never enrolled. */
       isExcludedSession?: (sessionKey: SessionKey) => boolean;
+      /** SMS transcript reader for runGhostTick (see GhostDeps.sms). */
+      sms?: GhostSmsHistory;
     },
   ) {}
 

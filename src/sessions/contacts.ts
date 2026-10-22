@@ -2,6 +2,9 @@ import type { Contact } from "../config/config.ts";
 import type { AddressBook } from "./address-book.ts";
 import { normalizeHandle } from "./key.ts";
 
+/** Where `label` finds a name Edmund was told (see learned-names.ts). */
+export type LearnedNameSource = { get(handle: string): string | null };
+
 /**
  * Handle → canonical handle + display name resolver.
  *
@@ -18,9 +21,15 @@ export class ContactBook {
    *  `aliasesFor` be O(1) per call instead of O(N) over every handle. */
   private canonToAliases = new Map<string, string[]>();
   private addressBook: AddressBook | null;
+  private learned: LearnedNameSource | null;
 
-  constructor(contacts: Contact[], addressBook: AddressBook | null = null) {
+  constructor(
+    contacts: Contact[],
+    addressBook: AddressBook | null = null,
+    learned: LearnedNameSource | null = null,
+  ) {
     this.addressBook = addressBook;
+    this.learned = learned;
     for (const c of contacts) {
       const first = c.handles[0];
       if (!first) continue;
@@ -48,6 +57,23 @@ export class ContactBook {
     const fromConfig = this.canonToName.get(this.canon(handle));
     if (fromConfig) return fromConfig;
     return this.addressBook?.lookup(handle) ?? null;
+  }
+
+  /**
+   * The name to SHOW for a handle in an envelope or transcript: the
+   * displayName when the operator's books have one, else a name Edmund was
+   * told, rendered with the number (`Pat (+15550100001)`) so it reads as
+   * learned rather than as an address-book entry. Null when neither exists.
+   *
+   * Display only. Admission, addressing and anything else that asks "does
+   * the operator know this person" must keep calling `displayName`: a learned
+   * name is something a group member said, not something the operator saved.
+   */
+  label(handle: string): string | null {
+    const known = this.displayName(handle);
+    if (known) return known;
+    const learned = this.learned?.get(this.canon(handle));
+    return learned ? `${learned} (${this.canon(handle)})` : null;
   }
 
   /** Every handle the book knows about, normalized. Used for session scoping. */

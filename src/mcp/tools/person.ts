@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { readPersonFile, writePersonFile } from "../../persona/crud.ts";
 import { type PersonSection, appendPersonNote } from "../../persona/write-note.ts";
-import { chatIdFromKey, isGroupSession } from "../../sessions/key.ts";
+import { chatIdFromKey, isGroupSession, normalizeHandle } from "../../sessions/key.ts";
+import { LearnedNames, vetLearnedName } from "../../sessions/learned-names.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
 
@@ -57,6 +58,16 @@ const WriteInput = z.object({
     ),
 });
 
+const NameInput = z.object({
+  handle: z
+    .string()
+    .min(1)
+    .describe("The person's phone (E.164) or email, as the roster or transcript shows it."),
+  name: z
+    .string()
+    .describe("What they go by, e.g. 'Pat'. An empty string forgets a name set earlier."),
+});
+
 export function personTools(ctx: ToolContext): ToolDef[] {
   return [
     {
@@ -78,6 +89,46 @@ export function personTools(ctx: ToolContext): ToolDef[] {
           note: args.note,
         });
         return textResult(`appended to ${path} (${args.section})`);
+      },
+    },
+    {
+      name: "name_person",
+      description: [
+        "Record what someone goes by when the operator's contacts have no name for their number: typically someone in a group introduced as 'the 0001 number is Pat'. From then on every roster and transcript, in every chat, shows them as 'Pat (+1…)' instead of a bare number, so you no longer have to work out who it is each turn.",
+        "Only for numbers with no contact name, and never a name that already belongs to one of the operator's contacts. Use what the person or the group actually calls them; don't guess. Pass an empty name to forget it.",
+      ].join("\n"),
+      inputSchema: NameInput,
+      handler: (args) => {
+        const handle = normalizeHandle(args.handle);
+        if (!handle) return errorResult("handle required");
+        const own = [...ctx.config.self.handles, ctx.config.sms.from ?? ""]
+          .map(normalizeHandle)
+          .filter(Boolean);
+        if (own.includes(handle)) return errorResult("that is your own address");
+        const known = ctx.contacts.displayName(handle);
+        if (known) return errorResult(`${handle} is already in contacts as ${known}`);
+        const store = new LearnedNames(ctx.dataDir);
+        try {
+          if (!args.name.trim()) {
+            return textResult(
+              store.forget(handle)
+                ? `forgot the name for ${handle}`
+                : `no name was set for ${handle}`,
+            );
+          }
+          const vetted = vetLearnedName(args.name);
+          if (!vetted.ok) return errorResult(`not saved: ${vetted.reason}`);
+          const lower = vetted.name.toLowerCase();
+          if (ctx.contacts.allKnownNames().some((n) => n.trim().toLowerCase() === lower)) {
+            return errorResult(
+              `not saved: "${vetted.name}" is already the name of one of the operator's contacts`,
+            );
+          }
+          store.set(handle, vetted.name, ctx.sessionKey);
+          return textResult(`saved: ${handle} now shows as ${vetted.name} (${handle})`);
+        } finally {
+          store.close();
+        }
       },
     },
     {

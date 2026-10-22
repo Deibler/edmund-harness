@@ -11,7 +11,7 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import { recentThreadLines } from "../../src/channels/history.ts";
+import { wakeThread } from "../../src/channels/history.ts";
 import {
   TARGET_AFTER_COMPACT,
   compactSession,
@@ -287,8 +287,7 @@ async function invokeSubcmd(
         chatDb,
         echoes,
         locks,
-        recentThread: (k, guid) =>
-          recentThreadLines(k, guid, { config: cfg, chatDb, contacts, state }),
+        recentThread: (k, guid) => wakeThread(k, guid, { config: cfg, chatDb, contacts, state }),
       },
     );
     if (!result.ok) {

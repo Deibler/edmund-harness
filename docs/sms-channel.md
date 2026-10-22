@@ -36,6 +36,13 @@ EMAIL — adding the phone number makes any group green by SMS's nature.
 - Seams: `deliverReply` sms branch; `Deps.sms` history/roster providers;
   `isGroupSession`/`chatIdFromKey` know sms keys; envelope `[SMS · …]`
   header + channel-reality note; typing suppressed.
+- **Anything that reads a conversation must branch on `sms:`.** chat.db has
+  no rows for a Twilio conversation, so a chat.db read "succeeds" with zero
+  rows and the room looks empty. The envelope, cold wake-ups
+  (`wakeThread`: roster + thread), the history MCP tools
+  (`src/mcp/tools/sms-history.ts`) and the ghost (`GhostDeps.sms`) all read
+  the SMS store. A new history reader needs the same branch and a test with
+  a chat.db that throws when touched.
 
 ## Safety posture
 

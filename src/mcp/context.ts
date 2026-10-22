@@ -9,6 +9,7 @@ import { type SessionTier, isGuestTier, parseSessionTier } from "../security/pol
 import { AddressBook } from "../sessions/address-book.ts";
 import { ContactBook } from "../sessions/contacts.ts";
 import { isTradingSession } from "../sessions/key.ts";
+import { LearnedNames } from "../sessions/learned-names.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 
 /**
@@ -66,7 +67,7 @@ export function loadToolContext(): ToolContext {
 
   const chatDb = new ChatDb(config.paths.chat_db);
   const addressBook = new AddressBook();
-  const contacts = new ContactBook(config.contacts, addressBook);
+  const contacts = new ContactBook(config.contacts, addressBook, new LearnedNames(dataDir));
   const chatGuids = chatGuidsForSession(sessionKey, chatDb, contacts);
 
   const sessionTier = parseSessionTier(process.env.EDMUND_SESSION_TIER);

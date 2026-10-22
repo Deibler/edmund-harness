@@ -23,7 +23,7 @@ import {
   resolveGuestTurn,
 } from "../guests/access.ts";
 import type { BufferedMessage } from "../guests/store.ts";
-import { getChatDisplayName, getGroupParticipants } from "../imessage/participants.ts";
+import { getChatDisplayName } from "../imessage/participants.ts";
 import { looksLikeLeakedScaffolding, sanitizeInbound } from "../imessage/sanitize.ts";
 import { isPermanentSendError } from "../imessage/send.ts";
 import { enrichInboundMedia } from "../imessage/transcribe-inbound.ts";
@@ -56,12 +56,12 @@ import { clearCompact, registerCompact } from "./compact-gate.ts";
 import { deliverReply } from "./deliver.ts";
 import type { Deps } from "./deps.ts";
 import { buildEnvelope } from "./envelope.ts";
-import { formatParticipantList } from "./history-format.ts";
 import {
   buildDowntimeNudge,
   buildHistoryBundle,
   buildReactionLines,
   buildReplyContext,
+  groupRoster,
 } from "./history.ts";
 
 /** Per-turn options. `catchUp` marks a single coalesced turn produced on recovery after the
@@ -431,8 +431,7 @@ async function handleBatchInner(
   // Treat a switch as cold before the envelope is built so history-on-cold
   // seeds the new CLI with the recent conversation on its very first turn.
   let claudeSessionId = stale || providerSwitch ? null : (session?.claudeSessionId ?? null);
-  const senderLabel =
-    contacts.displayName(first.fromHandle) ?? first.fromHandle ?? first.chatIdentifier;
+  const senderLabel = contacts.label(first.fromHandle) ?? first.fromHandle ?? first.chatIdentifier;
 
   // Guest-access tier, re-resolved at turn time (not just at the gate) so a
   // campaign that expired — or a kill switch flipped — while this message
@@ -1039,17 +1038,7 @@ async function handleBatchInner(
       lastInboundMs: session?.lastInboundMs ?? null,
       isGroup,
       pendingAttachments: pendingAttachments.length,
-      participants:
-        isGroup && config.behavior.participant_roster
-          ? formatParticipantList(
-              // SMS groups: chat.db has no row for a Twilio conversation; the
-              // roster is webhook state held by the SMS store.
-              isSmsSession(key)
-                ? (deps.sms?.groupInfo(chatIdFromKey(key))?.participants ?? [])
-                : getGroupParticipants(chatDb, first.chatGuid),
-              contacts,
-            )
-          : undefined,
+      participants: isGroup ? groupRoster(key, first.chatGuid, deps) : undefined,
       chatName: isGroup
         ? isSmsSession(key)
           ? (deps.sms?.groupInfo(chatIdFromKey(key))?.friendlyName ?? null)

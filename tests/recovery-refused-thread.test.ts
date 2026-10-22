@@ -12,7 +12,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recentThreadLines } from "../src/channels/history.ts";
+import { wakeThread } from "../src/channels/history.ts";
 import type { RunResult } from "../src/claude/runner.ts";
 import { dropRefusedThread } from "../src/codex/runner.ts";
 import { ConfigSchema } from "../src/config/config.ts";
@@ -56,9 +56,9 @@ const chatDb = new ChatDb(db.path);
 const dataDir = mkdtempSync(join(tmpdir(), "refused-thread-"));
 const state = new StateStore(dataDir);
 const config = ConfigSchema.parse({ self: { handles: [] }, allowlist: {}, identity: {} });
-const contacts = { displayName: () => null } as unknown as ContactBook;
+const contacts = { displayName: () => null, label: () => null } as unknown as ContactBook;
 const recentThread = (key: string, guid: string) =>
-  recentThreadLines(key, guid, { config, chatDb, contacts, state });
+  wakeThread(key, guid, { config, chatDb, contacts, state });
 
 afterAll(() => {
   state.close();

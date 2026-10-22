@@ -1,15 +1,23 @@
+import type { WakeThread } from "../cron/wake-thread.ts";
 import { getRecentMessages } from "../imessage/history.ts";
+import { getGroupParticipants } from "../imessage/participants.ts";
 import { recentReactionsToMe } from "../imessage/reactions.ts";
 import { lookupReplyContext } from "../imessage/reply-lookup.ts";
 import { findTopicShifts, pickActiveSegment, segmentByGaps } from "../imessage/segment.ts";
 import type { InboundMessage, ReplyContext } from "../imessage/types.ts";
 import { makeHistoryFilter, viewerForSession } from "../orchestrators/visibility.ts";
 import { copyAttachments } from "../persona/copy-received.ts";
-import { chatIdFromKey, isMirrorSession, isSmsSession, isTradingSession } from "../sessions/key.ts";
+import {
+  chatIdFromKey,
+  isGroupSession,
+  isMirrorSession,
+  isSmsSession,
+  isTradingSession,
+} from "../sessions/key.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import type { Deps } from "./deps.ts";
-import { formatHistoryLines } from "./history-format.ts";
+import { formatHistoryLines, formatParticipantList } from "./history-format.ts";
 
 /**
  * Bundle of derived envelope fields: speaker-tagged history lines, a one-line
@@ -52,7 +60,7 @@ export function buildReplyContext(
     if (!parent) continue;
     const senderLabel = parent.fromMe
       ? "You"
-      : (contacts.displayName(parent.fromHandle) ?? parent.fromHandle ?? "?");
+      : (contacts.label(parent.fromHandle) ?? parent.fromHandle ?? "?");
     const copied = copyAttachments(sandboxPath, parent.attachments, new Date(parent.timestampMs));
     const attachmentPaths = parent.attachments.map((src) => copied.get(src) ?? src);
     out.set(m.replyToGuid, { context: parent, senderLabel, attachmentPaths });
@@ -266,6 +274,44 @@ export function recentThreadLines(
 }
 
 /**
+ * Who is in a group session, as the `Participants:` labels the envelope
+ * shows. Empty for a DM or when [behavior].participant_roster is off. An SMS
+ * roster comes from the SMS store, because chat.db has no row for a Twilio
+ * conversation. Inbound turns and wake-ups both read it here, so the two
+ * cannot disagree about who is in the room.
+ */
+export function groupRoster(
+  sessionKey: SessionKey,
+  chatGuid: string,
+  deps: Pick<Deps, "config" | "chatDb" | "contacts" | "sms">,
+): string[] {
+  if (!isGroupSession(sessionKey) || !deps.config.behavior.participant_roster) return [];
+  const handles = isSmsSession(sessionKey)
+    ? (deps.sms?.groupInfo(chatIdFromKey(sessionKey))?.participants ?? [])
+    : getGroupParticipants(deps.chatDb, chatGuid);
+  return formatParticipantList(handles, deps.contacts);
+}
+
+/**
+ * What a cold wake-up is shown about the conversation it lands in: the
+ * group's roster and the recent thread. The roster is the part a reminder
+ * written days earlier cannot carry for itself. On 2026-10-01 a scheduled
+ * group reminder addressed someone who had only been talked ABOUT ("Trey,
+ * secure your weird eggs") because its wake-up had the thread but not the
+ * list of who was actually there.
+ */
+export function wakeThread(
+  sessionKey: SessionKey,
+  chatGuid: string,
+  deps: Pick<Deps, "config" | "chatDb" | "contacts" | "state" | "sms">,
+): WakeThread {
+  return {
+    participants: groupRoster(sessionKey, chatGuid, deps),
+    lines: recentThreadLines(sessionKey, chatGuid, deps),
+  };
+}
+
+/**
  * The nudge shown on the single coalesced turn we run per chat after the daemon was DOWN.
  * Frames recovery the way a person experiences it: a phone that died, just got power, and is
  * flooded with texts. They scan it all and reply naturally to what still matters — they do NOT
@@ -400,7 +446,7 @@ export function buildReactionLines(key: SessionKey, deps: Deps): string[] {
   });
   if (items.length === 0) return [];
   return items.map((r) => {
-    const who = contacts.displayName(r.reactorHandle) ?? (r.reactorHandle || "someone");
+    const who = contacts.label(r.reactorHandle) ?? (r.reactorHandle || "someone");
     const d = new Date(r.atMs);
     const when = `${d.toLocaleDateString("en-US", { weekday: "short" })} ${d
       .getHours()

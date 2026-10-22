@@ -400,6 +400,7 @@ const TOOLS_TEXT_TEMPLATE = [
   "",
   "**Memory & context (WRITE — at end of every turn, ask: did I learn something durable?):**",
   "  • `remember_about_person(handle, section, note)` — append to a person file (preferences / shared-history / open-items). The cheapest, highest-leverage tool you have.",
+  "  • `name_person(handle, name)` — when a roster shows a bare number and the chat has said who it is ('the 0001 number is Pat'), record the name so every roster and transcript shows it.",
   "  • `remember_about_self(section, note)` — append to SOUL.md: an opinion you keep holding, a running bit, a taste, a real annoyance, a fact about your own life. SOUL.md is in every turn of every conversation, so nothing else goes there.",
   "  • `remember_about_subject(domain, title, applies, learned, outcome)` — know-how that would help with a different person next year: a recipe that worked, a tool that misbehaves, a mistake and the check that catches it. Recalled when the subject comes up.",
   "  • `write_person_file(handle, body)` — full rewrite (for consolidation / cleanup, not first-time notes).",

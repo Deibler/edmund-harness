@@ -29,9 +29,7 @@ export function formatHistoryLines(
       out.push(`  --- ${formatGap(gapMs)} gap ---`);
     }
     const l = lines[i]!;
-    const who = l.fromMe
-      ? "You"
-      : (contacts.displayName(l.fromHandle) ?? l.fromHandle ?? "unknown");
+    const who = l.fromMe ? "You" : (contacts.label(l.fromHandle) ?? l.fromHandle ?? "unknown");
     // Name whose message a reaction was aimed at. A tapback arrives as a row
     // reading `Questioned "…"` that quotes its target, and the quote alone is
     // ambiguous about WHO is being reacted to. In a group that misfired: a
@@ -42,7 +40,7 @@ export function formatHistoryLines(
       ? l.tapbackTargetIsMe
         ? " (reacting to YOUR message)"
         : l.tapbackTargetHandle
-          ? ` (reacting to ${contacts.displayName(l.tapbackTargetHandle) ?? l.tapbackTargetHandle}'s message, not yours)`
+          ? ` (reacting to ${contacts.label(l.tapbackTargetHandle) ?? l.tapbackTargetHandle}'s message, not yours)`
           : ""
       : "";
     out.push(`  [${who} · ${shortTime(l.timestampMs)}] ${l.text}${aimed}`);
@@ -55,7 +53,7 @@ export function formatParticipantList(handles: string[], contacts: ContactBook):
   const seen = new Set<string>();
   const out: string[] = [];
   for (const h of handles) {
-    const name = contacts.displayName(h) ?? h;
+    const name = contacts.label(h) ?? h;
     if (seen.has(name)) continue;
     seen.add(name);
     out.push(name);

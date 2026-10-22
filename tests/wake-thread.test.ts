@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProactiveEnvelope } from "../src/channels/envelope.ts";
-import { recentThreadLines } from "../src/channels/history.ts";
+import { recentThreadLines, wakeThread } from "../src/channels/history.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { wakeThreadBlock } from "../src/cron/wake-thread.ts";
 import { ChatDb } from "../src/imessage/db.ts";
@@ -23,12 +23,23 @@ import { emptyChatDb } from "./helpers/chat-db.ts";
 const HANDLE = "+15550100002";
 const GUID = `any;-;${HANDLE}`;
 const KEY = `imessage:dm:${HANDLE}`;
+const MEMBER_A = "+15550100011";
+const MEMBER_B = "+15550100012";
+const GROUP_GUID = "any;+;chat0000000001";
+const GROUP_KEY = `imessage:group:${GROUP_GUID}`;
+const SMS_GROUP = "CH00000000000000000000000000000002";
+const SMS_GROUP_KEY = `sms:group:${SMS_GROUP}`;
 
 const db = emptyChatDb();
 {
   const w = new Database(db.path);
   w.exec(`INSERT INTO chat (ROWID, guid, chat_identifier) VALUES (1, '${GUID}', '${HANDLE}')`);
   w.exec(`INSERT INTO handle (ROWID, id, service) VALUES (1, '${HANDLE}', 'iMessage')`);
+  // A group chat with two members, for the roster.
+  w.exec(`INSERT INTO chat (ROWID, guid, chat_identifier) VALUES (2, '${GROUP_GUID}', 'chat1')`);
+  w.exec(`INSERT INTO handle (ROWID, id, service) VALUES (2, '${MEMBER_A}', 'iMessage')`);
+  w.exec(`INSERT INTO handle (ROWID, id, service) VALUES (3, '${MEMBER_B}', 'iMessage')`);
+  w.exec("INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (2, 2), (2, 3)");
   const lines: [number, number, string][] = [
     [0, 1, "dinner is at 7 now, not 6"],
     [1, 0, "got it, moving the reminder"],
@@ -48,9 +59,33 @@ const chatDb = new ChatDb(db.path);
 const dataDir = mkdtempSync(join(tmpdir(), "wake-thread-"));
 const state = new StateStore(dataDir);
 const config = ConfigSchema.parse({ self: { handles: [] }, allowlist: {}, identity: {} });
-const contacts = { displayName: () => null } as unknown as ContactBook;
+const names: Record<string, string> = { [MEMBER_A]: "Alex", [MEMBER_B]: "Kim" };
+const contacts = {
+  displayName: (h: string) => names[h] ?? null,
+  label: (h: string) => names[h] ?? (h === MEMBER_B_SMS ? `Pat (${h})` : null),
+} as unknown as ContactBook;
+const MEMBER_B_SMS = "+15550100013";
+const sms = {
+  history: (conversationId: string) =>
+    conversationId === SMS_GROUP
+      ? [
+          {
+            rowId: 1,
+            timestampMs: Date.now() - 60_000,
+            fromHandle: MEMBER_A,
+            fromMe: false,
+            text: "she's into Jordan and his weird eggs",
+            isTapback: false,
+            tapbackTargetIsMe: false,
+            tapbackTargetHandle: "",
+          },
+        ]
+      : [],
+  groupInfo: (sid: string) =>
+    sid === SMS_GROUP ? { friendlyName: null, participants: [MEMBER_A, MEMBER_B_SMS] } : null,
+};
 const recentThread = (key: string, guid: string) =>
-  recentThreadLines(key, guid, { config, chatDb, contacts, state });
+  wakeThread(key, guid, { config, chatDb, contacts, state, sms });
 
 afterAll(() => {
   chatDb.close();
@@ -58,16 +93,16 @@ afterAll(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-function session(claudeSessionId: string | null) {
+function session(claudeSessionId: string | null, key = KEY, chatGuid = GUID) {
   state.upsertSession({
-    sessionKey: KEY,
+    sessionKey: key,
     claudeSessionId,
-    chatGuid: GUID,
-    isGroup: 0,
+    chatGuid,
+    isGroup: key === KEY ? 0 : 1,
     lastInboundMs: Date.now(),
     lastOutboundMs: 0,
   });
-  state.setModelSession(KEY, claudeSessionId, "claude");
+  state.setModelSession(key, claudeSessionId, "claude");
 }
 
 describe("wake-ups and the recent thread", () => {
@@ -77,6 +112,28 @@ describe("wake-ups and the recent thread", () => {
     expect(block).toContain("Recent thread");
     expect(block).toContain("dinner is at 7 now, not 6");
     expect(block).toContain("and bring the good knife");
+  });
+
+  test("a DM wake-up has no roster line", () => {
+    session(null);
+    expect(wakeThreadBlock(KEY, GUID, config, state, recentThread)).not.toContain("Participants:");
+  });
+
+  // A reminder written days earlier said someone "is into Jordan" and called
+  // it an inside-joke callback. The cold wake-up had the thread but not the
+  // roster, and the reply addressed Jordan, who was never in the chat.
+  test("a cold wake-up into an SMS group says who is in the room", () => {
+    session(null, SMS_GROUP_KEY, `sms:${SMS_GROUP}`);
+    const block = wakeThreadBlock(SMS_GROUP_KEY, `sms:${SMS_GROUP}`, config, state, recentThread);
+    expect(block).toContain(`Participants: Alex, Pat (${MEMBER_B_SMS})`);
+    expect(block).toContain("weird eggs");
+    expect(block.indexOf("Participants:")).toBeLessThan(block.indexOf("Recent thread"));
+  });
+
+  test("a cold wake-up into an iMessage group carries the chat.db roster", () => {
+    session(null, GROUP_KEY, GROUP_GUID);
+    const block = wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread);
+    expect(block).toContain("Participants: Alex, Kim");
   });
 
   test("a wake-up that resumes the conversation gets nothing extra", () => {
