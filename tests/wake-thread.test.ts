@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
  * and that a resumed wake-up (which has the conversation) gets nothing extra.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProactiveEnvelope } from "../src/channels/envelope.ts";
@@ -53,6 +53,19 @@ const db = emptyChatDb();
     );
     w.exec(`INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, ${row})`);
   });
+  // Group chatter: one message before the group's last turn, one after.
+  const groupLines: [number, string, number][] = [
+    [2, "who is driving saturday", 10 * 60_000],
+    [3, "I can drive, leaving at 9", 60_000],
+  ];
+  groupLines.forEach(([handle, text, agoMs], i) => {
+    const row = 10 + i;
+    const dateNs = (Date.now() - 978_307_200_000 - agoMs) * 1_000_000;
+    w.exec(
+      `INSERT INTO message (ROWID, guid, text, handle_id, is_from_me, date) VALUES (${row}, 'G${row}', '${text}', ${handle}, 0, ${dateNs})`,
+    );
+    w.exec(`INSERT INTO chat_message_join (chat_id, message_id) VALUES (2, ${row})`);
+  });
   w.close();
 }
 const chatDb = new ChatDb(db.path);
@@ -84,8 +97,8 @@ const sms = {
   groupInfo: (sid: string) =>
     sid === SMS_GROUP ? { friendlyName: null, participants: [MEMBER_A, MEMBER_B_SMS] } : null,
 };
-const recentThread = (key: string, guid: string) =>
-  wakeThread(key, guid, { config, chatDb, contacts, state, sms });
+const recentThread = (key: string, guid: string, sinceMs?: number) =>
+  wakeThread(key, guid, { config, chatDb, contacts, state, sms }, sinceMs);
 
 afterAll(() => {
   chatDb.close();
@@ -93,13 +106,18 @@ afterAll(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-function session(claudeSessionId: string | null, key = KEY, chatGuid = GUID) {
+function session(
+  claudeSessionId: string | null,
+  key = KEY,
+  chatGuid = GUID,
+  lastInboundMs = Date.now(),
+) {
   state.upsertSession({
     sessionKey: key,
     claudeSessionId,
     chatGuid,
     isGroup: key === KEY ? 0 : 1,
-    lastInboundMs: Date.now(),
+    lastInboundMs,
     lastOutboundMs: 0,
   });
   state.setModelSession(key, claudeSessionId, "claude");
@@ -134,6 +152,27 @@ describe("wake-ups and the recent thread", () => {
     session(null, GROUP_KEY, GROUP_GUID);
     const block = wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread);
     expect(block).toContain("Participants: Alex, Kim");
+  });
+
+  test("a group wake-up that resumes gets what was said since its last turn", () => {
+    session("11111111-2222-3333-4444-555555555555", GROUP_KEY, GROUP_GUID, Date.now() - 5 * 60_000);
+    const block = wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread);
+    expect(block).toContain("since your last turn here");
+    expect(block).toContain("I can drive, leaving at 9");
+    expect(block).not.toContain("who is driving saturday");
+    expect(block).not.toContain("Participants:");
+  });
+
+  test("every daemon wake-up hands the boundary through", () => {
+    const main = readFileSync(join(import.meta.dir, "../src/main.ts"), "utf8");
+    const calls = main.match(/wakeThread\([^)]*\)/g) ?? [];
+    expect(calls.length).toBe(2);
+    for (const c of calls) expect(c).toBe("wakeThread(key, guid, deps, sinceMs)");
+  });
+
+  test("a resumed group with nothing new gets nothing", () => {
+    session("11111111-2222-3333-4444-555555555555", GROUP_KEY, GROUP_GUID, Date.now());
+    expect(wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread)).toBe("");
   });
 
   test("a wake-up that resumes the conversation gets nothing extra", () => {

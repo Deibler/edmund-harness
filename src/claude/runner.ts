@@ -22,7 +22,13 @@ import { DEBUG, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import { type IterationUsage, contextTokens, iterationContextTokens } from "./auto-compact.ts";
 import { ISOLATED_SETTINGS_ARGS } from "./direct-env.ts";
 import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
-import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
+import {
+  ensureMcpConfig,
+  envelopeNeedsBrowser,
+  hasBrowser,
+  pickMcpConfig,
+  toolEnv,
+} from "./mcp-config.ts";
 import { personaFingerprint } from "./persona.ts";
 import { WorkerPool } from "./pool.ts";
 import {
@@ -421,7 +427,7 @@ export async function runClaude(
     ...ISOLATED_SETTINGS_ARGS,
     ...pluginDirArgs(config.claude.plugin_dirs, hostAccess(config), isGuest),
     "--append-system-prompt",
-    buildRunSystemPrompt(input, config, orch),
+    buildRunSystemPrompt(input, config, orch, { browser: hasBrowser(mcpConfigs, mcpConfigPath) }),
   ];
 
   const env = toolEnv(

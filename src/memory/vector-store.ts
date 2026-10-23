@@ -124,6 +124,16 @@ export type SearchOptions = {
    * independently ranked it. Unset = pure dense (legacy behavior).
    */
   queryText?: string;
+  /**
+   * False: a sparse hit must clear `minScore` like a dense one, so the
+   * sparse leg only reorders. For recall nobody asked for: replaying 128
+   * real inbound messages on 2026-10-23, 86% of auto-recall hits were
+   * sparse rescues under the 0.7 floor (median cosine 0.57), matched on a
+   * shared word ("just", "give", a group member's name), and none of a
+   * sample of 14 was on topic. Default true: semantic_search keeps it, the
+   * model asked and sees the scores.
+   */
+  sparseRescue?: boolean;
 };
 
 export type SearchHit = {
@@ -542,7 +552,9 @@ export class VectorStore {
 
     let pool: SearchHit[];
     if (opts.queryText) {
-      pool = fuseWithSparse(dense, scored, this.sparseRefs(opts.queryText, 200), limit);
+      const admissible =
+        opts.sparseRescue === false ? new Map(dense.map((h) => [h.ref, h])) : scored;
+      pool = fuseWithSparse(dense, admissible, this.sparseRefs(opts.queryText, 200), limit);
     } else {
       pool = dense;
     }

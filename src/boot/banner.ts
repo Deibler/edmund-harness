@@ -43,8 +43,15 @@ export function highWaterMark(chatDb: ChatDb): number {
 
 /** True if a session has been quiet long enough to count as "stale" — used
  *  to gate optional context (history-on-cold-start, recall) that's only
- *  worth paying for when the conversation is being picked up after a gap. */
-export function isSessionStale(lastInboundMs: number | null, idleHours: number): boolean {
-  if (!lastInboundMs || idleHours <= 0) return false;
-  return Date.now() - lastInboundMs > idleHours * 3_600_000;
+ *  worth paying for when the conversation is being picked up after a gap.
+ *  Quiet means neither side wrote: a group Edmund posted in minutes ago (a
+ *  reminder, a proactive message) is not idle because no one has written to
+ *  him in three days. */
+export function isSessionStale(
+  session: { lastInboundMs: number; lastOutboundMs: number } | null,
+  idleHours: number,
+): boolean {
+  const lastActivityMs = Math.max(session?.lastInboundMs ?? 0, session?.lastOutboundMs ?? 0);
+  if (!lastActivityMs || idleHours <= 0) return false;
+  return Date.now() - lastActivityMs > idleHours * 3_600_000;
 }

@@ -100,5 +100,6 @@ export type Deps = {
     queryText: string,
     senderHandle?: string | null,
     sessionKey?: SessionKey,
+    shownSinceMs?: number,
   ) => Promise<AutoRecallResult>;
 };

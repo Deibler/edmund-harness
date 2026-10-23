@@ -22,7 +22,7 @@ function inbound(overrides: Partial<InboundMessage> = {}): InboundMessage {
 }
 
 describe("buildEnvelope pendingAttachments", () => {
-  test("includes header line + anti-resend guidance when pending count > 0", () => {
+  test("says the attachment is not coming, without promising a follow-up turn", () => {
     const out = buildEnvelope({
       messages: [inbound()],
       senderLabel: "Sam Rivera",
@@ -31,10 +31,12 @@ describe("buildEnvelope pendingAttachments", () => {
       pendingAttachments: 2,
     });
     expect(out).toContain("Pending attachments: 2");
-    expect(out).toContain("still downloading from iMessage");
-    // Guard against the model emitting the exact wrong phrase.
-    expect(out).toMatch(/do NOT tell the user their image .*didn't come through/);
-    expect(out).toMatch(/stay quiet until the next turn/);
+    expect(out).toContain("no later turn will bring them in");
+    expect(out).toContain("ask them to send them again");
+    // It used to promise a follow-up turn "within seconds" and tell the model
+    // to stay quiet until then. Nothing re-runs the turn: on 2026-10-20 the
+    // person's next turn was their own new message five hours later.
+    expect(out).not.toMatch(/follow-up turn|stay quiet until/);
   });
 
   test("omits the line entirely when pending count is 0 or missing", () => {

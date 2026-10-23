@@ -593,8 +593,8 @@ async function main() {
   const scheduler = new Scheduler({
     store: crons,
     onFire: (job) =>
-      fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs, (key, guid) =>
-        wakeThread(key, guid, deps),
+      fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs, (key, guid, sinceMs) =>
+        wakeThread(key, guid, deps, sinceMs),
       ),
   });
   scheduler.start();
@@ -921,7 +921,7 @@ async function main() {
       agentStore,
       bgJobStore,
       activeSessions,
-      recentThread: (key, guid) => wakeThread(key, guid, deps),
+      recentThread: (key, guid, sinceMs) => wakeThread(key, guid, deps, sinceMs),
     });
   };
   if (catchUp) void catchUp.drained.then(startRecovery);

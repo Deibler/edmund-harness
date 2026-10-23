@@ -179,8 +179,10 @@ export function buildEnvelope(ctx: EnvelopeContext): string {
   const unnamed = ctx.messages.find((m) => m.unnamedWake)?.unnamedWake;
   if (ctx.isGroup && unnamed) header.push(`Not named: ${describeUnnamedWake(unnamed)}`);
   if (ctx.pendingAttachments && ctx.pendingAttachments > 0) {
+    const n = ctx.pendingAttachments;
+    const it = n === 1 ? "it" : "them";
     header.push(
-      `Pending attachments: ${ctx.pendingAttachments} (still downloading from iMessage — a follow-up turn with the same content properly inlined will likely arrive within seconds; do NOT tell the user their image "didn't come through" or ask them to resend yet, just acknowledge naturally or stay quiet until the next turn)`,
+      `Pending attachments: ${n} (iMessage had not finished downloading ${it} after a minute, so you cannot see ${it} and no later turn will bring ${it} in. Answer what you can from the text. If your reply depends on what they sent, say ${n === 1 ? "it hasn't" : "they haven't"} come through on your end and ask them to send ${it} again.)`,
     );
   }
   const attachments = ctx.messages.flatMap((m) => m.attachments);

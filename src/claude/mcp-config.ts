@@ -136,6 +136,11 @@ export function pickMcpConfig(
   return opts.browser ? paths.withBrowser : paths.default;
 }
 
+/** Whether a chosen config carries chrome-devtools. */
+export function hasBrowser(paths: McpConfigPaths, chosen: string): boolean {
+  return chosen === paths.withBrowser || chosen === paths.contactWithBrowser;
+}
+
 export function ensureMcpConfig(config: Config): McpConfigPaths {
   const defaultPath = join(config.paths.data_dir, "mcp.json");
   const browserPath = join(config.paths.data_dir, "mcp-browser.json");

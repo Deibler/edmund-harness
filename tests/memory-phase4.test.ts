@@ -142,6 +142,23 @@ describe("hybrid search (dense + BM25 RRF)", () => {
         queryText: "zebra",
       });
       expect(hybrid.map((h) => h.ref)).toContain("msg:a");
+
+      // Unprompted recall: the keyword match alone no longer gets it in.
+      const noRescue = store.search(qvec, {
+        scope: { kind: "global" },
+        minScore: 0.5,
+        limit: 5,
+        queryText: "zebra",
+        sparseRescue: false,
+      });
+      expect(noRescue.map((h) => h.ref)).not.toContain("msg:a");
+      expect(noRescue.map((h) => h.ref)).toEqual(denseOnly.map((h) => h.ref));
+
+      // Every auto-recall search leg asks for that.
+      const auto = readFileSync(join(import.meta.dir, "../src/memory/auto-recall.ts"), "utf8");
+      const legs = auto.match(/\.search\(qvec, \{/g)?.length ?? 0;
+      expect(legs).toBeGreaterThan(0);
+      expect(auto.match(/sparseRescue: false,/g)?.length).toBe(legs);
     } finally {
       store.close();
       rmSync(dir, { recursive: true, force: true });

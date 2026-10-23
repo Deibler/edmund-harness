@@ -200,6 +200,7 @@ export async function autoRecall(
       scope: { kind: "this-chat", chatGuid: opts.chatGuid },
       rowKinds: RECALL_KINDS,
       queryText: text,
+      sparseRescue: false,
       // Over-fetch so excludeRefs / senderInChat dedup post-filters
       // can't starve the block below `limit`.
       limit: opts.limit + excludeAllowance + (opts.senderLimit ?? 0),
@@ -234,6 +235,7 @@ export async function autoRecall(
         scope: { kind: "this-chat", chatGuid: opts.chatGuid },
         rowKinds: RECALL_KINDS,
         queryText: text,
+        sparseRescue: false,
         limit:
           deepLimit +
           Math.min(opts.excludeRefs?.size ?? 0, 3 * deepLimit) +
@@ -268,6 +270,7 @@ export async function autoRecall(
           scope: { kind: "global" },
           rowKinds: ["self-file"],
           queryText: text,
+          sparseRescue: false,
           limit: SELF_RECALL_LIMIT + Math.min(opts.excludeRefs?.size ?? 0, 3 * SELF_RECALL_LIMIT),
           minScore: opts.minScore,
           nowMs: now,
@@ -298,6 +301,7 @@ export async function autoRecall(
         senderFilter: opts.senderHandle,
         rowKinds: ["message"],
         queryText: text,
+        sparseRescue: false,
         limit: senderLimit + Math.min(opts.excludeRefs?.size ?? 0, 3 * senderLimit),
         minScore: opts.minScore,
         untilMs: excludeCutoff > 0 ? excludeCutoff : undefined,
@@ -355,6 +359,7 @@ export async function autoRecall(
         scope: { kind: "global" },
         rowKinds: ["skill"],
         queryText: text,
+        sparseRescue: false,
         limit: SKILL_SUGGEST_LIMIT,
         minScore: Math.max(opts.minScore, SKILL_MIN_SCORE),
         nowMs: now,
