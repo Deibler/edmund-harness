@@ -27,9 +27,12 @@ import {
   checkWeeklyCap,
   decayMultiplier,
   focusSuggestionStatus,
+  isContact,
   preflightGate,
 } from "./budget.ts";
+import { excerptNotes, excerptPersonFile } from "./excerpt.ts";
 import { resolveIntensity } from "./intensity.ts";
+import { withLandingEvidence } from "./landed.ts";
 import type { GhostPrefsStore } from "./prefs.ts";
 import { renderTagTrackRecord, tagTrackRecord } from "./tag-stats.ts";
 
@@ -80,6 +83,8 @@ const GHOST_MAX_TURNS = 25;
 /** The submit_decision MCP server (structured decision channel). */
 const GHOST_MCP_SERVER_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "mcp-server.ts");
 const GHOST_RETRY_ATTEMPTS = 2;
+/** Built-in tools the full tick gets (see the --tools comment below). */
+export const GHOST_TOOLS = "ToolSearch,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch";
 /** Backoff between ghost spawn retries — a cold-spawn ETIMEDOUT often means
  *  the CLI/Anthropic side is briefly busy; an immediate re-spawn hits the same
  *  contention. */
@@ -114,9 +119,13 @@ const TAIL_HISTORY_LINES = 50;
 const SEGMENT_BREAK_MIN = 30;
 /** How many days of attachment volume to surface. */
 const ATTACHMENT_WINDOW_DAYS = 14;
-/** Max bytes of person-file body to inject. Keeps the ghost prompt
- *  bounded even when the person file is long. */
-const PERSON_FILE_MAX_BYTES = 4000;
+/** Person-file budget. The excerpt keeps Open Items and every section (see
+ *  excerpt.ts); a first-4000-bytes cut lost Open Items in 14 of 15 files.
+ *  7000 holds every undated open item of the live files (up to ~2100
+ *  chars) next to the newest dated ones. */
+const PERSON_FILE_MAX_CHARS = 7000;
+/** Ghost-notes budget; the newest entries are kept, whichever end they are. */
+const NOTES_MAX_CHARS = 4000;
 
 export type GhostInput = {
   sessionKey: SessionKey;
@@ -129,6 +138,10 @@ export type GhostInput = {
   /** Bypass invoking the ghost model entirely; return the would-be prompt and
    *  decision shape only. Used for prompt iteration. */
   dryRun?: boolean;
+  /** What woke this tick (picker reason, or "settled" after an exchange).
+   *  Stamped on the decision so the observer can recover its tick history
+   *  after a restart. */
+  trigger?: string;
 };
 
 export type GhostDeps = {
@@ -166,6 +179,23 @@ function sessionHistory(
   return history;
 }
 
+/**
+ * When the newest message in this session's chat was sent, either way and
+ * whoever wrote it; null when the chat can't be read. The session row's
+ * inbound time only moves when Edmund takes a turn, so in a group it misses
+ * all the chatter Edmund was not addressed in.
+ */
+export function lastMessageAtMs(
+  sessionKey: SessionKey,
+  deps: { chatDb: ChatDb; contacts: ContactBook; sms?: GhostSmsHistory },
+): number | null {
+  try {
+    return sessionHistory(sessionKey, deps, 1).at(-1)?.timestampMs ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Telemetry stamped by runGhostTick on every decision (additive — old
  *  persisted rows simply lack them). */
 type GhostTickTelemetry = {
@@ -177,6 +207,10 @@ type GhostTickTelemetry = {
   attempts?: number;
   /** CLI-reported spend for this tick's model call(s). */
   costUsd?: number;
+  /** See GhostInput.trigger. */
+  trigger?: string;
+  /** The pre-screen gave no verdict and the full tick ran anyway. */
+  prescreen?: "failed-open";
 };
 
 export type GhostDecision =
@@ -212,15 +246,65 @@ function sleep(ms: number): Promise<void> {
 // a 95.5% "no" rate at the expensive model's price. The pre-screen runs the
 // same context through a cheap fast model first; only a "plausibly yes"
 // buys the full tool-using deliberation. Fails OPEN: a broken pre-screen
-// must never silence the ghost.
+// must never silence the ghost, but each failure is logged and stamped on
+// the decision it let through (prescreen: "failed-open").
+//
+// It decides most ticks (2026-10-09..23: 371 of 381 verdicts were no), so it
+// judges with the ghost's own guidance: GHOST.md with the operator's
+// intensity clause filled in. Before that it read four generic lines, and
+// raising the intensity from 3 to 6 changed nothing it decided.
 
 const PRESCREEN_TIMEOUT_MS = 90_000;
-const PRESCREEN_SYSTEM = [
-  `You are a fast triage filter in front of an expensive "should I proactively message this person" deliberation.`,
-  `Read the context that follows and answer with STRICT JSON only, no prose: {"proceed": true|false, "reason": "<one short sentence>"}.`,
-  `proceed=true means a proactive message is PLAUSIBLY worth composing right now — the expensive pass makes the real call, so borderline cases lean true.`,
-  `proceed=false when it's clearly not the moment: conversation dormant with nothing new to add, mid-flow with nothing owed, an open thread already waiting on them, or a recent proactive touch.`,
-].join("\n");
+
+/** GHOST.md sections about how the full pass works (its tools, workspace,
+ *  scheduling fields and the decision call) rather than when to act. */
+const PRESCREEN_SKIPPED_SECTIONS =
+  /^##\s+(You can DO WORK|Your decision is a TOOL CALL|What you decide|Snoozing|fire_at_ms|Tags\b|Workspace|Brief shape)/i;
+
+/**
+ * Drop each paragraph or list item that names submit_decision from text the
+ * pre-screen reads. The kept sections still carry such lines (live GHOST.md's
+ * hard rule 1: "Always finish with one submit_decision call. Printed text
+ * is ignored"), which contradict the JSON answer it is asked for. A list
+ * item runs until the next item, heading or blank line.
+ */
+function withoutDecisionCallBlocks(text: string): string {
+  const blocks: string[][] = [];
+  for (const line of text.split("\n")) {
+    const startsBlock =
+      blocks.length === 0 ||
+      !line.trim() ||
+      !blocks.at(-1)!.at(-1)!.trim() ||
+      /^\s*(?:[-*]|\d+\.)\s|^#/.test(line);
+    if (startsBlock) blocks.push([line]);
+    else blocks.at(-1)!.push(line);
+  }
+  return blocks
+    .filter((b) => !/submit_decision/.test(b.join("\n")))
+    .map((b) => b.join("\n"))
+    .join("\n");
+}
+
+/** The pre-screen's system prompt for this intensity. Exported for tests. */
+export function buildPreScreenSystem(intensity: number, ghostPrompt: string | null): string {
+  const guidance = ghostPrompt
+    ? withoutDecisionCallBlocks(
+        withEagerness(ghostPrompt, intensity)
+          .split(/^(?=## )/m)
+          .filter((s) => !PRESCREEN_SKIPPED_SECTIONS.test(s))
+          .join(""),
+      ).trim()
+    : `Calibration (operator-set intensity ${intensity}): ${resolveIntensity(intensity).eagerness}`;
+  return [
+    `You are the fast triage pass in front of the ghost, an agent that decides whether to proactively message someone. You do not decide that; you decide whether the ghost's full deliberation is worth running right now.`,
+    `Judge by the ghost's own guidance below, intensity included. Its rules about tools, its workspace, staging work and calling submit_decision apply to the full pass, not to you: you have no tools.`,
+    `Answer with STRICT JSON only, no prose: {"proceed": true|false, "reason": "<one short sentence>"}.`,
+    `proceed=true when the full pass could plausibly act under this guidance; it makes the real call, so borderline cases lean true. proceed=false when the guidance clearly says not now.`,
+    "",
+    "=== The ghost's guidance ===",
+    guidance,
+  ].join("\n");
+}
 
 type PreScreenVerdict = {
   proceed: boolean;
@@ -229,11 +313,34 @@ type PreScreenVerdict = {
   model: string | null;
 };
 
+/** A verdict, or why there was none (the tick then fails open). */
+type PreScreenOutcome = PreScreenVerdict | { failed: string };
+
+/** Parse the pre-screen's answer. Exported for tests. */
+export function parsePreScreen(text: string): { proceed: boolean; reason: string } | null {
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[0]) as { proceed?: unknown; reason?: unknown };
+    if (typeof parsed.proceed !== "boolean") return null;
+    return {
+      proceed: parsed.proceed,
+      reason: typeof parsed.reason === "string" ? parsed.reason : "(no reason given)",
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function runPreScreen(
   promptInput: string,
   config: Config,
   sessionKey: SessionKey,
-): Promise<PreScreenVerdict | null> {
+): Promise<PreScreenOutcome> {
+  // No --tools and no --mcp-config: runClaudeOneShot gives it none. It read
+  // the ghost's submit_decision directive and had every built-in tool until
+  // 2026-10-23 (70 ToolSearch, 4 Edit, 2 Write and 2 Bash calls in 130 of
+  // its transcripts, some of them into the ghost's notes).
   const r = await runModelOneShot({
     args: [
       "--model",
@@ -241,7 +348,7 @@ async function runPreScreen(
       "--permission-mode",
       "bypassPermissions",
       "--append-system-prompt",
-      PRESCREEN_SYSTEM,
+      buildPreScreenSystem(config.brown_nose.intensity, readGhostPromptFile()),
     ],
     input: promptInput,
     timeoutMs: PRESCREEN_TIMEOUT_MS,
@@ -253,33 +360,26 @@ async function runPreScreen(
     costUsd: r.costUsd,
     durMs: r.durationMs,
   });
-  if (!r.ok) {
-    log.warn("ghost", "pre-screen failed — failing open to full tick", {
+  const failed = (why: string) => {
+    log.warn("ghost", "pre-screen gave no verdict — failing open to the full tick", {
       session: sessionKey,
-      err: r.error ?? "unknown",
+      why,
+      output: r.text.slice(0, 160),
     });
-    return null;
-  }
-  const m = r.text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try {
-    const parsed = JSON.parse(m[0]) as { proceed?: unknown; reason?: unknown };
-    if (typeof parsed.proceed !== "boolean") return null;
-    return {
-      proceed: parsed.proceed,
-      reason: typeof parsed.reason === "string" ? parsed.reason : "(no reason given)",
-      durationMs: r.durationMs,
-      model: r.model,
-    };
-  } catch {
-    return null;
-  }
+    return { failed: why };
+  };
+  if (!r.ok) return failed(r.error ?? "unknown");
+  const verdict = parsePreScreen(r.text);
+  if (!verdict) return failed("unparsed output");
+  return { ...verdict, durationMs: r.durationMs, model: r.model };
 }
 
 export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<GhostDecision> {
   const nowMs = input.nowMs ?? Date.now();
   const tickAtMs = nowMs;
   const { config, chatDb, contacts, prefs } = deps;
+  const write = (dec: GhostDecision) =>
+    writeDecision(input.sessionKey, input.trigger ? { ...dec, trigger: input.trigger } : dec);
 
   // 1. Load prefs. Bail loudly if missing — the caller should have run
   //    autoEnroll first.
@@ -290,7 +390,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
       reason: "no prefs row for session (run autoEnrollSessions first)",
       tickAtMs,
     };
-    writeDecision(input.sessionKey, dec);
+    write(dec);
     return dec;
   }
   // Effective weekly cap tracks the CURRENT intensity (boot-time
@@ -304,7 +404,14 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
   // 2. Pull engagement history for decay computation. We always recompute
   //    the multiplier from outcomes so a stale row doesn't lock us
   //    into a high multiplier forever.
-  const recentFires = prefs.recentFires(input.sessionKey, 10);
+  // Fire labels say what the send path reported; chat.db says what landed.
+  const recentFires = withLandingEvidence(
+    prefs.recentFires(input.sessionKey, 10),
+    input.sessionKey,
+    deps,
+    nowMs,
+    prefs,
+  );
   const weekAgo = nowMs - 7 * 24 * 3_600_000;
   const weekFires = recentFires.filter((f) => f.firedAtMs >= weekAgo);
   const currentMultiplier = decayMultiplier(recentFires);
@@ -325,7 +432,10 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
       name: "cooldown",
       result: checkCooldown(sessionPrefs, recentFires, config.brown_nose.intensity, nowMs),
     });
-    gateChecks.push({ name: "weekly_cap", result: checkWeeklyCap(sessionPrefs, weekFires) });
+    gateChecks.push({
+      name: "weekly_cap",
+      result: checkWeeklyCap(sessionPrefs, weekFires, nowMs),
+    });
   }
   for (const { name, result } of gateChecks) {
     if (!result.ok) {
@@ -335,7 +445,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
         tickAtMs,
         gate: result,
       };
-      writeDecision(input.sessionKey, dec);
+      write(dec);
       return dec;
     }
   }
@@ -348,7 +458,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
       sessionHistory(input.sessionKey, deps, 10)
         .filter((m) => !m.fromMe)
         .at(-1)?.timestampMs ?? 0;
-    const outstanding = checkOutstandingFire(recentFires, lastInboundMs);
+    const outstanding = checkOutstandingFire(recentFires, lastInboundMs, nowMs);
     if (!outstanding.ok) {
       const dec: GhostDecision = {
         act: false,
@@ -356,7 +466,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
         tickAtMs,
         gate: outstanding,
       };
-      writeDecision(input.sessionKey, dec);
+      write(dec);
       return dec;
     }
   }
@@ -374,6 +484,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
     // Cross-session tag→outcome rollup: 90 days is enough history for
     // stable per-tag rates without letting ancient behavior dominate.
     allScoredFires: prefs.allScoredFires(nowMs - 90 * 86_400_000),
+    budgetsChecked: !input.bypassBudgets,
   });
 
   if (input.dryRun) {
@@ -385,7 +496,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
       reason: `dry-run (would invoke the ghost model with prompt of ${promptInput.length} chars)`,
       tickAtMs,
     };
-    writeDecision(input.sessionKey, dec);
+    write(dec);
     return dec;
   }
 
@@ -393,9 +504,12 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
   //     Skipped on CLI --force (bypassBudgets); fails open on any error.
   //     Both verdicts are logged so a calibration pass can compare the
   //     pre-screen's "proceed" rate against the full tick's act rate.
+  let prescreenFailedOpen = false;
   if (config.brown_nose.prescreen_enabled && !input.bypassBudgets) {
     const pre = await runPreScreen(promptInput, config, input.sessionKey);
-    if (pre) {
+    if ("failed" in pre) {
+      prescreenFailedOpen = true;
+    } else {
       log.info("ghost", "pre-screen verdict", {
         session: input.sessionKey,
         proceed: pre.proceed,
@@ -411,7 +525,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
           model: pre.model ?? config.brown_nose.prescreen_model,
           attempts: 0,
         };
-        writeDecision(input.sessionKey, dec);
+        write(dec);
         return dec;
       }
     }
@@ -424,6 +538,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
   //    Retry once on transient spawn failure (ETIMEDOUT, non-zero exit) —
   //    Anthropic-side hiccups and CLI cold starts both surface here.
   const systemPrompt = readGhostSystemPrompt(config.brown_nose.intensity);
+  const tickInput = `${promptInput}\n${ghostTickTail(input.sessionKey)}`;
   const decisionPath = join(ensureBrownnoseDir(input.sessionKey), `.decision-${tickAtMs}.json`);
   const mcpConfig = JSON.stringify({
     mcpServers: {
@@ -459,12 +574,17 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
         "--mcp-config",
         mcpConfig,
         "--strict-mcp-config",
+        // What GHOST.md gives it: research, its workspace, and ToolSearch,
+        // which 19 of 20 ticks needed to load the deferred submit_decision.
+        // No Bash: it reads text other people wrote.
+        "--tools",
+        GHOST_TOOLS,
         "--max-turns",
         String(GHOST_MAX_TURNS),
         "--append-system-prompt",
         systemPrompt,
       ],
-      input: promptInput,
+      input: tickInput,
       timeoutMs: Math.min(GHOST_SPAWN_TIMEOUT_MS, Math.max(remainingMs, 60_000)),
     });
     recordSpend(config.paths.data_dir, {
@@ -488,9 +608,10 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
     }
   }
   const elapsedMs = Date.now() - startedAtMs;
-  const telemetry: { elapsedMs: number; model?: string; attempts: number; costUsd?: number } = {
+  const telemetry: GhostTickTelemetry & { elapsedMs: number; attempts: number } = {
     elapsedMs,
     attempts,
+    ...(prescreenFailedOpen ? { prescreen: "failed-open" as const } : {}),
     ...(res?.model ? { model: res.model } : {}),
     ...(typeof res?.costUsd === "number" ? { costUsd: res.costUsd } : {}),
   };
@@ -508,7 +629,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
         { session: input.sessionKey },
       );
     }
-    writeDecision(input.sessionKey, dec);
+    write(dec);
     return dec;
   }
   consecutiveSpawnFailures = 0;
@@ -525,7 +646,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
     cost_usd: telemetry.costUsd,
     chars: finalText.length,
   });
-  writeDecision(input.sessionKey, parsed);
+  write(parsed);
   return parsed;
 }
 
@@ -546,6 +667,9 @@ export function buildPromptInput(args: {
   /** Scored fires across ALL sessions for the tag rollup. Optional so
    *  prompt-shape tests don't need a populated store. */
   allScoredFires?: ReturnType<GhostPrefsStore["recentFires"]>;
+  /** The cooldown and weekly-cap gates ran and passed (false under CLI
+   *  --force). Default true: the tick only builds a prompt past them. */
+  budgetsChecked?: boolean;
 }): string {
   const lines: string[] = [];
   lines.push(`SESSION: ${args.sessionKey}`);
@@ -586,13 +710,19 @@ export function buildPromptInput(args: {
   }
   lines.push("");
 
-  // Intensity-resolved eagerness reference.
-  const intensity = resolveIntensity(args.config.brown_nose.intensity);
+  // Pacing as a status, not a number to re-apply. A bare
+  // COOLDOWN_HOURS_EFFECTIVE line read as a cooldown still running: 42 of
+  // 393 decisions (2026-10-09..23) declined on "the 108h cooldown applies"
+  // in ticks that only ran because the cooldown had cleared.
+  const weekUsed = args.recentFires.filter(
+    (f) => f.firedAtMs >= args.nowMs - 7 * 86_400_000 && isContact(f, args.nowMs),
+  ).length;
   lines.push(`INTENSITY: ${args.config.brown_nose.intensity}`);
   lines.push(
-    `COOLDOWN_HOURS_EFFECTIVE: ${(intensity.cooldownHours * args.sessionPrefs.cooldownMultiplier).toFixed(1)}`,
+    args.budgetsChecked === false
+      ? `PACING: budgets bypassed by the operator for this tick (${weekUsed} proactive messages reached them in the last 7 days).`
+      : `PACING: cooldown clear, ${weekUsed} of ${args.sessionPrefs.weeklyCap} proactive messages used this week. The system enforced both before asking you; neither is a reason to hold back.`,
   );
-  lines.push(`WEEKLY_CAP: ${args.sessionPrefs.weeklyCap}`);
   lines.push("");
 
   // The user's own portal note — THEIR words about what proactive
@@ -653,7 +783,10 @@ export function buildPromptInput(args: {
       const outcome =
         f.outcome === "reacted" && f.reactionGlyph
           ? `reacted ${f.reactionGlyph}`
-          : (f.outcome ?? "pending");
+          : (f.outcome === "vetoed" || f.outcome === "error") && f.delivered
+            ? `${f.outcome}, though a message reached the chat then`
+            : (f.outcome ??
+              (isContact(f, args.nowMs) ? "pending" : "interrupted — never delivered"));
       lines.push(
         `  ${when} [${outcome}] tags=${JSON.stringify(f.tags)} brief="${truncate(f.brief, 120)}"`,
       );
@@ -784,7 +917,9 @@ export function buildPromptInput(args: {
     const persona = loadPersona(null, personHandle);
     if (persona.person) {
       lines.push(`PERSON_FILE (${persona.person.name}):`);
-      lines.push(truncate(persona.person.body, PERSON_FILE_MAX_BYTES));
+      lines.push(
+        excerptPersonFile(persona.person.body, PERSON_FILE_MAX_CHARS, persona.person.path),
+      );
       lines.push("");
     } else {
       lines.push(`PERSON_FILE: (none yet — no durable context for this contact)`);
@@ -862,28 +997,38 @@ export function buildPromptInput(args: {
   }
   lines.push("");
 
-  // Workspace — the ghost can READ AND WRITE here with its file tools.
-  const wsDir = brownnoseDir(args.sessionKey);
-  lines.push("WORKSPACE (yours — use Read/Write tools with these absolute paths):");
-  lines.push(`  notes:    ${join(wsDir, "current.md")} (your running memory between ticks)`);
-  lines.push(`  drafts:   ${join(wsDir, "drafts")}/ (stage work for the main model here)`);
-  lines.push(`  research: ${join(wsDir, "research")}/`);
-  lines.push("");
-
   // Ghost workspace notes (if any).
   const currentNotes = readCurrentNotes(args.sessionKey);
   if (currentNotes) {
     lines.push("CURRENT_NOTES (from brownnose/current.md):");
-    lines.push(truncate(currentNotes, 2000));
+    lines.push(
+      excerptNotes(
+        currentNotes,
+        NOTES_MAX_CHARS,
+        join(brownnoseDir(args.sessionKey), "current.md"),
+      ),
+    );
     lines.push("");
   }
-
-  // Final directive.
-  lines.push("---");
-  lines.push(
-    "Work first if work is warranted (research, draft, update your notes), then finish by CALLING the submit_decision tool exactly once. Text you print is ignored — only the tool call counts.",
-  );
   return lines.join("\n");
+}
+
+/**
+ * What only the full tick reads: its workspace and the instruction to end
+ * with submit_decision. The pre-screen gets the context above without
+ * these; given them, it went looking for the tool and wrote notes.
+ */
+export function ghostTickTail(sessionKey: SessionKey): string {
+  const wsDir = brownnoseDir(sessionKey);
+  return [
+    "WORKSPACE (yours — use Read/Write tools with these absolute paths):",
+    `  notes:    ${join(wsDir, "current.md")} (your running memory between ticks)`,
+    `  drafts:   ${join(wsDir, "drafts")}/ (stage work for the main model here)`,
+    `  research: ${join(wsDir, "research")}/`,
+    "",
+    "---",
+    "Work first if work is warranted (research, draft, update your notes), then finish by CALLING the submit_decision tool exactly once. Text you print is ignored — only the tool call counts.",
+  ].join("\n");
 }
 
 /** Snooze sanity bounds: under 30min is pointless (sweep cadence is
@@ -1071,6 +1216,25 @@ function readRecentDecisions(sessionKey: SessionKey, limit: number): GhostDecisi
   }
 }
 
+/**
+ * When this session was last ticked, overall and per trigger, from its own
+ * decision log. The observer kept these in memory only, so each restart (16
+ * in 2026-10-09..23) made every chat look never-ticked and the sweep's
+ * oldest-first order fell back to list order: the same chats were swept
+ * again and 30 of 58 enabled chats got no sweep in those two weeks.
+ */
+export function lastTickTimes(sessionKey: SessionKey): {
+  any: number;
+  byTrigger: Map<string, number>;
+} {
+  const byTrigger = new Map<string, number>();
+  const recent = readRecentDecisions(sessionKey, 50) as Array<GhostDecision & { trigger?: string }>;
+  for (const d of recent) {
+    if (d.trigger && !byTrigger.has(d.trigger)) byTrigger.set(d.trigger, d.tickAtMs);
+  }
+  return { any: recent[0]?.tickAtMs ?? 0, byTrigger };
+}
+
 function readCurrentNotes(sessionKey: SessionKey): string | null {
   const path = join(brownnoseDir(sessionKey), "current.md");
   if (!existsSync(path)) return null;
@@ -1096,10 +1260,29 @@ function ensureBrownnoseDir(sessionKey: SessionKey): string {
 }
 
 function readGhostSystemPrompt(intensity: number): string {
-  let text = readFileSync(GHOST_PROMPT_PATH, "utf8");
-  const params = resolveIntensity(intensity);
-  text = text.replaceAll("{{eagernessClause}}", params.eagerness);
-  return text;
+  return withEagerness(readFileSync(GHOST_PROMPT_PATH, "utf8"), intensity);
+}
+
+/**
+ * GHOST.md with the operator's intensity clause in it: at its
+ * `{{eagernessClause}}` placeholder, or appended when the file has none.
+ * The tracked template has no placeholder, so on a fresh install the
+ * intensity setting never reached the ghost. Exported for tests.
+ */
+export function withEagerness(ghostPrompt: string, intensity: number): string {
+  const { eagerness } = resolveIntensity(intensity);
+  if (ghostPrompt.includes("{{eagernessClause}}")) {
+    return ghostPrompt.replaceAll("{{eagernessClause}}", eagerness);
+  }
+  return `${ghostPrompt.trimEnd()}\n\n## Calibration (operator-set intensity ${intensity})\n\n${eagerness}\n`;
+}
+
+function readGhostPromptFile(): string | null {
+  try {
+    return readFileSync(GHOST_PROMPT_PATH, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 function formatLocal(ms: number, tz: string): string {

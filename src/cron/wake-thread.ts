@@ -1,6 +1,6 @@
 import type { Config } from "../config/config.ts";
 import { startsCold } from "../model/runner.ts";
-import type { SessionKey } from "../sessions/key.ts";
+import { type SessionKey, isGroupSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { log } from "../util/log.ts";
 
@@ -12,17 +12,25 @@ export type WakeThread = {
   lines: string[];
 };
 
-/** Reads a session's roster and latest messages (see channels/history.ts wakeThread). */
-export type RecentThread = (sessionKey: SessionKey, chatGuid: string) => WakeThread;
+/** Reads a session's roster and latest messages (see channels/history.ts
+ *  wakeThread), only those after `sinceMs` when given. */
+export type RecentThread = (
+  sessionKey: SessionKey,
+  chatGuid: string,
+  sinceMs?: number,
+) => WakeThread;
 
 /**
- * The envelope block for a scheduled or proactive wake-up that starts cold.
+ * The envelope block for a scheduled or proactive wake-up.
  *
- * A wake-up that resumes the session already has the conversation, so it gets
- * nothing. A cold one (27 of 5,075 scheduled fires in the daemon log to
- * 2026-09-24) used to get only the event text, while an inbound cold start
- * gets the recent thread. Empty string when there is nothing to add. A failed
- * read is logged and skipped: the event still fires.
+ * A cold one (27 of 5,075 scheduled fires in the daemon log to 2026-09-24)
+ * used to get only the event text, while an inbound cold start gets the
+ * recent thread. A warm DM already has the conversation and gets nothing. A
+ * warm group does not: messages that don't address Edmund start no turn, so
+ * the resumed conversation ends at its last turn, and 32 of 66 group fires
+ * (2026-10-23) woke without what members had said since. Those get the
+ * messages after the last turn. Empty string when there is nothing to add. A
+ * failed read is logged and skipped: the event still fires.
  */
 export function wakeThreadBlock(
   sessionKey: SessionKey,
@@ -30,11 +38,18 @@ export function wakeThreadBlock(
   config: Config,
   state: StateStore,
   recentThread: RecentThread,
+  /** False for a turn that lists the unseen messages itself (recovery). */
+  warmGroupLines = true,
 ): string {
-  if (!startsCold(sessionKey, config, state)) return "";
+  const cold = startsCold(sessionKey, config, state);
+  if (!cold && (!warmGroupLines || !isGroupSession(sessionKey))) return "";
+  const session = cold ? null : state.getSession(sessionKey);
+  const sinceMs = session
+    ? Math.max(session.lastInboundMs, session.lastOutboundMs, session.lastTurnMs)
+    : undefined;
   let thread: WakeThread;
   try {
-    thread = recentThread(sessionKey, chatGuid);
+    thread = recentThread(sessionKey, chatGuid, sinceMs);
   } catch (err) {
     log.warn("wake", "could not read the recent thread for a cold wake-up", {
       session: sessionKey,
@@ -42,7 +57,19 @@ export function wakeThreadBlock(
     });
     return "";
   }
-  const { participants, lines } = thread;
+  const { lines } = thread;
+  if (!cold) {
+    if (lines.length === 0) return "";
+    log.info("wake", "group wake-up carries what was said since its last turn", {
+      session: sessionKey,
+      lines: lines.length,
+    });
+    return [
+      "Said in this group since your last turn here (you have not seen these yet):",
+      ...lines,
+    ].join("\n");
+  }
+  const { participants } = thread;
   if (lines.length === 0 && participants.length === 0) return "";
   log.info("wake", "cold wake-up carries the recent thread", {
     session: sessionKey,

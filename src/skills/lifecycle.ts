@@ -31,12 +31,18 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
+import type { ChatDb } from "../imessage/db.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
+import type { ContactBook } from "../sessions/contacts.ts";
 import { log } from "../util/log.ts";
+import { updateAuthoredSkill } from "./author.ts";
 import { revokeConsentFor } from "./consent.ts";
+import { MIN_CHATS, MIN_PEOPLE, chatMembers, hasUnrelatedPair, personKey } from "./curator.ts";
 import { type InstallRecord, categoryOf, readDb, uninstallSkill, writeDb } from "./installer.ts";
 import { existingSkillRoot, skillDirectoryForRecord } from "./paths.ts";
+import { describeLeaks, findLeaks } from "./privacy.ts";
 import { type UsageSummary, pruneUsage, readUsageEvents, summarizeUsage } from "./usage.ts";
 
 const REVIEW_TIMEOUT_MS = 120_000;
@@ -47,6 +53,12 @@ export type LifecycleDeps = {
   skillsRoot: string;
   dbPath: string;
   consentDbPath: string;
+  /** For the leak scan a revision must pass. Without it no revision is
+   *  applied: the reviewer reads real messages, and a rewrite it supplies
+   *  becomes a globally readable skill. */
+  contacts?: ContactBook;
+  /** Group membership, for the same evidence bar the curator applies. */
+  chatDb?: ChatDb;
   runModel?: typeof runModelOneShot;
   now?: () => number;
 };
@@ -259,7 +271,7 @@ async function reviewOne(
     `USAGE: read ${stats.reads} times across ${stats.sessions.size} conversation(s).`,
     "",
     "WHAT PEOPLE WERE ACTUALLY ASKING, in the conversations where it was read:",
-    ...context.map((c) => `  • ${c}`),
+    ...context.map((c) => `  • ${c.text}`),
   ].join("\n");
 
   const run = deps.runModel ?? runModelOneShot;
@@ -302,29 +314,84 @@ async function reviewOne(
       });
     }
   } else if (parsed.verdict === "revise" && parsed.instructions) {
-    const { updateAuthoredSkill } = await import("./author.ts");
-    const updated = updateAuthoredSkill({
-      name,
-      instructions: parsed.instructions,
-      extraFiles: [],
-      // A curated skill has no owning chat, so ownership cannot block this.
-      sessionKey: record.origin_scope ?? "",
-      opts: {
-        skillsRoot: existingSkillRoot(deps.skillsRoot, name, record),
-        dbPath: deps.dbPath,
-        requireApprovalForScripts: deps.config.skills_marketplace.require_approval_for_scripts,
-      },
-    });
-    if (!updated.ok) {
-      log.warn("skill-curator", "revision rejected", { name, err: updated.reason });
-    } else {
-      log.info("skill-curator", "revised a curated skill", { name, reason: parsed.reason });
-    }
+    reviseCurated(name, record, parsed.instructions, parsed.reason, support(context, deps), deps);
   } else {
     log.info("skill-curator", "kept a curated skill", { name, reason: parsed.reason });
   }
 
   return { verdict: parsed.verdict, reason: parsed.reason };
+}
+
+/**
+ * Apply a reviewer's replacement body to a curated skill.
+ *
+ * This could never happen before 2026-10-23: the edit path accepted only
+ * self-authored skills, so every "revise" verdict was logged as rejected and
+ * the skill kept the instructions the reviewer had just called wrong. The
+ * replacement is held to the bar a new curated skill meets: the reviewer was
+ * shown real messages, so its text gets the same leak scan before it is
+ * written anywhere every conversation can read.
+ */
+export function reviseCurated(
+  name: string,
+  record: InstallRecord,
+  instructions: string,
+  reason: string,
+  evidence: { people: number; chats: number; unrelated: boolean },
+  deps: LifecycleDeps,
+): boolean {
+  if (!deps.contacts) {
+    log.warn("skill-curator", "revision skipped — no contacts for the leak scan", { name });
+    return false;
+  }
+  // The bar a new curated skill clears. A revision is written from the asks
+  // around the skill's recent reads, and those can all come from one person
+  // in one chat: without this, a review could re-aim a global skill at that
+  // person's own project, the incident the curator's bar exists to prevent.
+  if (evidence.people < MIN_PEOPLE || evidence.chats < MIN_CHATS || !evidence.unrelated) {
+    log.info("skill-curator", "revision not applied — the asks behind it are too narrow", {
+      name,
+      people: evidence.people,
+      chats: evidence.chats,
+      unrelated: evidence.unrelated,
+    });
+    return false;
+  }
+  const leaks = findLeaks(`${name}\n${instructions}`, deps.contacts, deps.config.identity.names, {
+    personaDir: PERSONA_DIR,
+  });
+  if (leaks.length > 0) {
+    log.warn("skill-curator", "revision rejected", {
+      name,
+      err: `carries personal detail: ${describeLeaks(leaks)}`,
+    });
+    return false;
+  }
+  const updated = updateAuthoredSkill({
+    name,
+    instructions,
+    extraFiles: [],
+    sessionKey: "",
+    curatedReview: true,
+    opts: {
+      skillsRoot: existingSkillRoot(deps.skillsRoot, name, record),
+      dbPath: deps.dbPath,
+      requireApprovalForScripts: deps.config.skills_marketplace.require_approval_for_scripts,
+    },
+  });
+  if (!updated.ok) {
+    log.warn("skill-curator", "revision rejected", { name, err: updated.reason });
+    return false;
+  }
+  const db = readDb(deps.dbPath);
+  const live = db.skills[name];
+  if (live) {
+    const stamp = new Date((deps.now ?? Date.now)()).toISOString().slice(0, 10);
+    live.provenance = [...(live.provenance ?? []), `revised ${stamp}: ${reason}`];
+    writeDb(deps.dbPath, db);
+  }
+  log.info("skill-curator", "revised a curated skill", { name, reason });
+  return true;
 }
 
 export function parseVerdict(
@@ -358,12 +425,31 @@ export function parseVerdict(
  * db yields no context, and no context means no verdict rather than a
  * confident one.
  */
-function asksAroundReads(dataDir: string, reads: { session: string; at_ms: number }[]): string[] {
+type Ask = { text: string; chat: string; sender: string };
+
+/** How many people, in how many chats, the asks behind a verdict came from,
+ *  and whether two of them share no room (hasUnrelatedPair). */
+function support(
+  asks: Ask[],
+  deps: LifecycleDeps,
+): { people: number; chats: number; unrelated: boolean } {
+  const person = (h: string) => (deps.contacts ? personKey(deps.contacts, h) : h);
+  const askers = asks.map((a) => ({ person: person(a.sender), chat: a.chat }));
+  return {
+    people: new Set(askers.map((a) => a.person)).size,
+    chats: new Set(askers.map((a) => a.chat)).size,
+    unrelated: deps.contacts
+      ? hasUnrelatedPair(askers, chatMembers(deps.chatDb, deps.contacts))
+      : hasUnrelatedPair(askers),
+  };
+}
+
+function asksAroundReads(dataDir: string, reads: { session: string; at_ms: number }[]): Ask[] {
   const statePath = join(dataDir, "state.db");
   const recallPath = join(dataDir, "recall.sqlite");
   if (!existsSync(statePath) || !existsSync(recallPath)) return [];
 
-  const out: string[] = [];
+  const out: Ask[] = [];
   let state: Database | null = null;
   let recall: Database | null = null;
   try {
@@ -372,8 +458,8 @@ function asksAroundReads(dataDir: string, reads: { session: string; at_ms: numbe
     const chatFor = state.query<{ chat_guid: string }, [string]>(
       "SELECT chat_guid FROM sessions WHERE session_key = ? LIMIT 1",
     );
-    const asks = recall.query<{ text: string }, [string, number, number]>(
-      `SELECT text FROM rows
+    const asks = recall.query<{ text: string; sender: string }, [string, number, number]>(
+      `SELECT text, sender FROM rows
         WHERE kind = 'message' AND chat_guid = ?
           AND sender IS NOT NULL AND sender != 'me'
           AND ts BETWEEN ? AND ?
@@ -390,7 +476,7 @@ function asksAroundReads(dataDir: string, reads: { session: string; at_ms: numbe
         const text = row.text.replace(/^\[\d{4}-\d{2}-\d{2}\]\s*[^:]{0,64}:\s*/, "").trim();
         if (!text || seen.has(text)) continue;
         seen.add(text);
-        out.push(text.slice(0, 300));
+        out.push({ text: text.slice(0, 300), chat, sender: row.sender });
       }
     }
   } catch {

@@ -3,10 +3,13 @@
  * `--- Xm gap ---` markers it injects at topic-shift indices.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { formatHistoryLines } from "../src/channels/history-format.ts";
 import type { HistoryLine } from "../src/imessage/history.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
+import { historyStamp } from "../src/util/clock.ts";
 
 function line(rowId: number, ms: number, who: string, text: string, fromMe = false): HistoryLine {
   return { rowId, timestampMs: ms, fromHandle: who, fromMe, text };
@@ -32,9 +35,9 @@ describe("formatHistoryLines", () => {
     ];
     const out = formatHistoryLines(lines, contacts);
     expect(out.length).toBe(3);
-    expect(out[0]).toMatch(/\[Jordan · \w{3} \d{2}:\d{2}\] hey edmund$/);
-    expect(out[1]).toMatch(/\[Riley · \w{3} \d{2}:\d{2}\] lol$/);
-    expect(out[2]).toMatch(/\[You · \w{3} \d{2}:\d{2}\] hi everyone$/);
+    expect(out[0]).toMatch(/\[Jordan · \w{3}(?: \w{3} \d{1,2})? \d{2}:\d{2}\] hey edmund$/);
+    expect(out[1]).toMatch(/\[Riley · \w{3}(?: \w{3} \d{1,2})? \d{2}:\d{2}\] lol$/);
+    expect(out[2]).toMatch(/\[You · \w{3}(?: \w{3} \d{1,2})? \d{2}:\d{2}\] hi everyone$/);
   });
 
   test("falls back to raw handle when ContactBook has no name", () => {
@@ -72,5 +75,21 @@ describe("formatHistoryLines", () => {
     expect(out.length).toBe(2);
     expect(out[0]).toContain("first");
     expect(out[1]).toContain("second");
+  });
+});
+
+describe("history line stamps", () => {
+  test("a weekday alone within six days, the date beyond", () => {
+    const now = Date.UTC(2026, 9, 23, 18, 0); // Fri 2026-10-23 14:00 EDT
+    expect(historyStamp(now - 2 * 3_600_000, now)).toBe("Fri 12:00");
+    expect(historyStamp(now - 5 * 86_400_000, now)).toBe("Sun 14:00");
+    expect(historyStamp(now - 7 * 86_400_000, now)).toBe("Fri Oct 16 14:00");
+    // Late evening keeps the home-zone day.
+    expect(historyStamp(Date.UTC(2026, 9, 3, 1, 30), now)).toBe("Fri Oct 2 21:30");
+  });
+
+  test("history lines use it", () => {
+    const src = readFileSync(join(import.meta.dir, "../src/channels/history-format.ts"), "utf8");
+    expect(src).toContain("${historyStamp(l.timestampMs)}]");
   });
 });

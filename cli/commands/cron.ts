@@ -87,6 +87,7 @@ function classify(event: string): string {
   if (event.startsWith("[Retry")) return color.yellow("retry");
   if (event.startsWith("A sub-agent you spawned")) return color.green("agent");
   if (event.startsWith("An agent team has finished")) return color.green("team");
+  if (event.startsWith("Several sub-agent results arrived together")) return color.green("agent");
   return color.cyan("sched");
 }
 

@@ -11,7 +11,14 @@ import type { StateStore } from "../sessions/store.ts";
 import { recordSpend } from "../spend/ledger.ts";
 import { easternDateTime } from "../util/clock.ts";
 import { log } from "../util/log.ts";
-import { archiveGroupFile, archivePersonFile, personArchivableSections } from "./archive.ts";
+import {
+  archiveGroupFile,
+  archivePersonFile,
+  archiveRewriteDrops,
+  archivedObservationCount,
+  personArchivableSections,
+  reconcileRewrite,
+} from "./archive.ts";
 import {
   GROUP_CONSOLIDATION_PROMPT,
   consolidatePerson,
@@ -176,9 +183,18 @@ async function runDmMaintenance(args: {
   const parsed = parseOutput(raw, DM_SECTIONS);
   if (!parsed) return { ok: false, reason: "parse failed" };
 
-  deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
-
-  if (cfg.dry_run) {
+  const settled = settleMaintenance(parsed, cfg.dry_run, {
+    rewrite: (rewrite) =>
+      applyFullRewrite(
+        current,
+        () => readPersonFile(handle),
+        rewrite,
+        (body) => writePersonFile({ handle, displayName, body }),
+        `dm:${shortHandle(handle)}`,
+      ),
+    stamp: () => deps.state.setLastMaintainedAtMs(sessionKey, Date.now()),
+  });
+  if (settled.kind === "dry-run") {
     log.info("maintainer", `dm:${shortHandle(handle)} → dry-run`, {
       proposed_notes: parsed.notes.length,
       rewrite: parsed.fullRewrite ? "yes" : "no",
@@ -186,11 +202,10 @@ async function runDmMaintenance(args: {
     });
     return { ok: true, subject: handle, appliedNotes: 0, rewrote: false, reason: parsed.reason };
   }
-
-  if (parsed.fullRewrite) {
-    writePersonFile({ handle, displayName, body: parsed.fullRewrite });
+  if (settled.kind === "not-applied") return { ok: false, reason: "rewrite not applied" };
+  if (settled.kind === "rewrote") {
     log.info("maintainer", `dm:${shortHandle(handle)} → full rewrite`, {
-      chars: parsed.fullRewrite.length,
+      chars: settled.written.length,
       reason: parsed.reason,
     });
     return {
@@ -227,9 +242,9 @@ async function runDmMaintenance(args: {
   // evidence dates still resolve because the archive is recall-indexed.
   try {
     const before = readPersonFile(handle);
-    if (before?.body && shouldConsolidate(before.body)) {
+    if (before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path))) {
       await consolidatePerson(handle, (system, user) =>
-        spawnMaintainerModel(cfg.model, system, user, {
+        spawnMaintainerModel(judgmentModel(cfg), system, user, {
           dataDir: deps.config.paths.data_dir,
           sessionKey,
         }),
@@ -297,9 +312,18 @@ async function runGroupMaintenance(args: {
   const parsed = parseOutput(raw, GROUP_SECTIONS);
   if (!parsed) return { ok: false, reason: "parse failed" };
 
-  deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
-
-  if (cfg.dry_run) {
+  const settled = settleMaintenance(parsed, cfg.dry_run, {
+    rewrite: (rewrite) =>
+      applyFullRewrite(
+        current,
+        () => readGroupFile(chatGuid),
+        rewrite,
+        (body) => writeGroupFile({ chatGuid, displayName, body }),
+        `group:${shortGuid(chatGuid)}`,
+      ),
+    stamp: () => deps.state.setLastMaintainedAtMs(sessionKey, Date.now()),
+  });
+  if (settled.kind === "dry-run") {
     log.info("maintainer", `group:${shortGuid(chatGuid)} → dry-run`, {
       proposed_notes: parsed.notes.length,
       rewrite: parsed.fullRewrite ? "yes" : "no",
@@ -307,11 +331,10 @@ async function runGroupMaintenance(args: {
     });
     return { ok: true, subject: chatGuid, appliedNotes: 0, rewrote: false, reason: parsed.reason };
   }
-
-  if (parsed.fullRewrite) {
-    writeGroupFile({ chatGuid, displayName, body: parsed.fullRewrite });
+  if (settled.kind === "not-applied") return { ok: false, reason: "rewrite not applied" };
+  if (settled.kind === "rewrote") {
     log.info("maintainer", `group:${shortGuid(chatGuid)} → full rewrite`, {
-      chars: parsed.fullRewrite.length,
+      chars: settled.written.length,
       reason: parsed.reason,
     });
     return {
@@ -349,11 +372,11 @@ async function runGroupMaintenance(args: {
   // his own drift rather than ratify it.
   try {
     const before = readGroupFile(chatGuid);
-    if (before?.body && shouldConsolidate(before.body)) {
+    if (before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path))) {
       await consolidatePerson(
         chatGuid,
         (system, user) =>
-          spawnMaintainerModel(cfg.model, system, user, {
+          spawnMaintainerModel(judgmentModel(cfg), system, user, {
             dataDir: deps.config.paths.data_dir,
             sessionKey,
           }),
@@ -463,6 +486,83 @@ function parseOutput(
     typeof o.full_rewrite === "string" && o.full_rewrite.trim().length > 0 ? o.full_rewrite : null;
   const reason = typeof o.reason === "string" ? o.reason : "";
   return { notes, fullRewrite, reason };
+}
+
+/**
+ * What a pass does with a parsed answer before any notes are appended, and
+ * when it records the exchange as maintained (`stamp`). A dry run records it
+ * and writes nothing. A rewrite is recorded only once it landed: one that
+ * was skipped or failed leaves the exchange unmaintained, so the next pass
+ * tries again. Otherwise the exchange is recorded and the caller appends
+ * the notes (`append`).
+ */
+export function settleMaintenance(
+  parsed: { fullRewrite: string | null },
+  dryRun: boolean,
+  io: { rewrite: (body: string) => string | null; stamp: () => void },
+):
+  | { kind: "dry-run" }
+  | { kind: "rewrote"; written: string }
+  | { kind: "not-applied" }
+  | { kind: "append" } {
+  if (dryRun) {
+    io.stamp();
+    return { kind: "dry-run" };
+  }
+  if (parsed.fullRewrite) {
+    const written = io.rewrite(parsed.fullRewrite);
+    if (written === null) return { kind: "not-applied" };
+    io.stamp();
+    return { kind: "rewrote", written };
+  }
+  io.stamp();
+  return { kind: "append" };
+}
+
+/**
+ * Write a full rewrite without losing anything. The file is re-read right
+ * before writing, notes the live turn appended during the model call are
+ * merged in (reconcileRewrite), and whatever the rewrite drops from THAT
+ * version goes to the archive first, so live and archive together hold
+ * every observation the file held. A file that changed in any other way is
+ * left alone. Returns the body written, or null when nothing was written.
+ */
+export function applyFullRewrite(
+  snapshot: { path: string; body: string } | null,
+  reread: () => { path: string; body: string } | null,
+  rewrite: string,
+  write: (body: string) => void,
+  label: string,
+): string | null {
+  try {
+    const latest = reread();
+    if (snapshot && !latest) {
+      // Deleted during the model call. A deliberate delete wins.
+      log.info("maintainer", `${label} → rewrite skipped, the file was deleted during the pass`);
+      return null;
+    }
+    let body = rewrite;
+    if (latest) {
+      const merged = reconcileRewrite(snapshot?.body ?? "", latest.body, rewrite);
+      if (merged === null) {
+        log.info("maintainer", `${label} → rewrite skipped, the file changed during the pass`);
+        return null;
+      }
+      body = merged;
+      archiveRewriteDrops(latest.path, latest.body, body);
+    }
+    write(body);
+    return body;
+  } catch (err) {
+    log.warn("maintainer", `${label} → rewrite failed`, { err: (err as Error).message });
+    return null;
+  }
+}
+
+/** The model for the judgment pass (consolidation): its own knob, falling
+ *  back to the append pass's model when unset. */
+export function judgmentModel(cfg: Config["people_maintainer"]): string {
+  return cfg.consolidation_model || cfg.model;
 }
 
 /** One maintainer model call, spend-accounted (subsystem "maintainer"). */

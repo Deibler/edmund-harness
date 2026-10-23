@@ -401,8 +401,9 @@ describe("relay() — input validation", () => {
     expect(job.systemEvent).toContain("[Relay from Jordan Carter · depth=1]");
     expect(job.systemEvent).toContain("hey ask Casey about Saturday");
     expect(job.systemEvent).toContain("Additional context");
-    // Pre-warmed session record so the cron-fire path can bind to a session.
-    expect(state.getSession(`imessage:dm:${CASEY}`)).not.toBeNull();
+    // Pre-warmed session record so the cron-fire path can bind to a session,
+    // under the guid the bridge's DM will carry, never the bare handle.
+    expect(state.getSession(`imessage:dm:${CASEY}`)?.chatGuid).toBe(`any;-;${CASEY}`);
   });
 
   test("happy group path enqueues a one-shot cron for the group session", () => {

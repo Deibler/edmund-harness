@@ -3,6 +3,7 @@
  * `edmund agents cancel <id>`
  */
 
+import { cancelAgent } from "../../src/agents/spawn.ts";
 import { AgentStore } from "../../src/agents/store.ts";
 import type { AgentStatus } from "../../src/agents/types.ts";
 import { loadConfig } from "../../src/config/config.ts";
@@ -67,13 +68,9 @@ export async function agentsCommand(p: Parsed): Promise<void> {
       fail("no such agent");
       process.exit(1);
     }
-    if (agent.pid) {
-      try {
-        process.kill(agent.pid, "SIGTERM");
-      } catch {}
-    }
-    if (agent.status === "pending" || agent.status === "running") {
-      store.finish(id, "canceled", -1);
+    if (!cancelAgent(store, id, "canceled by the operator")) {
+      info(`${id} is ${store.get(id)?.status}; nothing to cancel`);
+      return;
     }
     ok(`canceled ${id}`);
     return;

@@ -71,9 +71,11 @@ everyone.
 ### Path safety
 
 The MCP server refuses any path under `~/.ssh`, the keychains, `state.db`,
-`config.toml`, or outside the session's sandbox and the data directory. A
-Claude Code hook (`scripts/guard-path.ts`) applies the same rule to the
-worker's own file tools.
+`config.toml`, or outside the session's sandbox and the data directory. The
+worker's own file and shell tools are not confined by path: under
+`model_host_access = "sandboxed"`, and for every guest, they are not
+available at all, and under `"full"` they can reach anything your account
+can.
 
 ### Guests
 

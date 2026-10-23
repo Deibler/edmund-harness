@@ -293,6 +293,61 @@ export class CronStore {
     return Number(res.changes ?? 0);
   }
 
+  /**
+   * Fold an event into this session's still-pending one-shot that `canMerge`
+   * accepts, or schedule a new one-shot. The job fires `delayMs` after the
+   * latest event and never later than `maxDelayMs` after the first, so a
+   * burst becomes one wake-up while a lone event waits `delayMs`. A job due
+   * within the next second is left alone: the scheduler may already have
+   * read it, and text added now would never be seen. Immediate transaction:
+   * the writers are separate agent-runner processes.
+   */
+  coalesceOnce(input: {
+    sessionKey: string;
+    systemEvent: string;
+    delayMs: number;
+    maxDelayMs: number;
+    canMerge: (pendingEvent: string) => boolean;
+    merge: (pendingEvent: string, next: string) => string;
+  }): CronJob {
+    const GUARD_MS = 1_000;
+    return this.db
+      .transaction((): CronJob => {
+        const now = Date.now();
+        const rows = this.db
+          .query(
+            "SELECT * FROM jobs WHERE status='active' AND session_key = ? AND next_fire_ms > ? ORDER BY created_at",
+          )
+          .all(input.sessionKey, now + GUARD_MS) as RawRow[];
+        const pending = rows
+          .map((r) => this.hydrate(r))
+          .find(
+            (j) =>
+              j !== null &&
+              j.schedule.kind === "once" &&
+              j.createdAt + input.maxDelayMs > now + GUARD_MS &&
+              input.canMerge(j.systemEvent),
+          );
+        if (!pending) {
+          return this.create({
+            sessionKey: input.sessionKey,
+            systemEvent: input.systemEvent,
+            schedule: { kind: "once", atMs: now + input.delayMs },
+          });
+        }
+        const atMs = Math.min(now + input.delayMs, pending.createdAt + input.maxDelayMs);
+        const systemEvent = input.merge(pending.systemEvent, input.systemEvent);
+        const schedule: JobSchedule = { kind: "once", atMs };
+        this.db
+          .query(
+            "UPDATE jobs SET system_event = ?, next_fire_ms = ?, schedule_json = ? WHERE id = ?",
+          )
+          .run(systemEvent, atMs, JSON.stringify(schedule), pending.id);
+        return { ...pending, systemEvent, schedule, nextFireMs: atMs };
+      })
+      .immediate();
+  }
+
   markFired(job: CronJob, firedAtMs: number): CronJob {
     const next = nextFire(job.schedule, firedAtMs);
     const status: CronJob["status"] = job.schedule.kind === "once" || !next ? "done" : "active";

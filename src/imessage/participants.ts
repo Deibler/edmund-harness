@@ -178,6 +178,32 @@ export function getChatDisplayName(chatDb: ChatDb, chatGuid: string): string | n
 }
 
 /**
+ * Real chat.db guid for a DM handle. Everything keyed on a session's chat
+ * guid (message queries, person-file scoping, recovery) must use the SAME
+ * guid the chat's message rows carry. On this bridge that is `any;-;+…`; a
+ * fabricated `iMessage;-;…` guid matches no session (verified live
+ * 2026-07-28: all 27k message rows were `any;…` while person chunks sat
+ * unreachable under `iMessage;…`). When variants exist (named-chat dupes),
+ * prefer the chat with the most messages. No DM row yet (the person was only
+ * ever seen in a group) gets the guid the bridge will create.
+ */
+export function dmChatGuid(chatDb: ChatDb, handle: string): string {
+  try {
+    const row = chatDb
+      .query<{ guid: string }>(
+        `SELECT c.guid AS guid FROM chat c WHERE c.guid LIKE '%;-;' || ?
+         ORDER BY (SELECT COUNT(*) FROM chat_message_join j WHERE j.chat_id = c.ROWID) DESC
+         LIMIT 1`,
+      )
+      .get(handle);
+    if (row?.guid) return row.guid;
+  } catch {
+    // chat.db unavailable mid-tick — fall through to the convention.
+  }
+  return `any;-;${handle}`;
+}
+
+/**
  * True iff this handle has ever appeared in chat.db (DM or group, sender or
  * recipient). Used as the observability gate for relay outbound: we refuse
  * to text numbers we've never seen in any conversation.

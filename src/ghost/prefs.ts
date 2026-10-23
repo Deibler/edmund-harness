@@ -512,6 +512,23 @@ export class GhostPrefsStore {
     this.db.query("UPDATE brown_nose_fires SET delivered=1 WHERE id=?").run(fireId);
   }
 
+  /**
+   * A fire whose message reached the chat although its label said it did
+   * not (an `error` from a send that timed out but flushed, a `vetoed` run
+   * that sent through a tool): mark it delivered and pending, so the
+   * one-open-thread gate holds and the outcome sweep scores it. Only ever
+   * moves an undelivered fire. See ghost/landed.ts.
+   */
+  reopenFire(fireId: number): void {
+    this.db
+      .query(
+        `UPDATE brown_nose_fires
+         SET delivered=1, outcome=NULL, outcome_at_ms=NULL, reaction_glyph=NULL
+         WHERE id=? AND delivered=0`,
+      )
+      .run(fireId);
+  }
+
   /** Backfill outcome on a previously-recorded fire. `reactionGlyph` is
    *  only meaningful with outcome "reacted". */
   recordOutcome(fireId: number, outcome: FireOutcome, reactionGlyph?: string): void {

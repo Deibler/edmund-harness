@@ -44,9 +44,12 @@
  */
 
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
+import type { ChatDb } from "../imessage/db.ts";
+import { getGroupParticipants } from "../imessage/participants.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { recordSpend } from "../spend/ledger.ts";
@@ -58,9 +61,105 @@ import { describeLeaks, findLeaks } from "./privacy.ts";
 
 const CURATOR_TIMEOUT_MS = 180_000;
 
-/** Evidence thresholds. A "pattern" that clears neither is a coincidence. */
+/** Evidence thresholds. A "pattern" that clears them all is not a coincidence.
+ *  Chats and people are both required. Chats alone let one person who asked
+ *  in five chats (their DM and four groups) pass as five; that is how one
+ *  family's explainer-video project became a global skill on 2026-10-16
+ *  (7 refs, 5 chats, 1 sender). People alone let two members of one family
+ *  group pass as two unrelated rooms. */
 export const MIN_OCCURRENCES = 3;
 export const MIN_CHATS = 2;
+export const MIN_PEOPLE = 2;
+
+/** One ask reduced to who asked and where. */
+export type Asker = { person: string; chat: string };
+
+/**
+ * Whether the evidence includes two people who, as far as Edmund can see, do
+ * not share a room: neither asked in a chat the other is in. "In" a chat
+ * means asked there, or is a member of it in chat.db (`membersOf`), so a
+ * silent member of the family group counts as present.
+ *
+ * Counting people and chats separately let one family through: a family
+ * group with two members asking, plus one member's own DM, is two people in
+ * two chats. This is the prompt's "people who do not know each other" in the
+ * strongest form the data supports while the bar stays reachable. Stricter,
+ * "no group in common at all", failed 6 of the 12 live curated skills on
+ * 2026-10-23: one person behind them is in 65 groups, so nearly everyone
+ * shares some group with them. This rule fails 2 (the 10-16 family skill,
+ * and one whose two people asked in a room both are in). What it cannot
+ * see: two people who share a group but each asked somewhere the other is
+ * not, and people who know each other outside Edmund's chats.
+ */
+export function hasUnrelatedPair(
+  asks: Asker[],
+  membersOf: (chat: string) => string[] = () => [],
+): boolean {
+  const asked = new Map<string, Set<string>>();
+  for (const a of asks) {
+    const chats = asked.get(a.person) ?? new Set<string>();
+    chats.add(a.chat);
+    asked.set(a.person, chats);
+  }
+  const present = new Map<string, Set<string>>();
+  const presentIn = (chat: string) => {
+    let s = present.get(chat);
+    if (!s) {
+      s = new Set(membersOf(chat));
+      for (const a of asks) if (a.chat === chat) s.add(a.person);
+      present.set(chat, s);
+    }
+    return s;
+  };
+  const people = [...asked.keys()];
+  const meets = (p: string, q: string) => [...asked.get(p)!].some((c) => presentIn(c).has(q));
+  for (let i = 0; i < people.length; i++) {
+    for (let j = i + 1; j < people.length; j++) {
+      if (!meets(people[i]!, people[j]!) && !meets(people[j]!, people[i]!)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The people in a chat according to chat.db, as person keys. Without a
+ * chat.db only the askers themselves are known to be present.
+ */
+export function chatMembers(
+  chatDb: ChatDb | undefined,
+  contacts: Pick<ContactBook, "canon" | "displayName">,
+): (chat: string) => string[] {
+  const cache = new Map<string, string[]>();
+  return (chat) => {
+    if (!chatDb) return [];
+    let members = cache.get(chat);
+    if (!members) {
+      try {
+        members = getGroupParticipants(chatDb, chat).map((h) => personKey(contacts, h));
+      } catch {
+        members = [];
+      }
+      cache.set(chat, members);
+    }
+    return members;
+  };
+}
+
+/**
+ * Who sent a message, as one key per person. `canon` merges only the handles
+ * listed together in `[[contacts]]`; the name the operator's books give a
+ * handle also joins a phone number and an Apple ID on the same contact card.
+ * Two different people with the same saved name merge too, which can only
+ * make the bar harder to clear. A person with no saved name who writes from
+ * two handles still counts twice; the two-chat requirement is the backstop.
+ */
+export function personKey(
+  contacts: Pick<ContactBook, "canon" | "displayName">,
+  handle: string,
+): string {
+  const name = contacts.displayName(handle)?.trim().toLowerCase();
+  return name ? `name:${name}` : contacts.canon(handle);
+}
 
 /** Sampling. Bounded so one run cannot cost an unbounded amount of context. */
 const MAX_SAMPLE_MESSAGES = 400;
@@ -74,6 +173,10 @@ export type CuratorDeps = {
   skillsRoot: string;
   dbPath: string;
   contacts: ContactBook;
+  /** Group membership for the evidence bar (hasUnrelatedPair). Without it
+   *  only who asked where is known, and a silent member of a shared group
+   *  is not seen. */
+  chatDb?: ChatDb;
   /** Injectable so tests never spawn a model. */
   runModel?: typeof runModelOneShot;
   /** Injectable clock, for testing the interval gate. */
@@ -81,11 +184,21 @@ export type CuratorDeps = {
 };
 
 export type CuratorOutcome =
-  | { ran: false; reason: string }
+  | { ran: false; reason: string; atCeiling?: true }
   | { ran: true; created: string | null; considered: number; rejected: string[] };
 
-/** One human message, flattened for the prompt. */
-export type SampledAsk = { ref: string; chat: string; text: string; ts: number };
+/** One human message, flattened for the prompt. `sender` is for vetting
+ *  only and never reaches the prompt. */
+/**
+ * A chat as the curator prompt and a skill's provenance name it: stable and
+ * opaque. It was the guid's first 12 characters, which for a DM
+ * (`any;-;+1555…`) is the country and area code and a digit of the number.
+ */
+export function chatTag(chatGuid: string): string {
+  return `c${createHash("sha256").update(chatGuid).digest("hex").slice(0, 6)}`;
+}
+
+export type SampledAsk = { ref: string; chat: string; sender: string; text: string; ts: number };
 
 /**
  * Pull a diverse sample of what people actually asked for.
@@ -97,13 +210,17 @@ export type SampledAsk = { ref: string; chat: string; text: string; ts: number }
  */
 export function sampleRecentAsks(
   recallDbPath: string,
-  opts: { sinceMs: number; now?: number },
+  opts: { sinceMs: number; now?: number; personOf?: (handle: string) => string },
 ): SampledAsk[] {
+  const personOf = opts.personOf ?? ((h: string) => h);
   const db = new Database(recallDbPath, { readonly: true });
   try {
     const rows = db
-      .query<{ ref: string; chat_guid: string | null; text: string; ts: number }, [number]>(
-        `SELECT ref, chat_guid, text, ts
+      .query<
+        { ref: string; chat_guid: string | null; sender: string; text: string; ts: number },
+        [number]
+      >(
+        `SELECT ref, chat_guid, sender, text, ts
            FROM rows
           WHERE kind = 'message'
             AND sender IS NOT NULL AND sender != 'me'
@@ -112,20 +229,23 @@ export function sampleRecentAsks(
       )
       .all(opts.sinceMs);
 
-    const byChat = new Map<string, SampledAsk[]>();
+    // Bucketed by person, not by chat: the cap exists so one loud voice
+    // cannot be the pattern, and one person in five chats is still one voice.
+    const byPerson = new Map<string, SampledAsk[]>();
     for (const r of rows) {
       const text = stripIndexPrefix(r.text);
       if (text.length < MIN_MESSAGE_CHARS) continue;
       const chat = r.chat_guid ?? "(unknown)";
-      const bucket = byChat.get(chat) ?? [];
+      const sender = personOf(r.sender);
+      const bucket = byPerson.get(sender) ?? [];
       if (bucket.length >= MAX_PER_CHAT) continue;
-      bucket.push({ ref: r.ref, chat, text: text.slice(0, MAX_MESSAGE_CHARS), ts: r.ts });
-      byChat.set(chat, bucket);
+      bucket.push({ ref: r.ref, chat, sender, text: text.slice(0, MAX_MESSAGE_CHARS), ts: r.ts });
+      byPerson.set(sender, bucket);
     }
 
     // Round-robin so the sample is wide before it is deep.
     const out: SampledAsk[] = [];
-    const buckets = [...byChat.values()];
+    const buckets = [...byPerson.values()];
     for (let i = 0; out.length < MAX_SAMPLE_MESSAGES; i++) {
       let progressed = false;
       for (const b of buckets) {
@@ -163,7 +283,10 @@ write a skill that makes the assistant better at that job next time.
 
 WHAT COUNTS AS A PATTERN
   • The same underlying task, asked by people who do not know each other.
-  • At least ${MIN_OCCURRENCES} separate occurrences, spanning at least ${MIN_CHATS} different chats.
+  • At least ${MIN_OCCURRENCES} separate occurrences, from at least ${MIN_PEOPLE} different people
+    in at least ${MIN_CHATS} different chats. The same person asking in several
+    chats (their DM and a group) is one person, and two people in one group
+    chat are one room. Every sample line carries an opaque person id.
   • The repetition must be in the TASK, not the topic. Four people mentioning
     the weather is not a pattern. Four people asking "should I leave now given
     the radar" is a pattern: it has a procedure.
@@ -204,7 +327,8 @@ OUTPUT — raw JSON, no prose, no code fence:
 }
 
 Return at most ONE skill. Cite real refs from the sample — an entry whose
-evidence does not span ${MIN_CHATS} distinct chats will be discarded.`;
+evidence does not come from ${MIN_PEOPLE} distinct people in ${MIN_CHATS} distinct chats
+will be discarded.`;
 
 type ProposedSkill = {
   name?: unknown;
@@ -287,6 +411,8 @@ export function vetProposal(args: {
   contacts: ContactBook;
   /** The assistant's own names — allowed to appear in its own skills. */
   selfNames?: string[];
+  /** Who is in a chat (chat.db); see hasUnrelatedPair. */
+  membersOf?: (chat: string) => string[];
 }): VetOutcome {
   const { proposal, sample, existingNames, contacts } = args;
 
@@ -304,14 +430,16 @@ export function vetProposal(args: {
   // the question is whether they point at anything. Refs are checked against
   // the sample it was actually shown, so an invented ref cannot vouch for an
   // invented pattern.
-  const sampleRefs = new Map(sample.map((s) => [s.ref, s.chat]));
+  const sampleRefs = new Map(sample.map((s) => [s.ref, s]));
+  const people = new Set<string>();
   const chats = new Set<string>();
   let realRefs = 0;
   for (const e of proposal.evidence) {
-    const chat = sampleRefs.get(e.ref);
-    if (!chat) continue;
+    const ask = sampleRefs.get(e.ref);
+    if (!ask) continue;
     realRefs++;
-    chats.add(chat);
+    people.add(ask.sender);
+    chats.add(ask.chat);
   }
   if (realRefs < MIN_OCCURRENCES) {
     return {
@@ -319,10 +447,27 @@ export function vetProposal(args: {
       reason: `only ${realRefs} of ${proposal.evidence.length} cited refs exist in the sample (need ${MIN_OCCURRENCES})`,
     };
   }
+  if (people.size < MIN_PEOPLE) {
+    return {
+      ok: false,
+      reason: `evidence comes from ${people.size} person(s), need ${MIN_PEOPLE} — this is one person's habit`,
+    };
+  }
   if (chats.size < MIN_CHATS) {
     return {
       ok: false,
-      reason: `evidence spans ${chats.size} chat(s), need ${MIN_CHATS} — this is one person's habit`,
+      reason: `evidence spans ${chats.size} chat(s), need ${MIN_CHATS} — this is one room's habit`,
+    };
+  }
+  const askers = proposal.evidence.flatMap((e) => {
+    const ask = sampleRefs.get(e.ref);
+    return ask ? [{ person: ask.sender, chat: ask.chat }] : [];
+  });
+  if (!hasUnrelatedPair(askers, args.membersOf)) {
+    return {
+      ok: false,
+      reason:
+        "everyone behind it asked in a room another of them is in — this is one circle's habit",
     };
   }
 
@@ -353,25 +498,45 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
 
   const db = readDb(deps.dbPath);
   if (curatedCount(db.skills) >= cfg.max_curated_skills) {
-    return { ran: false, reason: `at the ceiling of ${cfg.max_curated_skills} curated skills` };
+    return {
+      ran: false,
+      reason: `at the ceiling of ${cfg.max_curated_skills} curated skills`,
+      atCeiling: true,
+    };
   }
 
   const recallPath = join(deps.dataDir, "recall.sqlite");
   const sinceMs = now() - cfg.lookback_days * 86_400_000;
   let sample: SampledAsk[];
   try {
-    sample = sampleRecentAsks(recallPath, { sinceMs });
+    sample = sampleRecentAsks(recallPath, {
+      sinceMs,
+      personOf: (h) => personKey(deps.contacts, h),
+    });
   } catch (err) {
     return { ran: false, reason: `could not read the recall index: ${(err as Error).message}` };
   }
 
   const distinctChats = new Set(sample.map((s) => s.chat)).size;
-  if (distinctChats < MIN_CHATS) {
+  const people = [...new Set(sample.map((s) => s.sender))];
+  if (people.length < MIN_PEOPLE || distinctChats < MIN_CHATS) {
     return {
       ran: false,
-      reason: `only ${distinctChats} chat(s) in the window — nothing to compare`,
+      reason: `only ${people.length} person(s) in ${distinctChats} chat(s) in the window — nothing to compare`,
     };
   }
+  const membersOf = chatMembers(deps.chatDb, deps.contacts);
+  if (
+    !hasUnrelatedPair(
+      sample.map((s) => ({ person: s.sender, chat: s.chat })),
+      membersOf,
+    )
+  ) {
+    return { ran: false, reason: "everyone in the window shares a room — nothing to compare" };
+  }
+  // Opaque per-run ids, so the model can tell people apart without seeing a
+  // handle (the leak scan is the backstop, not the plan).
+  const personId = new Map(people.map((p, i) => [p, `p${i + 1}`]));
 
   const catalogue = Object.entries(db.skills)
     .map(([name, r]) => `  • ${name} — ${r.source}`)
@@ -390,8 +555,10 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
     "ALREADY TRIED AND RETIRED — do not propose these again, or a variation:",
     graveyard || "  (none)",
     "",
-    `SAMPLE — ${sample.length} asks across ${distinctChats} chats, last ${cfg.lookback_days} days:`,
-    ...sample.map((s) => `[${s.ref}] (chat ${s.chat.slice(0, 12)}) ${s.text}`),
+    `SAMPLE — ${sample.length} asks from ${people.length} people across ${distinctChats} chats, last ${cfg.lookback_days} days:`,
+    ...sample.map(
+      (s) => `[${s.ref}] (chat ${chatTag(s.chat)}, person ${personId.get(s.sender)}) ${s.text}`,
+    ),
   ].join("\n");
 
   const run = deps.runModel ?? runModelOneShot;
@@ -432,6 +599,7 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
       retiredNames: Object.keys(db.retired ?? {}),
       contacts: deps.contacts,
       selfNames: deps.config.identity.names,
+      membersOf,
     });
     if (!vet.ok) {
       rejected.push(`${proposal.name}: ${vet.reason}`);
@@ -468,7 +636,10 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
       record.origin_scope = null;
       record.provenance = [
         `why: ${proposal.whyNow}`,
-        ...proposal.evidence.map((e) => `${e.ref} (chat ${e.chat.slice(0, 12)}) — ${e.reading}`),
+        ...proposal.evidence.map((e) => {
+          const ask = sample.find((a) => a.ref === e.ref);
+          return `${e.ref} (chat ${ask ? chatTag(ask.chat) : "unknown"}) — ${e.reading}`;
+        }),
       ];
       writeDb(deps.dbPath, after);
     }

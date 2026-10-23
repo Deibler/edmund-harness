@@ -9,8 +9,8 @@ import { log } from "../util/log.ts";
  *
  * When the originator's session calls `message_contact` with attachments,
  * the files have to land somewhere the *recipient's* session can read —
- * separate sandboxes have a path guard that blocks reads outside their
- * own dir. We solve that by COPYING each file into the recipient's
+ * its tools only look inside its own sandbox (a guest or sandboxed session
+ * has no file tools at all). We solve that by COPYING each file into the recipient's
  * sandbox under `received-from-<originator-slug>/<dated-basename>`. The
  * recipient's model can then:
  *   - see images directly (we pass them through cron's attachImages,

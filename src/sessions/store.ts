@@ -33,6 +33,11 @@ export type SessionRecord = {
    *  its worker process starts, which resumes the conversation. Codex starts
    *  a fresh thread on drift. */
   systemPromptHash: string | null;
+  /** When the last successful model turn of any kind (inbound, scheduled,
+   *  proactive, recovery) started. A scheduled reply sent as plain text
+   *  moves neither inbound nor outbound, so without this a wake-up into a
+   *  warm group could not tell what the model had already been shown. */
+  lastTurnMs: number;
 };
 
 export class StateStore {
@@ -205,6 +210,7 @@ export class StateStore {
       // Provider owning claude_session_id. Existing non-null ids are treated
       // as Claude by the routing layer for backward compatibility.
       "ALTER TABLE sessions ADD COLUMN session_backend TEXT",
+      "ALTER TABLE sessions ADD COLUMN last_turn_ms INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.db.exec(sql);
@@ -359,6 +365,16 @@ export class StateStore {
   /** Stamp that a fallback "still on it" notice went out for the current
    *  unanswered burst. Does NOT touch last_outbound_ms — the session still
    *  owes its real reply, so the recovery sweeper must keep seeing it. */
+  /** Record a successful model turn that started at `startedAtMs`. Leaves
+   *  last_outbound_ms alone: the recovery sweeper reads that to decide who
+   *  is still owed a reply. */
+  markModelTurn(sessionKey: SessionKey, startedAtMs: number): void {
+    this.q("UPDATE sessions SET last_turn_ms = MAX(last_turn_ms, ?) WHERE session_key = ?").run(
+      startedAtMs,
+      sessionKey,
+    );
+  }
+
   markFallbackSent(sessionKey: SessionKey, sentAtMs: number): void {
     this.q("UPDATE sessions SET last_fallback_ms = ? WHERE session_key = ?").run(
       sentAtMs,
@@ -479,6 +495,7 @@ export class StateStore {
       | "lastFallbackMs"
       | "systemPromptHash"
       | "sessionBackend"
+      | "lastTurnMs"
     > & {
       createdAt?: number;
     },
@@ -489,6 +506,9 @@ export class StateStore {
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_key) DO UPDATE SET
            claude_session_id = excluded.claude_session_id,
+           chat_guid = CASE
+             WHEN instr(sessions.chat_guid, ';') = 0 AND instr(excluded.chat_guid, ';') > 0
+             THEN excluded.chat_guid ELSE sessions.chat_guid END,
            last_inbound_ms = excluded.last_inbound_ms,
            last_outbound_ms = excluded.last_outbound_ms`,
     ).run(
@@ -599,6 +619,24 @@ export class StateStore {
       "UPDATE sessions SET last_outbound_ms = MAX(last_outbound_ms, ?) WHERE session_key = ?",
     ).run(atMs, sessionKey);
     return Number(res.changes) > 0;
+  }
+
+  /**
+   * iMessage DMs whose stored chat guid is a bare handle. The relay wrote
+   * those until 2026-10-23 and nothing corrected them: the person-file
+   * maintainer never ran for those chats, the ghost scored real replies as
+   * ignored, and recovery could not see their unanswered messages (7 rows,
+   * 6 of them active). Fixed with the guid chat.db holds; the upsert above
+   * repairs any that arrive later.
+   */
+  repairDmChatGuids(guidFor: (handle: string) => string): number {
+    const rows = this.q(
+      `SELECT session_key AS sessionKey, chat_guid AS chatGuid FROM sessions
+       WHERE session_key LIKE 'imessage:dm:%' AND instr(chat_guid, ';') = 0`,
+    ).all() as { sessionKey: string; chatGuid: string }[];
+    const set = this.q("UPDATE sessions SET chat_guid = ? WHERE session_key = ?");
+    for (const r of rows) set.run(guidFor(r.sessionKey.slice("imessage:dm:".length)), r.sessionKey);
+    return rows.length;
   }
 
   listSessions(): SessionRecord[] {
@@ -826,6 +864,7 @@ const SESSION_SELECT_COLS = `
     last_error_at_ms         AS lastErrorAtMs,
     heal_attempts_count      AS healAttemptsCount,
     last_fallback_ms         AS lastFallbackMs,
-    system_prompt_hash       AS systemPromptHash
+    system_prompt_hash       AS systemPromptHash,
+    last_turn_ms             AS lastTurnMs
   FROM sessions
 `;

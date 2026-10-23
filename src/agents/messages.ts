@@ -1,3 +1,4 @@
+import type { CronStore } from "../cron/store.ts";
 import type { AgentStore } from "./store.ts";
 
 /**
@@ -7,6 +8,10 @@ import type { AgentStore } from "./store.ts";
  * regardless of how the agent died.
  */
 
+const SOLO_HEAD = "A sub-agent you spawned has finished";
+const TEAM_HEAD = "An agent team has finished";
+const MERGED_HEAD = "Several sub-agent results arrived together";
+
 export function agentCompletionMessage(
   agentId: string,
   task: string,
@@ -14,7 +19,7 @@ export function agentCompletionMessage(
   note?: string,
 ): string {
   const lines = [
-    `A sub-agent you spawned has finished (status: ${status}).`,
+    `${SOLO_HEAD} (status: ${status}).`,
     ``,
     `Agent id: ${agentId}`,
     `Task was: ${task}`,
@@ -26,7 +31,7 @@ export function agentCompletionMessage(
     ``,
     status === "done"
       ? `Read the result with \`read_agent_result("${agentId}")\` and relay it to the user.`
-      : `The agent did not complete successfully. Check the log with \`check_agent("${agentId}")\` to see what happened, then tell the user.`,
+      : `The agent did not complete successfully. Whatever it produced is in \`read_agent_result("${agentId}")\`; \`check_agent("${agentId}")\` shows the log tail. Tell the user what came through and what didn't.`,
     `Lead with the takeaway. Reformat for iMessage bubbles per your rules.`,
     `Don't paste the raw output.`,
   );
@@ -54,7 +59,7 @@ export function teamCompletionMessage(teamId: string, agentStore: AgentStore): s
     `Reformat for iMessage bubbles. If members contradict, flag it; don't paper over it.`,
   );
   return [
-    `An agent team has finished${failed.length > 0 ? ` (${done.length} done, ${failed.length} failed)` : ""}.`,
+    `${TEAM_HEAD}${failed.length > 0 ? ` (${done.length} done, ${failed.length} failed)` : ""}.`,
     ``,
     `Team id: ${teamId}`,
     `Members:`,
@@ -62,4 +67,54 @@ export function teamCompletionMessage(teamId: string, agentStore: AgentStore): s
     ``,
     ...resultLines,
   ].join("\n");
+}
+
+/** An agent or team completion event, single or already merged. */
+export function isCompletionEvent(event: string): boolean {
+  return [SOLO_HEAD, TEAM_HEAD, MERGED_HEAD].some((head) => event.startsWith(head));
+}
+
+/**
+ * One event for completions that land together. A fan-out of solo agents
+ * used to wake the parent once per agent: 85 of 234 completion wake-ups
+ * since May arrived within two minutes of another for the same chat, up to
+ * 19 in a row, each a full turn.
+ */
+export function mergeCompletionEvents(pending: string, next: string): string {
+  const blocks = pending.startsWith(MERGED_HEAD)
+    ? pending.split(/\n\n--- \d+ ---\n/).slice(1)
+    : [pending];
+  blocks.push(next);
+  return [
+    `${MERGED_HEAD} (${blocks.length}). Handle them in one reply: lead with what matters most, and don't send a separate message per result.`,
+    ...blocks.map((b, i) => `\n--- ${i + 1} ---\n${b}`),
+  ].join("\n");
+}
+
+/** Fire this long after the latest completion in a burst... */
+export const COMPLETION_DEBOUNCE_MS = 20_000;
+/** ...and never later than this after the first. */
+export const COMPLETION_MAX_WAIT_MS = 90_000;
+
+/**
+ * The one way an agent completion reaches the parent session: merged into a
+ * completion wake-up that has not fired yet, or scheduled as a new one.
+ * Measured on 234 past completions: 49 fewer wake-up turns, and a lone
+ * completion fires about 18s later than the 2s it used to.
+ */
+export function queueCompletionWakeUp(
+  crons: Pick<CronStore, "coalesceOnce" | "cancelPokes">,
+  sessionKey: string,
+  event: string,
+): number {
+  crons.coalesceOnce({
+    sessionKey,
+    systemEvent: event,
+    delayMs: COMPLETION_DEBOUNCE_MS,
+    maxDelayMs: COMPLETION_MAX_WAIT_MS,
+    canMerge: isCompletionEvent,
+    merge: mergeCompletionEvents,
+  });
+  // A self-poke was only a safety net for the work that just finished.
+  return crons.cancelPokes(sessionKey);
 }

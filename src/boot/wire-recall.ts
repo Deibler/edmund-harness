@@ -41,6 +41,7 @@ export function wireRecall(args: {
         queryText: string,
         senderHandle?: string | null,
         sessionKey?: SessionKey,
+        shownSinceMs?: number,
       ) => ReturnType<typeof autoRecall>)
     | undefined;
 } {
@@ -52,13 +53,20 @@ export function wireRecall(args: {
   if (config.memory_recall.enabled && config.memory_recall.provider !== "none") {
     // The daemon is the one process that repairs the FTS shadow; every MCP
     // server and background job opens the same file read-mostly.
-    store = new VectorStore(
-      `${config.paths.data_dir}/${config.memory_recall.index_db}`,
-      undefined,
-      {
-        repair: true,
-      },
-    );
+    //
+    // The daemon keeps its search cache (idle 0: never evicted). With the
+    // default 10-minute eviction, the first turn after a quiet spell reloaded
+    // the whole index synchronously: 19% of turns over 14 days (265 of 1,362)
+    // waited over 5 s, every other chat waiting with them. The idle eviction
+    // is for the per-session MCP servers, which each hold their own copy.
+    store = new VectorStore(`${config.paths.data_dir}/${config.memory_recall.index_db}`, 0, {
+      repair: true,
+    });
+    // Loaded in slices at boot, so no turn pays for the load in one block.
+    const warming = store;
+    setTimeout(() => {
+      warming.warmCache().catch((err) => console.warn("[recall] cache warm-up failed", err));
+    }, 0);
     provider = makeProvider({
       provider: config.memory_recall.provider,
       model: config.memory_recall.model,
@@ -220,6 +228,7 @@ export function wireRecall(args: {
         queryText: string,
         senderHandle?: string | null,
         sessionKey?: SessionKey,
+        shownSinceMs?: number,
       ) => {
         // Outside-context boost lifts hits older than the last
         // compaction — those are messages the model can't directly read
@@ -241,6 +250,9 @@ export function wireRecall(args: {
           // Being addressed by name is not a subject to search for.
           selfNames: config.identity.names,
           excludeRecentMs: config.memory_recall.auto_recall_window_hours * 3_600_000,
+          // A group turn's history ends where its shown thread starts;
+          // recall picks up from there instead of skipping a fixed window.
+          excludeFromMs: shownSinceMs,
           excludeRefs: surfaced?.refs,
           deepSplitDays: config.memory_recall.auto_recall_deep_split_days,
           deepLimit: config.memory_recall.auto_recall_deep_limit,

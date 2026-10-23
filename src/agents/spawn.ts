@@ -7,9 +7,17 @@ import { CronStore } from "../cron/store.ts";
 import { isTradingSession } from "../sessions/key.ts";
 import { genId } from "../util/ids.ts";
 import { consumeFollowOnMarker, teamSharedDirFor } from "./follow-on.ts";
-import { agentCompletionMessage, teamCompletionMessage } from "./messages.ts";
+import {
+  agentCompletionMessage,
+  queueCompletionWakeUp,
+  teamCompletionMessage,
+} from "./messages.ts";
 import type { AgentStore } from "./store.ts";
 import type { Agent, AgentInput } from "./types.ts";
+
+/** A member that never claimed `running` after this long had a spawn failure.
+ *  60s, not 10: bun + CLI cold start runs long on a loaded machine. */
+export const PENDING_STALE_MS = 60_000;
 
 /**
  * Spawn a detached model worker for a sub-agent. Returns immediately
@@ -27,25 +35,71 @@ const RUNNER_SCRIPT = join(
   "agent-runner.ts",
 );
 
+/**
+ * The environment a sub-agent's runner starts from, for a parent session.
+ * It carries the agent settings the runner reads (EDMUND_AGENT_MODEL,
+ * EDMUND_PLUGIN_DIRS, EDMUND_HOST_ACCESS) and the host-access filtering of
+ * the parent's tool env. The MCP server and the runner already run in that
+ * env, so their own is the default; the daemon's is not (toolEnv sets those
+ * for MCP children only), so the daemon passes toolEnv for the parent.
+ */
+export type LaunchEnvFor = (
+  parentSessionKey: string,
+  parentSandbox: string,
+) => Record<string, string>;
+
+const ownEnv: LaunchEnvFor = () => directClaudeEnv();
+
 export function spawnAgent(
   store: AgentStore,
   dataDir: string,
   parentSandbox: string,
   input: AgentInput,
   teamSharedDir?: string,
+  launchEnv: LaunchEnvFor = ownEnv,
 ): Agent {
+  const env = launchEnv(input.parentSessionKey, parentSandbox);
+  const agent = reserveAgent(store, parentSandbox, input, env);
+  launchAgent(store, dataDir, agent, env, launchEnv, teamSharedDir);
+  return agent;
+}
+
+/** Create the pending row (and its sandbox) for an agent about to launch. */
+function reserveAgent(
+  store: AgentStore,
+  parentSandbox: string,
+  input: AgentInput,
+  env: Record<string, string>,
+): Agent {
+  const model = configuredAgentModel(env);
+  const problem = agentModelProblem(model);
+  if (problem) {
+    throw new Error(
+      `sub-agents can't start: [claude].agent_model is "${model}" and ${problem}. Do this work yourself in this turn, and tell the operator to fix agent_model in config.toml.`,
+    );
+  }
   const id = genId("agent");
   const agentDir = join(parentSandbox, "agents", id);
   mkdirSync(agentDir, { recursive: true });
-  const agent = store.create(input, {
+  return store.create(input, {
     id,
     sandboxPath: agentDir,
     resultPath: join(agentDir, "result.md"),
     logPath: join(agentDir, "agent.log"),
   });
+}
 
+/** Start the detached runner for a reserved row. */
+function launchAgent(
+  store: AgentStore,
+  dataDir: string,
+  agent: Agent,
+  baseEnv: Record<string, string>,
+  launchEnv: LaunchEnvFor,
+  teamSharedDir?: string,
+): void {
   const env: Record<string, string> = {
-    ...directClaudeEnv(),
+    ...baseEnv,
     AGENT_ID: agent.id,
     AGENT_TASK: agent.task,
     AGENT_SANDBOX: agent.sandboxPath,
@@ -58,7 +112,7 @@ export function spawnAgent(
   if (agent.teamId) env.AGENT_TEAM_ID = agent.teamId;
   // Trading sub-agents get the trading MCP loadout (Robinhood read tools for
   // research) and a research-only preamble — they never place orders.
-  const trading = isTradingSession(input.parentSessionKey);
+  const trading = isTradingSession(agent.parentSessionKey);
   if (trading) env.EDMUND_TRADING = "1";
 
   const child = spawn("bun", [RUNNER_SCRIPT], {
@@ -69,7 +123,7 @@ export function spawnAgent(
 
   child.on("error", (err) => {
     console.error(`[agents] spawn error for ${agent.id}: ${err.message}`);
-    markFailedAndNotify(store, dataDir, agent.id, `spawn error: ${err.message}`);
+    markFailedAndNotify(store, dataDir, agent.id, `spawn error: ${err.message}`, launchEnv);
   });
   child.on("exit", (code, signal) => {
     if (code === null && signal) {
@@ -81,6 +135,7 @@ export function spawnAgent(
           dataDir,
           agent.id,
           `child died via signal=${signal} before runner started`,
+          launchEnv,
         );
       }
     }
@@ -88,7 +143,6 @@ export function spawnAgent(
   child.unref();
 
   console.log(`[agents] spawned ${agent.id} pid=${child.pid} task="${agent.task.slice(0, 80)}"`);
-  return agent;
 }
 
 export type TeamMember = { role: string; task: string };
@@ -138,85 +192,173 @@ export function spawnTeam(
 }
 
 /**
- * Mark an agent failed AND fire a wake-up cron for the parent, so Edmund
- * hears about the dead agent instead of silently losing track of it.
- *
- * Only the normal-exit path (agent-runner.ts) previously wrote the wake-up
- * cron; spawn failures would mark the row but never notify. Parent would
- * wait forever for a result that never comes.
- *
- * For team members: if this failure lets the team fully settle, we fire
- * the team-completion event (not an individual one). Matches the
- * agent-runner contract so team behavior is consistent regardless of how
- * a member died.
+ * Mark an agent failed AND wake the parent, so Edmund hears about the dead
+ * agent instead of silently losing track of it. Spawn failures used to mark
+ * the row and never notify: the parent waited for a result that never came.
  */
 function markFailedAndNotify(
   store: AgentStore,
   dataDir: string,
   agentId: string,
   reason: string,
+  launchEnv: LaunchEnvFor,
 ): void {
   try {
-    store.finish(agentId, "failed", null);
+    if (!store.finishIfActive(agentId, "failed", null, reason)) return;
   } catch (dbErr) {
     console.error(`[agents] failed to mark ${agentId} as failed: ${String(dbErr)}`);
     return;
   }
+  const agent = store.get(agentId);
+  if (!agent) return;
+  notifyParent({ store, crons: new CronStore(dataDir), dataDir, agent, note: reason, launchEnv });
+}
+
+/**
+ * Tell the parent session an agent settled. Call only after winning
+ * `finishIfActive`, so each agent is reported once whichever path settled
+ * it (the runner's exit or SIGTERM, the reaper, a spawn failure).
+ *
+ * A solo agent queues a completion wake-up. A team member settles quietly
+ * until the whole team has; then a follow-on marker (deep_research's
+ * synthesizer) spawns the next stage, or the one team-done event goes out.
+ */
+export function notifyParent(args: {
+  store: AgentStore;
+  crons: Pick<CronStore, "coalesceOnce" | "cancelPokes">;
+  dataDir: string;
+  agent: Agent;
+  note?: string;
+  log?: (line: string) => void;
+  /** Env a follow-on stage starts from; see LaunchEnvFor. */
+  launchEnv?: LaunchEnvFor;
+  /** Test seam: runs inside the team decision, once the team is settled. */
+  duringTeamDecision?: () => void;
+}): void {
+  const { store, crons, dataDir, agent } = args;
+  const say = args.log ?? ((line: string) => console.log(`[agents] ${line}`));
+  const launchEnv = args.launchEnv ?? ownEnv;
   try {
-    const agent = store.get(agentId);
-    if (!agent) return;
-    const crons = new CronStore(dataDir);
-    if (agent.teamId) {
-      // Same zombie-reap + fully-settled check as agent-runner does, so a
-      // spawn-failed teammate still lets the team settle.
-      store.teamReapZombies(agent.teamId, {
-        pendingStaleMs: 60_000,
-        runningStaleMs: 15 * 60 * 1000,
-      });
-      if (store.teamFullySettled(agent.teamId)) {
-        // A follow-on marker (deep_research's synthesizer) takes precedence
-        // over the team-done fire: spawning it un-settles the team, and the
-        // completion event goes out when IT finishes. Mirrors agent-runner.
-        const sharedDir = teamSharedDirFor(agent.sandboxPath, agent.teamId);
-        const spec = consumeFollowOnMarker(sharedDir);
-        if (spec) {
-          spawnAgent(
+    if (!agent.teamId) {
+      const pokes = queueCompletionWakeUp(
+        crons,
+        agent.parentSessionKey,
+        agentCompletionMessage(agent.id, agent.task, agent.status, args.note),
+      );
+      say(`queued completion wake-up for ${agent.id} (canceled ${pokes} stale poke(s))`);
+      return;
+    }
+    const teamId = agent.teamId;
+    const sharedDir = teamSharedDirFor(agent.sandboxPath, teamId);
+    // One decision per team, under the write lock. Two members settling at
+    // once (in two runner processes) both saw the team settled: one took the
+    // follow-on marker and spawned the synthesizer, the other found no
+    // marker before the synthesizer's row existed and sent team-done early,
+    // and the synthesizer's own result was then never reported. Taking the
+    // marker and inserting the follow-on's row, or claiming team-done, in one
+    // transaction means the second member sees the synthesizer in flight.
+    const decision = store.immediate(() => {
+      const neverStarted = store.failStalePending(teamId, PENDING_STALE_MS);
+      if (!store.teamFullySettled(teamId)) return { kind: "in-flight", neverStarted } as const;
+      args.duringTeamDecision?.();
+      const spec = consumeFollowOnMarker(sharedDir);
+      if (spec) {
+        const env = launchEnv(spec.parentSessionKey, spec.parentSandbox);
+        try {
+          const followOn = reserveAgent(
             store,
-            dataDir,
             spec.parentSandbox,
             {
               parentSessionKey: spec.parentSessionKey,
               task: spec.task,
               role: spec.role,
-              teamId: agent.teamId,
+              teamId,
             },
-            sharedDir,
+            env,
           );
-          console.log(
-            `[agents] team ${agent.teamId} settled via spawn failure — spawned follow-on ${spec.role}, deferring team-done`,
-          );
-        } else {
-          crons.create({
-            sessionKey: agent.parentSessionKey,
-            systemEvent: teamCompletionMessage(agent.teamId, store),
-            schedule: { kind: "once", atMs: Date.now() + 2000 },
-          });
-          crons.cancelPokes(agent.parentSessionKey);
-          console.log(`[agents] team ${agent.teamId} settled via spawn failure, firing team-done`);
+          return { kind: "follow-on", followOn, env, neverStarted } as const;
+        } catch (err) {
+          // The team is still done; report what it has rather than hang.
+          say(`team ${teamId}: follow-on ${spec.role} could not start: ${String(err)}`);
         }
       }
-    } else {
-      crons.create({
-        sessionKey: agent.parentSessionKey,
-        systemEvent: agentCompletionMessage(agent.id, agent.task, "failed", reason),
-        schedule: { kind: "once", atMs: Date.now() + 2000 },
-      });
-      crons.cancelPokes(agent.parentSessionKey);
-      console.log(`[agents] fired proactive delivery for spawn-failed ${agent.id}`);
+      const kind = store.claimTeamDone(teamId) ? "team-done" : "reported";
+      return { kind, neverStarted } as const;
+    });
+    if (decision.neverStarted > 0) {
+      say(`team ${teamId}: ${decision.neverStarted} member(s) never started, marked failed`);
+    }
+    if (decision.kind === "in-flight") {
+      say(`team ${teamId} still has members in flight`);
+    } else if (decision.kind === "follow-on") {
+      launchAgent(store, dataDir, decision.followOn, decision.env, launchEnv, sharedDir);
+      say(
+        `team ${teamId} settled; spawned follow-on ${decision.followOn.role} (${decision.followOn.id})`,
+      );
+    } else if (decision.kind === "team-done") {
+      const pokes = queueCompletionWakeUp(
+        crons,
+        agent.parentSessionKey,
+        teamCompletionMessage(teamId, store),
+      );
+      say(`team ${teamId} settled; queued team-done (canceled ${pokes} stale poke(s))`);
     }
   } catch (err) {
-    console.error(
-      `[agents] spawn-failure notify error for ${agentId}: ${String(err).slice(0, 200)}`,
-    );
+    console.error(`[agents] notify error for ${agent.id}: ${String(err).slice(0, 200)}`);
   }
 }
+
+/**
+ * Cancel an agent: settle it as canceled, then stop the process the settle
+ * found on the row. Its runner's SIGTERM handler keeps the partial result
+ * and does not report it. False when it had already settled.
+ */
+export function cancelAgent(store: AgentStore, id: string, reason: string): boolean {
+  const settled = store.finishIfActive(id, "canceled", null, reason);
+  if (!settled) return false;
+  if (settled.pid) killAgentProcess(settled.pid);
+  return true;
+}
+
+/**
+ * Stop an agent's runner and its CLI. The runner is spawned detached, so it
+ * leads its own process group and the CLI is in it; signalling the pid alone
+ * (what cancel did) left the CLI running. Only the group is signalled: when
+ * it is gone (ESRCH) the runner died without settling its row, and the bare
+ * pid may since belong to an unrelated process. A pid that is not positive
+ * is never signalled (kill(-0) is the caller's own group).
+ */
+export function killAgentProcess(pid: number): void {
+  if (!(pid > 0)) return;
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    // ESRCH: nothing of ours left to stop. EPERM: not ours.
+  }
+}
+
+/**
+ * Why a configured sub-agent model cannot work, before any agent is spawned.
+ * Ten agents failed at start on a bad agent_model, among them the dotted
+ * "claude-sonnet-5.5": every spawn failed the same way and the parent only
+ * learned from each failure in turn. Availability is the CLI's to judge (the
+ * runner reports that); this catches what is wrong on its face.
+ */
+export function agentModelProblem(model: string): string | null {
+  const name = model.trim();
+  if (!name) return "it is empty";
+  if (/\s/.test(name)) return "it contains whitespace";
+  if (/^claude-.*\d\.\d/.test(name)) {
+    return `Claude model ids use hyphens between version numbers ("${name.replace(/(\d)\.(\d)/g, "$1-$2")}")`;
+  }
+  return null;
+}
+
+/** The model a sub-agent runs on: [claude].agent_model, via its launch env. */
+export function configuredAgentModel(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return env.EDMUND_AGENT_MODEL ?? DEFAULT_AGENT_MODEL;
+}
+
+export const DEFAULT_AGENT_MODEL = "claude-sonnet-5";

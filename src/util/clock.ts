@@ -50,6 +50,71 @@ export function envelopeStamp(d: Date): string {
 }
 
 /**
+ * Epoch ms for a wall-clock time in the home zone. A time the model writes
+ * without an offset means Eastern, whatever zone the process runs in. Exact
+ * across DST: the offset is read at the guess, then again at the answer. An
+ * hour repeated in the fall resolves to its first occurrence; an hour skipped
+ * in the spring moves forward.
+ */
+export function homeWallClockMs(
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0,
+): number {
+  const wall = Date.UTC(year, month - 1, day, hour, minute, second);
+  const offsetAt = (ms: number) => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: HOME_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(ms));
+    const n = (t: Intl.DateTimeFormatPartTypes) =>
+      Number(part(parts, t)) % (t === "hour" ? 24 : 1e9);
+    return Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second")) - ms;
+  };
+  const guess = wall - offsetAt(wall);
+  const exact = wall - offsetAt(guess);
+  // A time the spring-forward gap skips (02:30 on that Sunday) does not exist;
+  // `exact` lands an hour early on the far side of it, `guess` an hour late.
+  // Later is what a clock does, so take `guess` when `exact` doesn't read
+  // back as the time asked for.
+  return exact + offsetAt(exact) === wall ? exact : guess;
+}
+
+/**
+ * Stamp for a history line: `Sat 14:58` within the last six days, where a
+ * weekday names one day, and `Sat Oct 4 14:58` beyond that, where it could
+ * name several. Cold starts carry history reaching back weeks. Home zone,
+ * like envelopeStamp.
+ */
+export function historyStamp(ms: number, nowMs: number = Date.now()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: HOME_TZ,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(ms));
+  let hour = part(parts, "hour");
+  if (hour === "24") hour = "00";
+  const clock = `${hour}:${part(parts, "minute")}`;
+  const weekday = part(parts, "weekday");
+  return nowMs - ms < 6 * 86_400_000
+    ? `${weekday} ${clock}`
+    : `${weekday} ${part(parts, "month")} ${part(parts, "day")} ${clock}`;
+}
+
+/**
  * Human, self-verifiable form for tool output: `Mon, Jun 29 2026 at 9:38 PM EDT`.
  * 12-hour clock so "time of day" is unambiguous.
  */

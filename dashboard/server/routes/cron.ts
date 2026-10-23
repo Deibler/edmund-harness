@@ -78,6 +78,7 @@ function classify(event: string): CronJobDto["kind"] {
   if (event.startsWith("[Retry")) return "retry";
   if (event.startsWith("A sub-agent you spawned")) return "agent-done";
   if (event.startsWith("An agent team has finished")) return "team-done";
+  if (event.startsWith("Several sub-agent results arrived together")) return "agent-done";
   return "scheduled";
 }
 

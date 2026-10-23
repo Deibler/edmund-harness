@@ -104,9 +104,11 @@ export function tierForSessionKey(
 /**
  * Claude Code built-in tools a worker may not use. `Task` is always out (the
  * harness has its own agent system). Under sandboxed host access, or for any
- * guest, every filesystem and shell built-in goes too: Read is unrestricted
- * by the PreToolUse guard, which only covers writes, so an injected prompt
- * could otherwise read anything on the Mac.
+ * guest, every filesystem and shell built-in goes too. This list is the
+ * boundary: no hook limits what those tools touch (the repo's write guard
+ * never loaded for workers, which read project settings from their sandbox,
+ * and was removed), so an injected prompt holding them could read or write
+ * anything on the Mac.
  */
 export function disallowedBuiltinTools(access: HostAccess, guest: boolean): string {
   return access === "sandboxed" || guest

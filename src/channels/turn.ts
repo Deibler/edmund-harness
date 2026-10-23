@@ -45,6 +45,7 @@ import { ensurePersonFile } from "../persona/ensure.ts";
 import { ensureGroupFile } from "../persona/groups.ts";
 import { listRecentReceived } from "../persona/recent-received.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
+import type { ContactBook } from "../sessions/contacts.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
 import { type SessionKey, chatIdFromKey } from "../sessions/key.ts";
 import { isMirrorSession, isSmsSession } from "../sessions/key.ts";
@@ -171,6 +172,17 @@ export function passesGroupRegate(
 ): boolean {
   if (messages.some((m) => m.unnamedWake)) return true;
   return isAssistantMentioned([...messages.map((m) => m.text), ...transcripts].join("\n"), names);
+}
+
+/** Who wrote these messages, for the envelope's From line. */
+export function senderLabelFor(
+  messages: InboundMessage[],
+  contacts: Pick<ContactBook, "label">,
+): string {
+  const labels = messages.map(
+    (m) => contacts.label(m.fromHandle) ?? m.fromHandle ?? m.chatIdentifier,
+  );
+  return [...new Set(labels)].join(", ");
 }
 
 export async function handleBatch(
@@ -408,7 +420,7 @@ async function handleBatchInner(
   const mirrorTurn = isMirrorSession(key);
 
   const session = state.getSession(key);
-  const stale = isSessionStale(session?.lastInboundMs ?? null, config.behavior.session_idle_hours);
+  const stale = isSessionStale(session, config.behavior.session_idle_hours);
   const orchestrator = orchestratorForSession(key, config);
   const orchestratorModel =
     orchestrator && !orchestrator.builtin && orchestrator.model ? orchestrator.model : null;
@@ -435,7 +447,7 @@ async function handleBatchInner(
   // Treat a switch as cold before the envelope is built so history-on-cold
   // seeds the new CLI with the recent conversation on its very first turn.
   let claudeSessionId = stale || providerSwitch ? null : (session?.claudeSessionId ?? null);
-  const senderLabel = contacts.label(first.fromHandle) ?? first.fromHandle ?? first.chatIdentifier;
+  const senderLabel = senderLabelFor([first], contacts);
 
   // Guest-access tier, re-resolved at turn time (not just at the gate) so a
   // campaign that expired — or a kill switch flipped — while this message
@@ -883,6 +895,24 @@ async function handleBatchInner(
       embedMs: 0,
       searchMs: 0,
     };
+    // History bundle: segments the recent conversation, picks the active
+    // thread, classifies the invocation, and produces both rendered lines
+    // and a scope descriptor. Computed once per turn (iter==0 only — coalesce
+    // turns ride the same `claude --resume` session and already have the
+    // prior turn's history in their conversation context).
+    const historyBundle =
+      iter === 0 && !isMirrorSession(key)
+        ? buildHistoryBundle(
+            first,
+            cleaned,
+            coldStart,
+            isGroup,
+            session?.lastOutboundMs ?? 0,
+            deps,
+            key,
+          )
+        : { lines: [], scope: undefined, invocation: undefined, catchUpNudge: undefined };
+
     // Guest tiers get conversation-scoped memory ONLY — no semantic recall
     // over the operator's message history, however chat-scoped the query.
     const autoRecallFn = iter === 0 && !guest ? deps.autoRecall : undefined;
@@ -896,7 +926,13 @@ async function handleBatchInner(
           if (queryText.length === 0) return EMPTY_RECALL;
           try {
             const senderForRecall = isGroup ? (first.fromHandle ?? null) : null;
-            return await autoRecallFn(first.chatGuid, queryText, senderForRecall, key);
+            return await autoRecallFn(
+              first.chatGuid,
+              queryText,
+              senderForRecall,
+              key,
+              historyBundle.shownSinceMs,
+            );
           } catch (err) {
             console.warn(`[recall] auto-recall failed: ${(err as Error).message}`);
             return EMPTY_RECALL;
@@ -1002,24 +1038,6 @@ async function handleBatchInner(
       }
     }
 
-    // History bundle: segments the recent conversation, picks the active
-    // thread, classifies the invocation, and produces both rendered lines
-    // and a scope descriptor. Computed once per turn (iter==0 only — coalesce
-    // turns ride the same `claude --resume` session and already have the
-    // prior turn's history in their conversation context).
-    const historyBundle =
-      iter === 0 && !isMirrorSession(key)
-        ? buildHistoryBundle(
-            first,
-            cleaned,
-            coldStart,
-            isGroup,
-            session?.lastOutboundMs ?? 0,
-            deps,
-            key,
-          )
-        : { lines: [], scope: undefined, invocation: undefined, catchUpNudge: undefined };
-
     // Auto-recall results: awaited here but kicked off in parallel with the
     // attachments/transcription/links fan-out above. By the time we reach
     // this point the embed has usually already resolved.
@@ -1038,7 +1056,9 @@ async function handleBatchInner(
 
     const baseEnvelope = buildEnvelope({
       messages: cleaned,
-      senderLabel,
+      // This iteration's writers: a folded follow-up in a group is often
+      // someone else, and was labelled as the turn's first sender.
+      senderLabel: senderLabelFor(cleaned, contacts),
       lastInboundMs: session?.lastInboundMs ?? null,
       isGroup,
       pendingAttachments: pendingAttachments.length,

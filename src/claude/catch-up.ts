@@ -117,7 +117,8 @@ export async function runCatchUp(args: CatchUpArgs): Promise<CatchUpResult> {
   const prompt = buildPrompt(tagged, imagePathBlock, args.sinceMs, untilMs, trimmed.length);
 
   const res = await runModelOneShot({
-    args: ["--model", DEFAULT_MODEL, "--permission-mode", "bypassPermissions"],
+    // Read is the one built-in it uses: the attachment lines above.
+    args: ["--model", DEFAULT_MODEL, "--permission-mode", "bypassPermissions", "--tools", "Read"],
     input: prompt,
     timeoutMs: MAX_WAIT_MS,
   });

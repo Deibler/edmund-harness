@@ -85,6 +85,11 @@ export type AutoRecallOptions = {
   selfNames?: readonly string[];
   /** Drop hits younger than this many ms (already in recent-thread window). */
   excludeRecentMs: number;
+  /** Absolute boundary that takes the place of `excludeRecentMs`: hits at
+   *  or after it are left out. A group turn passes where its shown thread
+   *  starts. Absolute, because a duration measured before the embed lands
+   *  later by the embed's latency and lets the first shown line back in. */
+  excludeFromMs?: number;
   /** Optional: drop any hit whose ref is in this set (avoid dupes). */
   excludeRefs?: Set<string>;
   /** Boundary in days for the recent/deep split. Hits within this window
@@ -179,7 +184,8 @@ export async function autoRecall(
   const searchStart = Date.now();
 
   const now = Date.now();
-  const excludeCutoff = opts.excludeRecentMs > 0 ? now - opts.excludeRecentMs : 0;
+  const excludeCutoff =
+    opts.excludeFromMs ?? (opts.excludeRecentMs > 0 ? now - opts.excludeRecentMs : 0);
   const splitMs =
     opts.deepSplitDays && opts.deepSplitDays > 0 ? now - opts.deepSplitDays * 86_400_000 : 0;
   const deepLimit = opts.deepLimit ?? 0;
@@ -200,6 +206,7 @@ export async function autoRecall(
       scope: { kind: "this-chat", chatGuid: opts.chatGuid },
       rowKinds: RECALL_KINDS,
       queryText: text,
+      sparseRescue: false,
       // Over-fetch so excludeRefs / senderInChat dedup post-filters
       // can't starve the block below `limit`.
       limit: opts.limit + excludeAllowance + (opts.senderLimit ?? 0),
@@ -234,6 +241,7 @@ export async function autoRecall(
         scope: { kind: "this-chat", chatGuid: opts.chatGuid },
         rowKinds: RECALL_KINDS,
         queryText: text,
+        sparseRescue: false,
         limit:
           deepLimit +
           Math.min(opts.excludeRefs?.size ?? 0, 3 * deepLimit) +
@@ -268,6 +276,7 @@ export async function autoRecall(
           scope: { kind: "global" },
           rowKinds: ["self-file"],
           queryText: text,
+          sparseRescue: false,
           limit: SELF_RECALL_LIMIT + Math.min(opts.excludeRefs?.size ?? 0, 3 * SELF_RECALL_LIMIT),
           minScore: opts.minScore,
           nowMs: now,
@@ -298,6 +307,7 @@ export async function autoRecall(
         senderFilter: opts.senderHandle,
         rowKinds: ["message"],
         queryText: text,
+        sparseRescue: false,
         limit: senderLimit + Math.min(opts.excludeRefs?.size ?? 0, 3 * senderLimit),
         minScore: opts.minScore,
         untilMs: excludeCutoff > 0 ? excludeCutoff : undefined,
@@ -355,6 +365,7 @@ export async function autoRecall(
         scope: { kind: "global" },
         rowKinds: ["skill"],
         queryText: text,
+        sparseRescue: false,
         limit: SKILL_SUGGEST_LIMIT,
         minScore: Math.max(opts.minScore, SKILL_MIN_SCORE),
         nowMs: now,

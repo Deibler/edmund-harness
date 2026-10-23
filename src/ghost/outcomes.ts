@@ -1,8 +1,11 @@
 import type { ChatDb } from "../imessage/db.ts";
 import { stripAssocPrefix, tapbackGlyph } from "../imessage/reactions.ts";
+import type { ContactBook } from "../sessions/contacts.ts";
 import type { SessionKey } from "../sessions/key.ts";
+import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { log, shortSession } from "../util/log.ts";
+import { SELF_ONLY_CONTACTS } from "./landed.ts";
 import type { GhostPrefsStore } from "./prefs.ts";
 
 /**
@@ -58,12 +61,14 @@ export function classifyOutcome(args: {
   return null;
 }
 
-const FIRST_INBOUND_SQL = `
+const IN_GUIDS = (n: number) => `c.guid IN (${Array(n).fill("?").join(",")})`;
+
+const FIRST_INBOUND_SQL = (n: number) => `
   SELECT ((m.date / 1000000) + 978307200000) AS ts_ms
   FROM message m
   JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
   JOIN chat c                ON c.ROWID = cmj.chat_id
-  WHERE c.guid = ?
+  WHERE ${IN_GUIDS(n)}
     AND m.is_from_me = 0
     AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
     AND ((m.date / 1000000) + 978307200000) > ?
@@ -75,11 +80,10 @@ const FIRST_INBOUND_SQL = `
 // (Reaction POLARITY becomes its own signal in the Phase-5 `reacted`
 // outcome; here they must simply not masquerade as a reply.)
 
-function firstInboundAfter(chatDb: ChatDb, chatGuid: string, sinceMs: number): number | null {
-  const row = chatDb.query<{ ts_ms: number }>(FIRST_INBOUND_SQL).get(chatGuid, sinceMs) as
-    | { ts_ms: number }
-    | null
-    | undefined;
+function firstInboundAfter(chatDb: ChatDb, chatGuids: string[], sinceMs: number): number | null {
+  const row = chatDb
+    .query<{ ts_ms: number }>(FIRST_INBOUND_SQL(chatGuids.length))
+    .get(...chatGuids, sinceMs) as { ts_ms: number } | null | undefined;
   return row?.ts_ms ?? null;
 }
 
@@ -87,14 +91,14 @@ function firstInboundAfter(chatDb: ChatDb, chatGuid: string, sinceMs: number): n
 // custom stickers excluded) in the chat after the fire. The target must
 // be one of the BOT's messages — a tapback on their own or a third
 // party's message is not feedback on the proactive move.
-const FIRST_REACTION_SQL = `
+const FIRST_REACTION_SQL = (n: number) => `
   SELECT r.associated_message_guid AS assoc,
          r.associated_message_type AS type,
          ((r.date / 1000000) + 978307200000) AS ts_ms
   FROM message r
   JOIN chat_message_join cmj ON cmj.message_id = r.ROWID
   JOIN chat c                ON c.ROWID = cmj.chat_id
-  WHERE c.guid = ?
+  WHERE ${IN_GUIDS(n)}
     AND r.is_from_me = 0
     AND r.associated_message_type BETWEEN 2000 AND 2005
     AND r.associated_message_guid IS NOT NULL
@@ -106,12 +110,12 @@ const TARGET_FROM_ME_SQL = "SELECT is_from_me AS from_me FROM message WHERE guid
 
 function firstReactionAfter(
   chatDb: ChatDb,
-  chatGuid: string,
+  chatGuids: string[],
   sinceMs: number,
 ): { atMs: number; glyph: string } | null {
   const rows = chatDb
-    .query<{ assoc: string; type: number; ts_ms: number }>(FIRST_REACTION_SQL)
-    .all(chatGuid, sinceMs) as Array<{ assoc: string; type: number; ts_ms: number }>;
+    .query<{ assoc: string; type: number; ts_ms: number }>(FIRST_REACTION_SQL(chatGuids.length))
+    .all(...chatGuids, sinceMs) as Array<{ assoc: string; type: number; ts_ms: number }>;
   for (const r of rows) {
     const target = chatDb
       .query<{ from_me: number }>(TARGET_FROM_ME_SQL)
@@ -127,6 +131,8 @@ export type OutcomeSweepDeps = {
   prefs: GhostPrefsStore;
   chatDb: ChatDb;
   state: StateStore;
+  /** Joins a person's phone and email, so a reply from either counts. */
+  contacts?: ContactBook;
 };
 
 /** Stamp outcomes on pending fires. Cheap — runs over fires with
@@ -136,8 +142,17 @@ export function sweepFireOutcomes(deps: OutcomeSweepDeps, nowMs: number = Date.n
     try {
       const session = deps.state.getSession(fire.sessionKey as SessionKey);
       if (!session) continue;
-      const firstInboundMs = firstInboundAfter(deps.chatDb, session.chatGuid, fire.firedAtMs);
-      const firstReaction = firstReactionAfter(deps.chatDb, session.chatGuid, fire.firedAtMs);
+      // Every chat row the person reaches Edmund through. One address can own
+      // two (plain and e:/p:-prefixed), and a reply in the one the session
+      // did not record read as no reply: ignored, where it had engaged.
+      const found = chatGuidsForSession(
+        fire.sessionKey as SessionKey,
+        deps.chatDb,
+        deps.contacts ?? SELF_ONLY_CONTACTS,
+      );
+      const guids = found.length > 0 ? found : [session.chatGuid];
+      const firstInboundMs = firstInboundAfter(deps.chatDb, guids, fire.firedAtMs);
+      const firstReaction = firstReactionAfter(deps.chatDb, guids, fire.firedAtMs);
       const verdict = classifyOutcome({
         firedAtMs: fire.firedAtMs,
         firstInboundMs,

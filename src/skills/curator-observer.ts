@@ -131,12 +131,18 @@ export class SkillCurator {
 
       const curated = await runCurator(this.deps);
       // Stamp the clock on any pass that actually reached the model, so a run
-      // producing nothing still costs a full interval before the next. Only a
-      // pass blocked before doing work leaves the clock alone.
-      if (curated.ran) {
+      // producing nothing still costs a full interval before the next. A pass
+      // stopped by the ceiling stamps it too: the lifecycle above was the work
+      // that pass could do, and the ceiling is a steady state, not a hiccup.
+      // Leaving the clock alone there re-ran the whole pass every hour once
+      // the catalogue filled (from 2026-10-22). Only a pass blocked before
+      // doing work for a passing reason leaves the clock alone.
+      if (curated.ran || curated.atCeiling) {
         writeCuratorState(this.deps.dataDir, {
           last_run_ms: (this.deps.now ?? Date.now)(),
-          last_created: curated.created,
+          last_created: curated.ran
+            ? curated.created
+            : readCuratorState(this.deps.dataDir).last_created,
         });
       }
       return { curated, lifecycle };

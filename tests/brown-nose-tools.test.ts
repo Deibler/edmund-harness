@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 /**
  * Tests for the brown-nose MCP tools. Each test constructs a fake
  * ToolContext pointed at a temp data dir + sandbox, invokes the tool
@@ -14,6 +15,7 @@ import { join } from "node:path";
 import { BgJobStore } from "../src/background/store.ts";
 import { loadConfig } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
+import { checkCooldown, cooldownEndsAtMs } from "../src/ghost/budget.ts";
 import { DEFAULT_ACTIVE_HOURS_DM, GhostPrefsStore } from "../src/ghost/prefs.ts";
 import { ChatDb } from "../src/imessage/db.ts";
 import type { ToolContext } from "../src/mcp/context.ts";
@@ -21,6 +23,7 @@ import { brownNoseTools } from "../src/mcp/tools/brown-nose.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import type { SessionKey } from "../src/sessions/key.ts";
+import { describeEastern } from "../src/util/clock.ts";
 import { emptyChatDb } from "./helpers/chat-db.ts";
 
 const JORDAN: SessionKey = "imessage:dm:+19995550042" as SessionKey;
@@ -217,6 +220,73 @@ describe("ghost_status + query_ghost", () => {
       expect(res.content[0]!.text).toContain("weekly cap: 4");
       expect(res.content[0]!.text).toContain("intensity");
     } finally {
+      cleanup();
+    }
+  });
+
+  test("ghost_status counts a cooldown only from a fire that reached them", async () => {
+    const { ctx, prefs, cleanup } = setup();
+    // A readable chat for this DM: with none, a vetoed fire counts as sent.
+    const db = emptyChatDb();
+    const w = new Database(db.path);
+    w.exec("ALTER TABLE chat ADD COLUMN style INTEGER");
+    w.exec(
+      "INSERT INTO chat (ROWID, guid, chat_identifier, style) VALUES (1, 'any;-;+19995550042', '+19995550042', 45)",
+    );
+    w.exec("INSERT INTO handle (ROWID, id, service) VALUES (1, '+19995550042', 'iMessage')");
+    w.exec("INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (1, 1)");
+    w.close();
+    ctx.chatDb = new ChatDb(db.path);
+    try {
+      await findTool(ctx, "set_brown_nose").handler({ enabled: true });
+      const status = async () =>
+        ((await findTool(ctx, "ghost_status").handler({})) as { content: Array<{ text: string }> })
+          .content[0]!.text;
+      const vetoed = prefs.recordFire({
+        sessionKey: JORDAN,
+        firedAtMs: Date.now() - 60_000,
+        brief: "x",
+        tags: [],
+      });
+      prefs.recordOutcome(vetoed, "vetoed");
+      expect(await status()).toContain("(now — no active cooldown)");
+      // The same vetoed fire, but chat.db shows Edmund's message landed.
+      const w2 = new Database(db.path);
+      const dateNs = (Date.now() - 50_000 - 978_307_200_000) * 1_000_000;
+      w2.exec(
+        `INSERT INTO message (ROWID, guid, text, handle_id, is_from_me, date) VALUES (1, 'G1', 'hey', 0, 1, ${dateNs})`,
+      );
+      w2.exec("INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, 1)");
+      w2.close();
+      expect(await status()).not.toContain("no active cooldown");
+      const sent = prefs.recordFire({
+        sessionKey: JORDAN,
+        firedAtMs: Date.now() - 30_000,
+        brief: "y",
+        tags: [],
+      });
+      prefs.markDelivered(sent);
+      const after = await status();
+      expect(after).not.toContain("no active cooldown");
+      expect(after).toMatch(/next eligible: \w{3}, \w{3} \d+ \d{4} at .* E[SD]T/);
+      // The same end the gate enforces, jitter included.
+      const endsAt = cooldownEndsAtMs(
+        prefs.get(JORDAN)!,
+        prefs.recentFires(JORDAN, 20),
+        ctx.config.brown_nose.intensity,
+        Date.now(),
+      )!;
+      expect(after).toContain(`next eligible: ${describeEastern(new Date(endsAt))}`);
+      const gate = checkCooldown(
+        prefs.get(JORDAN)!,
+        prefs.recentFires(JORDAN, 20),
+        ctx.config.brown_nose.intensity,
+        endsAt - 60_000,
+      );
+      expect(gate.ok).toBe(false);
+    } finally {
+      ctx.chatDb.close();
+      db.cleanup();
       cleanup();
     }
   });

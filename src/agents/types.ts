@@ -25,6 +25,20 @@ export type Agent = {
   teamId: string | null;
   role: string | null;
   deliveredAt: number | null;
+  /** Last time the runner saw its CLI produce output. */
+  heartbeatAt: number | null;
+  /** Why the run ended early (reaped, canceled), when it did. */
+  stopReason: string | null;
+};
+
+/** When the daemon's reaper stops an agent. */
+export type AgentLimits = {
+  /** Never reached `running`: the runner did not start. */
+  pendingStaleMs: number;
+  /** Running with no CLI output for this long. */
+  idleMs: number;
+  /** Running this long, output or not. */
+  maxRunMs: number;
 };
 
 export type AgentInput = {

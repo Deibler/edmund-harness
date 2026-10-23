@@ -4,6 +4,7 @@ import type { AgentStore } from "../agents/store.ts";
 import type { OperatorAlert } from "../alerts/operator-alert.ts";
 import { reapStuckBgJobs } from "../background/reaper.ts";
 import type { BgJobStore } from "../background/store.ts";
+import { toolEnv } from "../claude/mcp-config.ts";
 import type { Config } from "../config/config.ts";
 import type { CronStore } from "../cron/store.ts";
 import type { RecentThread } from "../cron/wake-thread.ts";
@@ -157,9 +158,11 @@ export function wireRecovery(args: {
 
   const reaperInterval = setInterval(() => {
     try {
-      reapStuckAgents(agentStore, crons, {
-        pendingStaleMs: 60_000,
-        runningStaleMs: 15 * 60 * 1000,
+      // A follow-on stage the reaper spawns starts from the env an MCP
+      // child of that parent would have: the daemon's own lacks the agent
+      // model, plugins and host-access policy.
+      reapStuckAgents(agentStore, crons, config.paths.data_dir, {
+        launchEnv: (parentKey, parentSandbox) => toolEnv(config, parentKey, parentSandbox),
       });
     } catch (err) {
       console.error("[reaper] agents error", err);

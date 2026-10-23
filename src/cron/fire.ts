@@ -13,6 +13,7 @@ import { chatIdFromKey, isGroupSession } from "../sessions/key.ts";
 import type { SessionLocks } from "../sessions/locks.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { recordSpend, resumedRunSpend } from "../spend/ledger.ts";
+import { envelopeStamp } from "../util/clock.ts";
 import { humanMs, log, snippet } from "../util/log.ts";
 import { inboundRetryAlreadyAnswered } from "./retry-marker.ts";
 import type { CronStore } from "./store.ts";
@@ -139,7 +140,7 @@ async function runAndDeliver(
   const latenessNote = latenessMs > 90_000 ? ` · ${Math.round(latenessMs / 60_000)}m late` : "";
   const thread = wakeThreadBlock(job.sessionKey, chatGuid, config, state, recentThread);
   const envelope = [
-    `[Scheduled event · scheduled=${new Date(job.nextFireMs).toISOString()} fired=${new Date(now).toISOString()}${latenessNote}]`,
+    scheduledEventHeader(job.nextFireMs, now, latenessNote),
     "",
     job.systemEvent,
     ...(thread ? ["", thread] : []),
@@ -288,6 +289,7 @@ function classifyEvent(systemEvent: string): string {
   if (systemEvent.startsWith("[Retry")) return "retry";
   if (systemEvent.startsWith("A sub-agent you spawned")) return "agent-done";
   if (systemEvent.startsWith("An agent team has finished")) return "team-done";
+  if (systemEvent.startsWith("Several sub-agent results arrived together")) return "agent-done";
   if (systemEvent.startsWith("Background tool job")) return "bg-job-done";
   if (systemEvent.startsWith("[System recovery check")) return "recovery";
   return "scheduled";
@@ -335,4 +337,18 @@ function parseRetryMeta(systemEvent: string): { attempt: number; base: string } 
   const m = systemEvent.match(/^\[Retry (\d+)\/\d+\]\s+([\s\S]*)$/);
   if (!m || !m[1] || !m[2]) return { attempt: 0, base: systemEvent };
   return { attempt: Number.parseInt(m[1], 10), base: m[2] };
+}
+
+/**
+ * The first line of a scheduled event's envelope. Times are in the home zone,
+ * stamped like every inbound message: they were UTC ISO, so a reminder firing
+ * after 8pm Eastern (16% of fires) carried tomorrow's date beside a model that
+ * reads every other time in Eastern.
+ */
+export function scheduledEventHeader(
+  scheduledMs: number,
+  firedMs: number,
+  latenessNote: string,
+): string {
+  return `[Scheduled event · scheduled=${envelopeStamp(new Date(scheduledMs))} fired=${envelopeStamp(new Date(firedMs))}${latenessNote}]`;
 }

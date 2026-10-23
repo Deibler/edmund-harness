@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openDb } from "../db/open.ts";
 import { genId } from "../util/ids.ts";
-import type { Agent, AgentInput, AgentStatus } from "./types.ts";
+import type { Agent, AgentInput, AgentLimits, AgentStatus } from "./types.ts";
 
 /**
  * SQLite-backed store for sub-agents. Mirrors the cron/store.ts pattern so
@@ -46,6 +46,26 @@ export class AgentStore {
     } catch {
       // Column already exists.
     }
+    // Liveness: the runner stamps this on its CLI's output, so the reaper can
+    // tell a quiet agent from a working one. Before it existed the reaper
+    // went by age alone and killed 33 of 35 agents mid-work.
+    try {
+      this.db.exec("ALTER TABLE agents ADD COLUMN heartbeat_at INTEGER");
+    } catch {
+      // Column already exists.
+    }
+    // Why a run ended early (reaped, canceled), for the partial result and
+    // for check_agent.
+    try {
+      this.db.exec("ALTER TABLE agents ADD COLUMN stop_reason TEXT");
+    } catch {
+      // Column already exists.
+    }
+    // One row per team whose team-done event went out: the claim that keeps
+    // two members settling at the same moment from waking the parent twice.
+    this.db.exec(
+      "CREATE TABLE IF NOT EXISTS team_done (team_id TEXT PRIMARY KEY, fired_at INTEGER NOT NULL)",
+    );
   }
 
   create(
@@ -67,6 +87,8 @@ export class AgentStore {
       teamId: input.teamId ?? null,
       role: input.role ?? null,
       deliveredAt: null,
+      heartbeatAt: null,
+      stopReason: null,
     };
     this.db
       .query(
@@ -120,14 +142,71 @@ export class AgentStore {
     return (rows as RawRow[]).map(rowToAgent);
   }
 
-  setRunning(id: string, pid: number): void {
-    this.db.query("UPDATE agents SET status='running', pid=? WHERE id=?").run(pid, id);
+  /**
+   * pending → running, for the runner that is starting. False when the row
+   * was already settled (a slow start the reaper gave up on, or a cancel):
+   * that runner must not start the model.
+   */
+  claimRunning(id: string, pid: number): boolean {
+    const res = this.db
+      .query("UPDATE agents SET status='running', pid=? WHERE id=? AND status='pending'")
+      .run(pid, id);
+    return Number(res.changes ?? 0) > 0;
   }
 
-  finish(id: string, status: AgentStatus, exitCode: number | null): void {
-    this.db
-      .query("UPDATE agents SET status=?, finished_at=?, exit_code=?, pid=NULL WHERE id=?")
-      .run(status, Date.now(), exitCode, id);
+  /** The runner saw its CLI produce output. */
+  heartbeat(id: string, atMs = Date.now()): void {
+    this.db.query("UPDATE agents SET heartbeat_at=? WHERE id=? AND status='running'").run(atMs, id);
+  }
+
+  /**
+   * Settle an agent that is still pending or running. The runner's exit, its
+   * SIGTERM handler, the reaper, a spawn failure and the cancel paths can all
+   * reach the same row at the same moment; only the caller that gets a
+   * result notifies the parent, so one agent never wakes it twice.
+   *
+   * Returns the pid the row held when it was settled: the process to stop. A
+   * pid read before this call can be stale (a pending row claimed by its
+   * runner in between has no pid in the earlier read). `onlyFrom` settles
+   * only from the status the caller judged: the reaper's "never started"
+   * must not land on a runner that has just started.
+   */
+  finishIfActive(
+    id: string,
+    status: AgentStatus,
+    exitCode: number | null,
+    stopReason: string | null = null,
+    onlyFrom?: AgentStatus,
+  ): { pid: number | null; from: AgentStatus } | null {
+    return this.immediate(() => {
+      const row = this.db.query("SELECT status, pid FROM agents WHERE id=?").get(id) as {
+        status: AgentStatus;
+        pid: number | null;
+      } | null;
+      if (!row || (row.status !== "pending" && row.status !== "running")) return null;
+      if (onlyFrom && row.status !== onlyFrom) return null;
+      this.db
+        .query(
+          `UPDATE agents SET status=?, finished_at=?, exit_code=?, pid=NULL,
+             stop_reason=COALESCE(?, stop_reason)
+           WHERE id=?`,
+        )
+        .run(status, Date.now(), exitCode, stopReason, id);
+      return { pid: row.pid, from: row.status };
+    });
+  }
+
+  /**
+   * Run `fn` in one IMMEDIATE transaction: the write lock is taken up front,
+   * so a decision read inside it holds until it commits, against runners in
+   * other processes too.
+   */
+  immediate<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
+  }
+
+  close(): void {
+    this.db.close();
   }
 
   /** CLI-reported spend for this agent's run (from its result event). */
@@ -140,32 +219,30 @@ export class AgentStore {
   }
 
   /**
-   * Marks stuck team members as failed so a partially-spawned team can
-   * still settle. Two thresholds because the failure modes differ:
-   *   - `pendingStaleMs` — a member that never transitioned to `running`
-   *     almost certainly had a spawn failure (bun launch failed, runner
-   *     crashed before `setRunning`). Use a short threshold (~60s).
-   *   - `runningStaleMs` — a member that reached `running` but never
-   *     exited. Use a generous threshold (task timeout), e.g. 15 min.
-   *
-   * Returns the number of rows reaped.
+   * Team members that never started (spawn failure, runner crashed before
+   * claiming) settle as failed after `pendingStaleMs`, so one of them cannot
+   * hold the team open. Members that are running are the reaper's to judge,
+   * by their heartbeat: this used to fail every member older than 15
+   * minutes, working or not, without stopping it.
    */
-  teamReapZombies(
-    teamId: string,
-    opts: { pendingStaleMs: number; runningStaleMs: number },
-  ): number {
+  failStalePending(teamId: string, pendingStaleMs: number): number {
     const now = Date.now();
     const res = this.db
       .query(
-        `UPDATE agents
-         SET status='failed', finished_at=?, exit_code=NULL, pid=NULL
-         WHERE team_id=? AND (
-           (status='pending' AND spawned_at < ?)
-           OR (status='running' AND spawned_at < ?)
-         )`,
+        `UPDATE agents SET status='failed', finished_at=?, exit_code=NULL, pid=NULL,
+           stop_reason='never started'
+         WHERE team_id=? AND status='pending' AND spawned_at < ?`,
       )
-      .run(now, teamId, now - opts.pendingStaleMs, now - opts.runningStaleMs);
+      .run(now, teamId, now - pendingStaleMs);
     return Number(res.changes ?? 0);
+  }
+
+  /** True for the one caller that gets to send this team's team-done event. */
+  claimTeamDone(teamId: string): boolean {
+    const res = this.db
+      .query("INSERT OR IGNORE INTO team_done(team_id, fired_at) VALUES (?, ?)")
+      .run(teamId, Date.now());
+    return Number(res.changes ?? 0) > 0;
   }
 
   /**
@@ -182,21 +259,19 @@ export class AgentStore {
   }
 
   /**
-   * Agents stuck in pending/running past the given thresholds. Used by the
-   * daemon-level reaper to sweep zombies that aren't covered by
-   * team-internal reaping (e.g., solo agents, or teams where every member
-   * died silently so no one reaches the runner's exit hook to trigger
-   * teamReapZombies).
+   * Agents the reaper should stop: pending past `pendingStaleMs` (never
+   * started), running with no output for `idleMs`, or running past
+   * `maxRunMs` whatever they are doing. A row from before heartbeats counts
+   * its age from the spawn.
    */
-  listStuck(opts: { pendingStaleMs: number; runningStaleMs: number }): Agent[] {
-    const now = Date.now();
+  listStuck(opts: AgentLimits, now = Date.now()): Agent[] {
     const rows = this.db
       .query(
         `SELECT * FROM agents
          WHERE (status='pending' AND spawned_at < ?)
-            OR (status='running' AND spawned_at < ?)`,
+            OR (status='running' AND (COALESCE(heartbeat_at, spawned_at) < ? OR spawned_at < ?))`,
       )
-      .all(now - opts.pendingStaleMs, now - opts.runningStaleMs);
+      .all(now - opts.pendingStaleMs, now - opts.idleMs, now - opts.maxRunMs);
     return (rows as RawRow[]).map(rowToAgent);
   }
 
@@ -224,6 +299,8 @@ type RawRow = {
   team_id: string | null;
   role: string | null;
   delivered_at: number | null;
+  heartbeat_at: number | null;
+  stop_reason: string | null;
 };
 
 function rowToAgent(row: RawRow): Agent {
@@ -242,6 +319,8 @@ function rowToAgent(row: RawRow): Agent {
     teamId: row.team_id,
     role: row.role,
     deliveredAt: row.delivered_at,
+    heartbeatAt: row.heartbeat_at ?? null,
+    stopReason: row.stop_reason ?? null,
   };
 }
 

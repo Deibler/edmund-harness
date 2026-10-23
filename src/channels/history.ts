@@ -36,6 +36,13 @@ export type HistoryBundle = {
    *  messages have piled up since the model last spoke, recommend
    *  calling `catch_me_up`. */
   catchUpNudge: string | undefined;
+  /** Groups: the oldest message these lines show (the active thread's
+   *  start, or its first kept line when the thread was trimmed). Auto-recall
+   *  excludes from here rather than its fixed window: a group turn shows
+   *  only the active thread, so chatter from earlier the same day was in
+   *  neither the history nor recall (30% of group turns missed messages in
+   *  that gap, 2026-10-23). */
+  shownSinceMs?: number;
 };
 
 /**
@@ -212,13 +219,21 @@ export function buildHistoryBundle(
     );
   }
 
+  // Read from the segment itself. lastOutboundMs is stamped when the send
+  // returns, after chat.db has dated the message, so when Edmund's reply
+  // closed the segment the window test said he had never spoken: "You
+  // haven't replied in this thread yet" sat right above his own reply in 39%
+  // of group turns.
+  const lastMine = active.lines.filter((l) => l.fromMe && !l.isTapback).pop();
+  const botSpokeInActive = lastMine !== undefined;
+
   const invocation = classifyInvocation({
     inboundBatch,
     isolatedFromActive,
     activeMs: active.endMs - active.startMs,
     activeCount: fullCount,
     distinctSpeakers: countDistinctSpeakers(active.lines),
-    botSpokeInActive: lastOutboundMs >= active.startMs && lastOutboundMs <= active.endMs,
+    botSpokeInActive,
     identityNames: config.identity.names,
   });
 
@@ -228,8 +243,8 @@ export function buildHistoryBundle(
     omitted,
     isolatedFromActive,
     gapToInbound,
-    botSpokeInActive: lastOutboundMs >= active.startMs && lastOutboundMs <= active.endMs,
-    msSinceBotSpoke: lastOutboundMs > 0 ? Date.now() - lastOutboundMs : null,
+    botSpokeInActive,
+    msSinceBotSpoke: lastMine ? Date.now() - lastMine.timestampMs : null,
     distinctSpeakers: countDistinctSpeakers(active.lines),
     shifts: shifts.length,
   });
@@ -242,7 +257,14 @@ export function buildHistoryBundle(
       ? buildCatchUpNudge(sinceLastSpoke, Date.now() - lastOutboundMs)
       : undefined;
 
-  return { lines: renderedLines, scope, invocation, catchUpNudge };
+  return {
+    lines: renderedLines,
+    scope,
+    invocation,
+    catchUpNudge,
+    // Lines trimmed off the front stay findable by recall.
+    shownSinceMs: trimmed[0]?.timestampMs ?? active.startMs,
+  };
 }
 
 /**
@@ -260,16 +282,23 @@ export function recentThreadLines(
   sessionKey: SessionKey,
   chatGuid: string,
   deps: Pick<Deps, "config" | "chatDb" | "contacts" | "state" | "sms">,
+  sinceMs = 0,
 ): string[] {
   const { config, chatDb, contacts } = deps;
   const limit = config.behavior.history_messages;
   if (limit <= 0 || isMirrorSession(sessionKey) || isTradingSession(sessionKey)) return [];
   if (isSmsSession(sessionKey)) {
     if (!deps.sms) return [];
-    return formatHistoryLines(deps.sms.history(chatIdFromKey(sessionKey), limit), contacts);
+    const raw = deps.sms.history(chatIdFromKey(sessionKey), limit);
+    return formatHistoryLines(
+      raw.filter((l) => l.timestampMs > sinceMs),
+      contacts,
+    );
   }
   const visible = makeHistoryFilter(viewerForSession(sessionKey), chatGuid, config, deps.state);
-  const lines = getRecentMessages(chatDb, chatGuid, Number.MAX_SAFE_INTEGER, limit).filter(visible);
+  const lines = getRecentMessages(chatDb, chatGuid, Number.MAX_SAFE_INTEGER, limit).filter(
+    (l) => l.timestampMs > sinceMs && visible(l),
+  );
   return formatHistoryLines(lines, contacts);
 }
 
@@ -304,10 +333,11 @@ export function wakeThread(
   sessionKey: SessionKey,
   chatGuid: string,
   deps: Pick<Deps, "config" | "chatDb" | "contacts" | "state" | "sms">,
+  sinceMs?: number,
 ): WakeThread {
   return {
     participants: groupRoster(sessionKey, chatGuid, deps),
-    lines: recentThreadLines(sessionKey, chatGuid, deps),
+    lines: recentThreadLines(sessionKey, chatGuid, deps, sinceMs),
   };
 }
 

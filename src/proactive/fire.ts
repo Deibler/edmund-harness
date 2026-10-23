@@ -7,6 +7,7 @@ import type { CronStore } from "../cron/store.ts";
 import type { CronJob } from "../cron/types.ts";
 import { type RecentThread, wakeThreadBlock } from "../cron/wake-thread.ts";
 import {
+  type GateResult,
   checkActiveHours,
   checkEnabled,
   checkOutstandingFire,
@@ -14,10 +15,13 @@ import {
   nextActiveStartMs,
 } from "../ghost/budget.ts";
 import { resolveIntensity } from "../ghost/intensity.ts";
-import type { GhostPrefsStore } from "../ghost/prefs.ts";
+import { type LandingDeps, withLandingEvidence } from "../ghost/landed.ts";
+import type { BrownNosePrefs, GhostPrefsStore } from "../ghost/prefs.ts";
+import { ChatDb } from "../imessage/db.ts";
 import { compactConfigFor, reanchorCodexIfNeeded, runModel } from "../model/runner.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
 import { loadPortalSecret, portalUrl } from "../portal/token.ts";
+import { ContactBook } from "../sessions/contacts.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
 import { type SessionKey, chatIdFromKey, isGroupSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
@@ -57,6 +61,49 @@ import { getSemaphore } from "./semaphore.ts";
  * "do not send" — same as the existing outbound sanitizer's silence
  * intent handling.
  */
+
+/** Stands in for a chat.db that would not open: every read throws, so
+ *  every fire label reads as "can't tell" and counts (ghost/landed.ts). */
+const UNREADABLE_CHAT_DB = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error("chat.db unreadable");
+    },
+  },
+) as unknown as ChatDb;
+
+/**
+ * The send-time recheck: enabled, weekly cap, and one open proactive thread
+ * at a time, so a SECOND queued brief must not deliver while the first sits
+ * unanswered. The fire labels are reconciled with the chat first, as the
+ * ghost tick does: a brief queued before an earlier fire's timed-out send
+ * flushed would otherwise stack a second unprompted message into silence.
+ */
+export function fireTimeGates(args: {
+  sessionKey: SessionKey;
+  sessionPrefs: BrownNosePrefs;
+  prefs: GhostPrefsStore;
+  config: Config;
+  lastInboundMs: number;
+  nowMs: number;
+  landing: LandingDeps;
+}): GateResult {
+  const { sessionKey, sessionPrefs, prefs, nowMs } = args;
+  const enabled = checkEnabled(sessionPrefs, args.config.brown_nose.enabled);
+  if (!enabled.ok) return enabled;
+  const recentFires = withLandingEvidence(
+    prefs.recentFires(sessionKey, 10),
+    sessionKey,
+    args.landing,
+    nowMs,
+    prefs,
+  );
+  const weekFires = recentFires.filter((f) => f.firedAtMs >= nowMs - 7 * 24 * 3_600_000);
+  const cap = checkWeeklyCap(sessionPrefs, weekFires, nowMs);
+  if (!cap.ok) return cap;
+  return checkOutstandingFire(recentFires, args.lastInboundMs, nowMs);
+}
 
 export async function fireBrownNose(
   job: CronJob,
@@ -98,30 +145,41 @@ export async function fireBrownNose(
     sessionPrefs.weeklyCap,
     resolveIntensity(config.brown_nose.intensity).weeklyCap,
   );
-  const recentFires = prefs.recentFires(sessionKey, 10);
-  const weekAgo = nowMs - 7 * 24 * 3_600_000;
-  const weekFires = recentFires.filter((f) => f.firedAtMs >= weekAgo);
   // Individual gates (cooldown deliberately skipped — see header), because
   // the right reaction differs per gate: enabled/cap failures are terminal
   // for this brief, but an active-hours miss just means "not right now" —
   // defer to the window opening instead of dropping. Dropping here is how
   // the only organic fire ever queued was lost (scheduled 8:07, window
   // opened 9:00).
-  const enabledGate = checkEnabled(sessionPrefs, config.brown_nose.enabled);
-  const capGate = checkWeeklyCap(sessionPrefs, weekFires);
-  // One open proactive thread at a time, re-checked at fire time: a
-  // SECOND queued brief must not deliver while the first sits unanswered.
-  const session0 = state.getSession(sessionKey);
-  const outstandingGate = checkOutstandingFire(recentFires, session0?.lastInboundMs ?? 0);
-  for (const gate of [enabledGate, capGate, outstandingGate]) {
-    if (!gate.ok) {
-      log.info("brown-nose-fire", "budget rejected at fire time, dropping", {
-        job: job.id,
-        session: sessionKey,
-        reason: gate.reason,
-      });
-      return;
-    }
+  let chatDb: ChatDb | undefined;
+  try {
+    chatDb = new ChatDb(config.paths.chat_db);
+  } catch (err) {
+    log.warn("brown-nose-fire", "chat.db unreadable at fire time; fire labels count as sent", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  let gate: GateResult;
+  try {
+    gate = fireTimeGates({
+      sessionKey,
+      sessionPrefs,
+      prefs,
+      config,
+      lastInboundMs: state.getSession(sessionKey)?.lastInboundMs ?? 0,
+      nowMs,
+      landing: { chatDb: chatDb ?? UNREADABLE_CHAT_DB, contacts: new ContactBook(config.contacts) },
+    });
+  } finally {
+    chatDb?.close();
+  }
+  if (!gate.ok) {
+    log.info("brown-nose-fire", "budget rejected at fire time, dropping", {
+      job: job.id,
+      session: sessionKey,
+      reason: gate.reason,
+    });
+    return;
   }
   const hoursGate = checkActiveHours(sessionPrefs, nowMs);
   if (!hoursGate.ok) {

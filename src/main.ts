@@ -56,7 +56,7 @@ import {
 } from "./imessage/bridge/index.ts";
 import { ChatDb } from "./imessage/db.ts";
 import { decodeMessageText } from "./imessage/decode.ts";
-import { getGroupParticipants } from "./imessage/participants.ts";
+import { dmChatGuid, getGroupParticipants } from "./imessage/participants.ts";
 import { configureSendVerification } from "./imessage/send.ts";
 import type { InboundMessage } from "./imessage/types.ts";
 import { startWatcher } from "./imessage/watcher.ts";
@@ -163,6 +163,8 @@ async function main() {
   // Keep the per-message routing record bounded — 30 days is well beyond the
   // recovery look-back window, so older rows can never affect a recovery decision.
   state.pruneRouting(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const repairedGuids = state.repairDmChatGuids((handle) => dmChatGuid(chatDb, handle));
+  if (repairedGuids > 0) console.log(`[boot] repaired ${repairedGuids} DM chat guid(s)`);
   const crons = new CronStore(config.paths.data_dir);
   const addressBook = new AddressBook();
   const contacts = new ContactBook(
@@ -251,7 +253,7 @@ async function main() {
   const outcomeSweep = setInterval(
     () => {
       try {
-        sweepFireOutcomes({ prefs: ghostPrefs, chatDb, state });
+        sweepFireOutcomes({ prefs: ghostPrefs, chatDb, state, contacts });
       } catch (err) {
         console.error("[brown-nose-outcome] sweep failed", err);
       }
@@ -273,6 +275,7 @@ async function main() {
     dbPath: resolve(config.paths.data_dir, config.skills_marketplace.installed_db),
     consentDbPath: resolve(config.paths.data_dir, config.public_skills.consent_db),
     contacts,
+    chatDb,
   });
   skillCurator.start();
   const alertStore = new AlertStore(config.paths.data_dir);
@@ -352,7 +355,7 @@ async function main() {
   // is missing or empty, the daemon still starts — but the warning lines in
   // daemon.log let the operator spot it before the first conversation goes
   // sideways ("why is Edmund ignoring his persona?").
-  const loadout = checkLoadout(config.claude.model);
+  const loadout = checkLoadout(config.claude.model, config.claude.agent_model);
   console.log(formatLoadoutReport(loadout));
 
   const activeSessions = new Set<SessionKey>();
@@ -591,8 +594,8 @@ async function main() {
   const scheduler = new Scheduler({
     store: crons,
     onFire: (job) =>
-      fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs, (key, guid) =>
-        wakeThread(key, guid, deps),
+      fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs, (key, guid, sinceMs) =>
+        wakeThread(key, guid, deps, sinceMs),
       ),
   });
   scheduler.start();
@@ -919,7 +922,7 @@ async function main() {
       agentStore,
       bgJobStore,
       activeSessions,
-      recentThread: (key, guid) => wakeThread(key, guid, deps),
+      recentThread: (key, guid, sinceMs) => wakeThread(key, guid, deps, sinceMs),
     });
   };
   if (catchUp) void catchUp.drained.then(startRecovery);

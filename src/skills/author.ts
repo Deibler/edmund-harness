@@ -102,6 +102,10 @@ export type UpdateInput = {
   extraFiles: SkillFile[];
   /** Caller's session key — must match the skill's scope unless scope is null. */
   sessionKey: string;
+  /** The curator's own review may rewrite a CURATED skill. Nothing else may:
+   *  a curated skill has no owning chat, so without this flag the ownership
+   *  checks below would let any conversation edit one. */
+  curatedReview?: boolean;
   /** Consent store. Editing a PUBLISHED skill revokes every consent given to
    *  it: people agreed to the skill they were told about, not to whatever it
    *  is rewritten into afterwards. Omit for skills that cannot be public. */
@@ -116,7 +120,8 @@ export function updateAuthoredSkill(input: UpdateInput): AuthorResult {
   const db = readDb(opts.dbPath);
   const record = db.skills[name];
   if (!record) return { ok: false, reason: `not a managed skill: ${name}` };
-  if (record.source !== SELF_SOURCE) {
+  const reviewingCurated = input.curatedReview === true && categoryOf(record) === "curated";
+  if (record.source !== SELF_SOURCE && !reviewingCurated) {
     return {
       ok: false,
       reason: `${name} came from ${record.source} — only self-authored skills can be edited`,

@@ -1,5 +1,6 @@
 import type { HistoryLine } from "../imessage/history.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
+import { historyStamp } from "../util/clock.ts";
 
 /**
  * Render recent messages for the envelope header.
@@ -43,7 +44,7 @@ export function formatHistoryLines(
           ? ` (reacting to ${contacts.label(l.tapbackTargetHandle) ?? l.tapbackTargetHandle}'s message, not yours)`
           : ""
       : "";
-    out.push(`  [${who} · ${shortTime(l.timestampMs)}] ${l.text}${aimed}`);
+    out.push(`  [${who} · ${historyStamp(l.timestampMs)}] ${l.text}${aimed}`);
   }
   return out;
 }
@@ -59,14 +60,6 @@ export function formatParticipantList(handles: string[], contacts: ContactBook):
     out.push(name);
   }
   return out;
-}
-
-function shortTime(ms: number): string {
-  const d = new Date(ms);
-  const day = d.toLocaleDateString("en-US", { weekday: "short" });
-  const hh = d.getHours().toString().padStart(2, "0");
-  const mm = d.getMinutes().toString().padStart(2, "0");
-  return `${day} ${hh}:${mm}`;
 }
 
 function formatGap(ms: number): string {

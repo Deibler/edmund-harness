@@ -75,7 +75,7 @@ describe("consolidation trigger", () => {
 
   test("fires only once enough has accumulated since the last pass", () => {
     const fresh = `${renderPrinciples([{ rule: "some standing rule", evidence: [] }], 3)}\n${file}`;
-    expect(shouldConsolidate(fresh)).toBeFalse();
+    expect(shouldConsolidate(fresh, 0)).toBeFalse();
     const grown = [
       renderPrinciples([{ rule: "some standing rule", evidence: [] }], 3),
       ...Array.from(
@@ -83,7 +83,7 @@ describe("consolidation trigger", () => {
         (_, i) => `- **2026-08-${String((i % 28) + 1).padStart(2, "0")}** — obs ${i}`,
       ),
     ].join("\n");
-    expect(shouldConsolidate(grown)).toBeTrue();
+    expect(shouldConsolidate(grown, 0)).toBeTrue();
   });
 });
 
@@ -98,9 +98,13 @@ describe("consolidation output", () => {
     expect(r!.revised).toBe("merged two");
   });
 
-  test("an empty or unparseable result does not overwrite standing principles", () => {
+  test("an unparseable result is nothing; an empty list is an answer", () => {
     expect(parseConsolidation("not json")).toBeNull();
-    expect(parseConsolidation('{"principles":[]}')).toBeNull();
+    // The prompt allows "none". It is recorded (consolidatePerson keeps the
+    // standing rules and stamps), or the pass reruns on every maintainer run.
+    expect(parseConsolidation('{"principles":[]}')).toEqual({ principles: [], revised: "" });
+    // A list whose every entry is malformed is still garbage.
+    expect(parseConsolidation('{"principles":[{"rule":"x"}]}')).toBeNull();
   });
 
   test("the prompt asks for rejections, not just what works", () => {

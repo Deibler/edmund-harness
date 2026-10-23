@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { agentModelProblem } from "../agents/spawn.ts";
 import { codexCompatibilityWarning } from "../codex/executable.ts";
 import { backendForModel } from "../model/backend.ts";
 import { skillDirectories } from "../skills/paths.ts";
@@ -39,17 +40,29 @@ export type LoadoutReport = {
   warnings: string[];
 };
 
-export function checkLoadout(model?: string): LoadoutReport {
+function backendWarning(model: string, label: string): string | null {
+  if (backendForModel(model) === "codex") {
+    const warning = codexCompatibilityWarning();
+    return warning ? `${warning} for ${label} ${JSON.stringify(model)}` : null;
+  }
+  return findBin("claude") ? null : `claude CLI not found for ${label} ${JSON.stringify(model)}`;
+}
+
+/** `agentModel` is [claude].agent_model. A bad one used to surface only when
+ *  each spawn_agent failed in turn; at boot it is one line in the log. */
+export function checkLoadout(model?: string, agentModel?: string): LoadoutReport {
   const warnings: string[] = [];
 
   if (model) {
-    const backend = backendForModel(model);
-    if (backend === "codex") {
-      const warning = codexCompatibilityWarning();
-      if (warning) warnings.push(`${warning} for configured model ${JSON.stringify(model)}`);
-    } else if (!findBin("claude")) {
-      warnings.push(`claude CLI not found for configured model ${JSON.stringify(model)}`);
-    }
+    const warning = backendWarning(model, "configured model");
+    if (warning) warnings.push(warning);
+  }
+  if (agentModel !== undefined) {
+    const problem = agentModelProblem(agentModel);
+    const warning = problem
+      ? `[claude].agent_model ${JSON.stringify(agentModel)} cannot start a sub-agent: ${problem}`
+      : backendWarning(agentModel, "[claude].agent_model");
+    if (warning) warnings.push(warning);
   }
 
   const personaFiles = ["IDENTITY.md", "SOUL.md", "AGENTS.md"].map((name) => {

@@ -55,7 +55,7 @@ const ScheduleInput = z.object({
   when: z
     .string()
     .describe(
-      'Natural schedule: "in 5 minutes", "in 2 hours", "at 2026-04-20T09:00:00-05:00", or a 5-field cron like "0 9 * * *" (also accepted as "every:0 9 * * *").',
+      'Natural schedule: "in 5 minutes", "in 2 hours", "at 2026-04-20T09:00:00-04:00" ("at" optional; a time with no offset is Eastern), or a 5-field cron like "0 9 * * *" (also accepted as "every:0 9 * * *").',
     ),
   event: z
     .string()

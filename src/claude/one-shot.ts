@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { log } from "../util/log.ts";
-import { directClaudeEnv } from "./direct-env.ts";
+import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "./direct-env.ts";
 
 /**
  * Shared one-shot `claude -p` runner for the harness's satellite model
@@ -90,6 +90,35 @@ export function parseOneShotStream(stdout: string): StreamFacts {
   return facts;
 }
 
+/**
+ * The full argv for a one-shot. These calls read text other people wrote
+ * (messages, person files, transcripts) and ran with bypassPermissions in the
+ * daemon's cwd, which is this checkout. Until 2026-10-23 each one also got
+ * every built-in tool and the operator's own MCP servers and claude.ai
+ * connectors (Google Drive, Stripe among them). Now: no setting sources, only
+ * the MCP servers the caller names, and no built-in tools unless the caller
+ * names them with --tools. A caller that passes --mcp-config (the ghost tick)
+ * keeps the default built-ins and chooses its own. Nothing resumes a
+ * one-shot, so its transcript is not kept either. Effort came from the
+ * operator's settings file (xhigh); it now comes from [claude] effort, which
+ * the daemon exports, unless the caller names one.
+ */
+export function oneShotArgv(args: string[], effort = process.env.EDMUND_EFFORT): string[] {
+  const has = (flag: string) => args.includes(flag);
+  return [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    ...ISOLATED_SETTINGS_ARGS,
+    "--no-session-persistence",
+    ...(has("--strict-mcp-config") ? [] : ["--strict-mcp-config"]),
+    ...(has("--tools") || has("--mcp-config") ? [] : ["--tools", ""]),
+    ...(has("--effort") || !effort ? [] : ["--effort", effort]),
+    ...args,
+  ];
+}
+
 export function runClaudeOneShot(opts: {
   /** CLI args EXCLUDING -p/--output-format/--verbose (the runner owns those). */
   args: string[];
@@ -97,17 +126,15 @@ export function runClaudeOneShot(opts: {
   timeoutMs: number;
   /** Extra env on top of directClaudeEnv(). */
   env?: Record<string, string>;
+  cwd?: string;
 }): Promise<OneShotResult> {
   return new Promise((resolve) => {
     const startedAt = Date.now();
-    const child = spawn(
-      "claude",
-      ["-p", "--output-format", "stream-json", "--verbose", ...opts.args],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...directClaudeEnv(), ...(opts.env ?? {}) },
-      },
-    );
+    const child = spawn("claude", oneShotArgv(opts.args), {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...directClaudeEnv(), ...(opts.env ?? {}) },
+      cwd: opts.cwd,
+    });
     let stdout = "";
     let stderr = "";
     let settled = false;

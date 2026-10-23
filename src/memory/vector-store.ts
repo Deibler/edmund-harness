@@ -124,6 +124,16 @@ export type SearchOptions = {
    * independently ranked it. Unset = pure dense (legacy behavior).
    */
   queryText?: string;
+  /**
+   * False: a sparse hit must clear `minScore` like a dense one, so the
+   * sparse leg only reorders. For recall nobody asked for: replaying 128
+   * real inbound messages on 2026-10-23, 86% of auto-recall hits were
+   * sparse rescues under the 0.7 floor (median cosine 0.57), matched on a
+   * shared word ("just", "give", a group member's name), and none of a
+   * sample of 14 was on topic. Default true: semantic_search keeps it, the
+   * model asked and sees the scores.
+   */
+  sparseRescue?: boolean;
 };
 
 export type SearchHit = {
@@ -144,7 +154,10 @@ export type SearchHit = {
 /**
  * In-memory cache row. Mirrors the SQLite row but with the vec already
  * decoded into a Float32Array — saves a Buffer→Float32Array conversion
- * per query, which was the dominant cost on hot searches.
+ * per query, which was the dominant cost on hot searches. The text stays on
+ * disk: it is most of the file, and only the hits a search returns need it
+ * (`withText`). Holding it cost 1.6 GB for the 222k-row index on 2026-10-23;
+ * without it, 0.7 GB.
  */
 type CacheRow = {
   ref: string;
@@ -152,7 +165,6 @@ type CacheRow = {
   chatGuid: string | null;
   sender: string | null;
   ts: number;
-  text: string;
   vec: Float32Array;
   dim: number;
 };
@@ -163,8 +175,8 @@ export class VectorStore {
   /**
    * Lazy in-memory cache of all rows. Populated on first search and
    * kept in sync by `upsert`. Halves search latency on warm queries
-   * (no SQL fetch, no BLOB decode). Memory cost is bounded: 384 floats
-   * × 4 bytes × N rows ≈ 1.5KB per row, so a 100k-row index = 150MB.
+   * (no SQL fetch, no BLOB decode). Memory cost: 384 floats × 4 bytes ≈
+   * 1.5KB per row, and the 222k-row index measured 0.7 GB RSS (2026-10-23).
    *
    * Cross-process consistency: bg-runner writes to the same SQLite
    * DB but doesn't share this Map. Before every search we check
@@ -176,6 +188,8 @@ export class VectorStore {
   private cache: Map<string, CacheRow> | null = null;
   /** SQLite rowid watermark for the cache. Used for incremental delta loads. */
   private cacheRowidWatermark = 0;
+  /** False while a `warmCache` slice-by-slice load is part-way through. */
+  private cacheComplete = false;
   /** Last seen `PRAGMA data_version` value. Bumps when *other*
    *  connections write. Lets us detect cross-process changes cheaply. */
   private cacheDataVersion = 0;
@@ -313,11 +327,13 @@ export class VectorStore {
    * search in the daemon picks it up.
    */
   private ensureCache(): Map<string, CacheRow> {
-    if (!this.cache) {
-      this.cache = new Map();
-      this.cacheRowidWatermark = 0;
+    if (!this.cache || !this.cacheComplete) {
+      // Cold, or left part-way by warmCache: finish the load now.
+      this.cache ??= new Map();
+      const version = this.readDataVersion();
       this.refreshCacheFromRowid();
-      this.cacheDataVersion = this.readDataVersion();
+      this.cacheComplete = true;
+      this.cacheDataVersion = version;
       return this.cache;
     }
     const currentVersion = this.readDataVersion();
@@ -334,21 +350,25 @@ export class VectorStore {
   }
 
   /**
-   * Pull every row with `rowid > cacheRowidWatermark` into the cache.
-   * Initial load (watermark=0) reads everything; incremental loads
-   * read only rows committed since the last refresh. Watermark is the
-   * MAX rowid we saw after this scan.
+   * Pull rows with `rowid > cacheRowidWatermark` into the cache, at most
+   * `limit` of them (-1: all). Initial load (watermark=0) reads everything;
+   * incremental loads read only rows committed since the last refresh.
+   * Watermark is the MAX rowid we saw after this scan. Returns how many rows
+   * it read. Iterates rather than `.all()`, so the decoded result set is not
+   * held in memory beside the cache it is copied into.
    */
-  private refreshCacheFromRowid(): void {
-    if (!this.cache) return;
+  private refreshCacheFromRowid(limit = -1): number {
+    if (!this.cache) return 0;
     const rows = this.db
-      .prepare<DbRow & { rowid: number }, [number]>(
-        `SELECT rowid AS rowid, ref, kind, chat_guid, sender, ts, text, vec, model, dim
-         FROM rows WHERE rowid > ?`,
+      .prepare<Omit<DbRow, "text" | "model"> & { rowid: number }, [number, number]>(
+        `SELECT rowid AS rowid, ref, kind, chat_guid, sender, ts, vec, dim
+         FROM rows WHERE rowid > ? ORDER BY rowid LIMIT ?`,
       )
-      .all(this.cacheRowidWatermark);
+      .iterate(this.cacheRowidWatermark, limit);
     let maxRowid = this.cacheRowidWatermark;
+    let read = 0;
     for (const r of rows) {
+      read++;
       if (r.rowid > maxRowid) maxRowid = r.rowid;
       const vec = new Float32Array(r.dim);
       const src = new Float32Array(r.vec.buffer, r.vec.byteOffset, r.dim);
@@ -359,12 +379,33 @@ export class VectorStore {
         chatGuid: r.chat_guid,
         sender: r.sender,
         ts: r.ts,
-        text: r.text,
         vec,
         dim: r.dim,
       });
     }
     this.cacheRowidWatermark = maxRowid;
+    return read;
+  }
+
+  /**
+   * Load the cache a slice at a time, yielding to the event loop between
+   * slices. bun:sqlite is synchronous, so a search that finds the cache cold
+   * loads the whole index in one block: up to 31 s from a cold disk
+   * (2026-10-23), during which the daemon handled nothing else. The daemon
+   * calls this at boot instead. A search that arrives part-way finishes the
+   * load itself (ensureCache).
+   */
+  async warmCache(sliceRows = 5_000): Promise<void> {
+    this.cache ??= new Map();
+    while (this.cache && !this.cacheComplete) {
+      const version = this.readDataVersion();
+      if (this.refreshCacheFromRowid(sliceRows) < sliceRows) {
+        this.cacheComplete = true;
+        this.cacheDataVersion = version;
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 0));
+    }
   }
 
   /** Drop the cache. Used by resetIfModelChanged so dim-mismatched
@@ -375,6 +416,7 @@ export class VectorStore {
     this.cache = null;
     this.cacheRowidWatermark = 0;
     this.cacheDataVersion = 0;
+    this.cacheComplete = false;
   }
 
   /** A hot semantic-search cache is valuable during an active conversation,
@@ -389,6 +431,7 @@ export class VectorStore {
       this.cache = null;
       this.cacheRowidWatermark = 0;
       this.cacheDataVersion = 0;
+      this.cacheComplete = false;
     }, this.cacheIdleMs);
     timer.unref?.();
     this.cacheIdleTimer = timer;
@@ -449,7 +492,6 @@ export class VectorStore {
           chatGuid: r.chatGuid,
           sender: r.sender,
           ts: r.ts,
-          text: r.text,
           vec: copy,
           dim: r.vec.length,
         });
@@ -531,7 +573,7 @@ export class VectorStore {
         chatGuid: r.chatGuid,
         sender: r.sender,
         ts: r.ts,
-        text: r.text,
+        text: "",
         score: dot,
         rankScore,
       });
@@ -542,7 +584,9 @@ export class VectorStore {
 
     let pool: SearchHit[];
     if (opts.queryText) {
-      pool = fuseWithSparse(dense, scored, this.sparseRefs(opts.queryText, 200), limit);
+      const admissible =
+        opts.sparseRescue === false ? new Map(dense.map((h) => [h.ref, h])) : scored;
+      pool = fuseWithSparse(dense, admissible, this.sparseRefs(opts.queryText, 200), limit);
     } else {
       pool = dense;
     }
@@ -554,10 +598,23 @@ export class VectorStore {
     const lambda = opts.mmrLambda;
     const dedupAt = opts.dedupThreshold;
     if (lambda === undefined && dedupAt === undefined) {
-      return candidates.slice(0, limit);
+      return this.withText(candidates.slice(0, limit));
     }
 
-    return rerankForDiversity(candidates, cache, qvec, limit, lambda, dedupAt);
+    return this.withText(rerankForDiversity(candidates, cache, qvec, limit, lambda, dedupAt));
+  }
+
+  /** The hits a search returns, with their text read from disk. A row
+   *  another process deleted since the cache loaded it is dropped. */
+  private withText(hits: SearchHit[]): SearchHit[] {
+    if (hits.length === 0) return hits;
+    const rows = this.db
+      .prepare<{ ref: string; text: string }, string[]>(
+        `SELECT ref, text FROM rows WHERE ref IN (${hits.map(() => "?").join(",")})`,
+      )
+      .all(...hits.map((h) => h.ref));
+    const text = new Map(rows.map((r) => [r.ref, r.text]));
+    return hits.filter((h) => text.has(h.ref)).map((h) => ({ ...h, text: text.get(h.ref)! }));
   }
 
   /**

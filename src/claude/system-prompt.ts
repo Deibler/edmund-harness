@@ -192,7 +192,7 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
   }
 
   sections.push(`# Workspace\n\n${workspaceText(ctx.sandboxPath)}`);
-  sections.push(`# Tools\n\n${toolsText(ctx.radarOmegaEnabled)}`);
+  sections.push(`# Tools\n\n${toolsText(ctx.radarOmegaEnabled, ctx.guestTier == null)}`);
   sections.push(`# Memory hygiene\n\n${MEMORY_RULES}`);
   sections.push(`# Epistemic posture\n\n${EPISTEMIC_RULES}`);
   sections.push(`# Output contract\n\n${OUTPUT_RULES}`);
@@ -249,7 +249,7 @@ function buildTradingSystemPrompt(ctx: SystemPromptContext): string {
   if (venue) sections.push(`# Venue\n\n${venue}`);
 
   sections.push(`# Workspace\n\n${workspaceText(ctx.sandboxPath)}`);
-  sections.push(`# Tools\n\n${toolsText(ctx.radarOmegaEnabled)}`);
+  sections.push(`# Tools\n\n${toolsText(ctx.radarOmegaEnabled, false)}`);
   sections.push(`# Memory hygiene\n\n${MEMORY_RULES}`);
   sections.push(`# Epistemic posture\n\n${EPISTEMIC_RULES}`);
   sections.push(`# Output contract\n\n${OUTPUT_RULES}`);
@@ -349,7 +349,7 @@ const WORKSPACE_TEXT_TEMPLATE = [
   ``,
   `    __SANDBOX__`,
   ``,
-  `This is also your cwd — relative paths land here. **You cannot write anywhere else.** A path guard rejects Write/Edit/Bash mutations outside the sandbox (or the harness data dir). Use MCP tools for anything outside the sandbox (persona files, history, etc.).`,
+  `This is also your cwd — relative paths land here. Keep your files inside it, and use MCP tools for anything outside the sandbox (persona files, history, etc.).`,
   ``,
   `Standard subdirectories (auto-created when used):`,
   `• \`images/\` — images you generate (read-only archive; written by \`generate_image\`)`,
@@ -485,11 +485,7 @@ const TOOLS_TEXT_TEMPLATE = [
   "",
   "---",
   "",
-  "🌐 **Chrome on this Mac.** You have `chrome-devtools` tools for the live web: navigate, click, fill forms, screenshot, read the DOM. Use this for anything that needs a logged-in site (Gmail, calendars, order history, ongoing purchases) or a quick lookup beyond a plain fetch. Profile persists between calls — if you sign in once, you stay signed in. Prefer this over `cf_*` tools when the task is interactive or requires your own login.",
-  "  • **Never narrate tool mechanics.** Don't say 'let me open Chrome' / 'I'll use the browser tool' — just do it. And don't announce that you are about to work: the typing bubble already says that. Answer, or say something worth its own bubble.",
-  "  • **Stay in character on failure.** A page hang is 'site's not loading for me', not 'chrome-devtools returned an error'.",
-  "  • **Screenshots are for YOU.** If the user asked to *see* the page, still go through `send_attachment` with the saved path — screenshots don't auto-deliver.",
-  "  • **Long interactive workflows** (multi-step forms, slow navigation, anything >30s total) → `handoff_current_work` or `spawn_agent`, same rule as other slow tasks. A single `navigate` + `screenshot` inline is fine.",
+  "%%CHROME%%",
   "",
   "⚠️ Person-file privacy: `remember_about_person` / `write_person_file` cross chat boundaries. Store only stable preferences, relationship context, dated events. NEVER secrets, confidences, PII, rumors. See Operating rules.",
   "",
@@ -519,15 +515,41 @@ const TOOLS_TEXT_TEMPLATE = [
   "💬 Mid-turn replies (natural pacing): text replies only flush when the turn ends, so long silences would feel dead. The harness handles that for you — if you go ~15s without emitting anything, it shows the typing bubble, and it clears when your reply lands. So you do NOT need to text a heads-up just because something is slow, and you should not: a 'working on it, one sec' in front of the real answer reads as filler and the operator has asked for it to stop. Use `send_message` mid-turn only when you have something to SAY that is worth its own bubble before the answer — a genuine warning ('heads up, this'll take a few minutes, the render is queued'), a partial result that is useful on its own, or a question you need answered before you can continue. Never as a placeholder, and never robotic ('Processing…', 'Working on your request').",
 ].join("\n");
 
-// Hoisted once each — buildSystemPrompt picks per call based on config.
-const TOOLS_TEXT_WITH_RADAROMEGA = TOOLS_TEXT_TEMPLATE.replace(
-  "%%RADAROMEGA%%",
-  RADAROMEGA_TOOLS_TEXT,
-);
-const TOOLS_TEXT_WITHOUT_RADAROMEGA = TOOLS_TEXT_TEMPLATE.replace("%%RADAROMEGA%%\n", "");
+// The same text whether or not this turn's worker has the tools. A
+// conversation moves between workers with and without the browser, and a
+// prompt that changed with them would rewrite the cached prefix at every
+// switch. So it says how they arrive, and only a session that can never get
+// them (guest, trading) is told so.
+const CHROME_TEXT = [
+  "🌐 **Chrome on this Mac.** `chrome-devtools` tools for the live web: navigate, click, fill forms, screenshot, read the DOM. Use them for anything that needs a logged-in site (Gmail, calendars, order history, ongoing purchases) or a quick lookup beyond a plain fetch. The profile persists between calls — sign in once and you stay signed in. Prefer them over `cf_*` tools when the task is interactive or requires your own login.",
+  '  • **Loaded on demand.** They come with a turn whose message carries a link or asks to browse, screenshot or use Chrome, and stay for the rest of that worker. If they are not in your tool list this turn, don\'t search for them: use `WebSearch` / `WebFetch` or `cf_*` for a plain lookup, and when the task needs the browser, `schedule_reminder(when: "in 10 seconds", event: "Continue in Chrome: <exactly what to do>")`, tell them you\'re checking, and do it on that turn.',
+  "  • **Never narrate tool mechanics.** Don't say 'let me open Chrome' / 'I'll use the browser tool' — just do it. And don't announce that you are about to work: the typing bubble already says that. Answer, or say something worth its own bubble.",
+  "  • **Stay in character on failure.** A page hang is 'site's not loading for me', not 'chrome-devtools returned an error'.",
+  "  • **Screenshots are for YOU.** If the user asked to *see* the page, still go through `send_attachment` with the saved path — screenshots don't auto-deliver.",
+  "  • **Long interactive workflows** (multi-step forms, slow navigation, anything >30s total) → `handoff_current_work` or `spawn_agent`, same rule as other slow tasks. A single `navigate` + `screenshot` inline is fine.",
+].join("\n");
 
-function toolsText(radarOmegaEnabled: boolean | undefined): string {
-  return radarOmegaEnabled === false ? TOOLS_TEXT_WITHOUT_RADAROMEGA : TOOLS_TEXT_WITH_RADAROMEGA;
+const NO_CHROME_TEXT =
+  "🌐 **No browser in this session.** The `chrome-devtools` tools are not available here; use web search and fetch for lookups.";
+
+// Hoisted once each — buildSystemPrompt picks per call based on config.
+const toolsVariant = (radarOmega: boolean, chrome: boolean) =>
+  TOOLS_TEXT_TEMPLATE.replace(
+    radarOmega ? "%%RADAROMEGA%%" : "%%RADAROMEGA%%\n",
+    radarOmega ? RADAROMEGA_TOOLS_TEXT : "",
+  ).replace("%%CHROME%%", chrome ? CHROME_TEXT : NO_CHROME_TEXT);
+const TOOLS_TEXT = {
+  radarChrome: toolsVariant(true, true),
+  radar: toolsVariant(true, false),
+  chrome: toolsVariant(false, true),
+  bare: toolsVariant(false, false),
+};
+
+function toolsText(radarOmegaEnabled: boolean | undefined, canHaveChrome: boolean): string {
+  const radar = radarOmegaEnabled !== false;
+  const chrome = canHaveChrome;
+  if (radar) return chrome ? TOOLS_TEXT.radarChrome : TOOLS_TEXT.radar;
+  return chrome ? TOOLS_TEXT.chrome : TOOLS_TEXT.bare;
 }
 
 const MEMORY_RULES = [
