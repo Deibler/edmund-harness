@@ -34,6 +34,19 @@ export const ISOLATED_SETTINGS_ARGS: readonly string[] = [
   JSON.stringify({ autoMemoryEnabled: false, alwaysThinkingEnabled: true }),
 ];
 
+/**
+ * For any spawn that may be resumed. Since about CLI 2.1.287 a conversation
+ * records its system prompt on the first request and resends that record on
+ * every resume, ignoring the --append-system-prompt it is given, until the
+ * conversation compacts. The prompt carries the person file, SOUL.md and the
+ * session's loadout text, so a resumed turn ran on memory as old as the last
+ * compaction: over 7 days (2,330 turns, measured 2026-10-23) the median was
+ * 1.7 h old, the 75th percentile 13.6 h, and 13% of turns saw a prompt more
+ * than a day old. Off, a resume renders the prompt it is given, as every
+ * spawn did before snapshots. An unchanged prompt still reads from cache.
+ */
+export const PROMPT_SNAPSHOT_ARGS: readonly string[] = ["--system-prompt-snapshot", "off"];
+
 export function directClaudeEnv(
   overrides: Record<string, string> = {},
   access: HostAccess = "full",

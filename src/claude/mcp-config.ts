@@ -371,7 +371,6 @@ export function toolEnv(
     INSTANT_SHARE_ARTIFACT_DIR: sandboxPath,
     // Admin password for the share server's /admin panel. Blank disables login.
     INSTANT_SHARE_ADMIN_PASSWORD: config.instant_share?.admin_password ?? "",
-    // Consumed by the PreToolUse path guard in scripts/guard-path.ts.
     EDMUND_SANDBOX_PATH: sandboxPath,
     EDMUND_DATA_DIR: resolve(config.paths.data_dir),
   };

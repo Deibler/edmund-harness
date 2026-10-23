@@ -349,7 +349,7 @@ const WORKSPACE_TEXT_TEMPLATE = [
   ``,
   `    __SANDBOX__`,
   ``,
-  `This is also your cwd — relative paths land here. **You cannot write anywhere else.** A path guard rejects Write/Edit/Bash mutations outside the sandbox (or the harness data dir). Use MCP tools for anything outside the sandbox (persona files, history, etc.).`,
+  `This is also your cwd — relative paths land here. Keep your files inside it, and use MCP tools for anything outside the sandbox (persona files, history, etc.).`,
   ``,
   `Standard subdirectories (auto-created when used):`,
   `• \`images/\` — images you generate (read-only archive; written by \`generate_image\`)`,
@@ -515,10 +515,10 @@ const TOOLS_TEXT_TEMPLATE = [
   "💬 Mid-turn replies (natural pacing): text replies only flush when the turn ends, so long silences would feel dead. The harness handles that for you — if you go ~15s without emitting anything, it shows the typing bubble, and it clears when your reply lands. So you do NOT need to text a heads-up just because something is slow, and you should not: a 'working on it, one sec' in front of the real answer reads as filler and the operator has asked for it to stop. Use `send_message` mid-turn only when you have something to SAY that is worth its own bubble before the answer — a genuine warning ('heads up, this'll take a few minutes, the render is queued'), a partial result that is useful on its own, or a question you need answered before you can continue. Never as a placeholder, and never robotic ('Processing…', 'Working on your request').",
 ].join("\n");
 
-// The prompt is fixed for a conversation: CLI 2.1.309 resumes a session with
-// the prompt snapshot it started with, ignoring --append-system-prompt. So
-// the Chrome text cannot depend on whether this turn's worker happens to have
-// the tools; it says how they arrive, and only a session that can never get
+// The same text whether or not this turn's worker has the tools. A
+// conversation moves between workers with and without the browser, and a
+// prompt that changed with them would rewrite the cached prefix at every
+// switch. So it says how they arrive, and only a session that can never get
 // them (guest, trading) is told so.
 const CHROME_TEXT = [
   "🌐 **Chrome on this Mac.** `chrome-devtools` tools for the live web: navigate, click, fill forms, screenshot, read the DOM. Use them for anything that needs a logged-in site (Gmail, calendars, order history, ongoing purchases) or a quick lookup beyond a plain fetch. The profile persists between calls — sign in once and you stay signed in. Prefer them over `cf_*` tools when the task is interactive or requires your own login.",

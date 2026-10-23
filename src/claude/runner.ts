@@ -20,7 +20,7 @@ import { isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { DEBUG, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import { type IterationUsage, contextTokens, iterationContextTokens } from "./auto-compact.ts";
-import { ISOLATED_SETTINGS_ARGS } from "./direct-env.ts";
+import { ISOLATED_SETTINGS_ARGS, PROMPT_SNAPSHOT_ARGS } from "./direct-env.ts";
 import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
 import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
 import { personaFingerprint } from "./persona.ts";
@@ -276,13 +276,10 @@ export async function runClaude(
   }
   const existing = store.getSession(input.sessionKey);
   // Persona edits. The system prompt is a spawn argument
-  // (--append-system-prompt). Older CLIs rebuilt it on every process start,
-  // --resume included (a session resumed on 2026-09-21 and 2026-09-23 carried
-  // each day's SOUL.md). CLI 2.1.309 does not: a resume reuses the prompt
-  // snapshot the session started with and ignores the flag (measured
-  // 2026-10-23, a resumed session answered from its first prompt and its
-  // transcript held only that snapshot). So an edit reaches a conversation
-  // only when it starts a new snapshot, not on its next turn.
+  // (--append-system-prompt), rebuilt on every process start, --resume
+  // included, because the spawn passes --system-prompt-snapshot off (see
+  // PROMPT_SNAPSHOT_ARGS). So an edit reaches a cold resume on its next turn,
+  // and a warm worker when the pool recycles it.
   //
   // This used to log "cold-spawn this turn" and "fresh session id", and clear
   // the stored id. The spawn below still resumed the id it had read before
@@ -299,7 +296,7 @@ export async function runClaude(
     log.info("claude", "persona edited since this session last ran", {
       session: input.sessionKey,
       resumes: existing.claudeSessionId.slice(0, 8),
-      new_prompt: "not on resume: the session keeps its prompt snapshot",
+      new_prompt: warm ? "when the warm worker is recycled" : "this turn",
       warm,
       old_hash: existing.systemPromptHash.slice(0, 8),
       new_hash: currentFingerprint.slice(0, 8),
@@ -399,9 +396,9 @@ export async function runClaude(
     // warnings on every worker spawn.
     //
     // Guest sessions additionally lose every filesystem/shell built-in:
-    // Read is unrestricted by the PreToolUse guard (which only covers
-    // writes), so a guest-prompted injection could otherwise read anything
-    // on this Mac. Inbound images still work (they're inlined as content
+    // nothing else limits what those tools touch, so a guest-prompted
+    // injection could otherwise read anything on this Mac. Inbound images
+    // still work (they're inlined as content
     // blocks) and web/generation/voice tools stay. ToolSearch stays too —
     // it's how deferred MCP schemas load.
     "--disallowedTools",
@@ -420,6 +417,7 @@ export async function runClaude(
     "--strict-mcp-config",
     // The operator's CLAUDE.md files, auto-memory and plugins stay out.
     ...ISOLATED_SETTINGS_ARGS,
+    ...PROMPT_SNAPSHOT_ARGS,
     ...pluginDirArgs(config.claude.plugin_dirs, hostAccess(config), isGuest),
     "--append-system-prompt",
     buildRunSystemPrompt(input, config, orch),
@@ -988,8 +986,8 @@ function runProcess(
   let echoed = false;
   return new Promise((resolve) => {
     // cwd = sandbox: relative paths the model writes default into the
-    // session's own directory. Absolute escapes are blocked by the
-    // PreToolUse hook (scripts/guard-path.ts).
+    // session's own directory. Absolute paths are not confined; see
+    // disallowedBuiltinTools for what is.
     const cwd = env.EDMUND_SANDBOX_PATH;
     const sessionKey = env.EDMUND_SESSION_KEY ?? "?";
     const resumeArg = args.indexOf("--resume");

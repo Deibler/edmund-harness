@@ -108,15 +108,16 @@ doc comment, then to `config.example.toml` with a comment, then to
 [configuration.md](configuration.md). The example file has drifted from the
 schema before; keep them in step.
 
-## Claude Code hooks
+## Claude Code settings
 
-`.claude/settings.json` is tracked and fires for anyone who opens this
-repository in Claude Code, as well as for the daemon's own headless workers.
-`scripts/guard-path.ts` restricts writes to the session sandbox and data
-directory when a sandbox is set, and allows everything when it is not, so a
-contributor's session is unaffected. `scripts/post-tool-deliver.ts` delivers
-generated media after a generation tool returns. Neither should surprise you,
-but you should know they run.
+`.claude/settings.json` is tracked and applies to anyone who opens this
+repository in Claude Code. It does not reach the daemon's workers: they run
+with `--setting-sources ""` (`ISOLATED_SETTINGS_ARGS` in
+`src/claude/direct-env.ts`), and the CLI only ever read project settings from
+a worker's own sandbox, not from the repository. A write guard and a media
+delivery hook lived here and never ran for a worker as a result; both are
+gone. What confines a worker is `disallowedBuiltinTools` in
+`src/security/policy.ts` and the MCP server's own path checks.
 
 ## Where the design reasoning lives
 

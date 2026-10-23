@@ -3,8 +3,9 @@
  * conversation. It promised chrome-devtools on every worker, but the tools
  * load only on a turn that carries a link or asks to browse: 43 of 101 chrome
  * lookups failed (2026-10-23). And the text cannot follow each worker's
- * loadout, because CLI 2.1.309 resumes a session with the prompt it started
- * with: whichever variant came first would be frozen in.
+ * loadout: a conversation moves between workers with and without the
+ * browser, and a prompt that changed with them would rewrite the cached
+ * prefix at every switch.
  */
 import { describe, expect, test } from "bun:test";
 import { envelopeNeedsBrowser } from "../src/claude/mcp-config.ts";

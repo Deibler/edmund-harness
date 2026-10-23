@@ -10,7 +10,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ISOLATED_SETTINGS_ARGS } from "../src/claude/direct-env.ts";
+import { ISOLATED_SETTINGS_ARGS, PROMPT_SNAPSHOT_ARGS } from "../src/claude/direct-env.ts";
 import { oneShotArgv, runClaudeOneShot } from "../src/claude/one-shot.ts";
 
 const root = join(import.meta.dir, "..");
@@ -97,6 +97,16 @@ describe("every Claude spawn site is isolated", () => {
     expect(baseArgs).toContain("...ISOLATED_SETTINGS_ARGS,");
     expect(read("scripts/agent-runner.ts")).toContain("...ISOLATED_SETTINGS_ARGS,");
     expect(read("src/claude/one-shot.ts")).toContain('spawn("claude", oneShotArgv(opts.args)');
+  });
+
+  test("a resumed turn renders the prompt it is given", () => {
+    // With the CLI's default snapshot, a resume resent the prompt the
+    // conversation first recorded: SOUL.md and the person file as of the last
+    // compaction (a day or more old on 13% of turns, 2026-10-23).
+    expect(PROMPT_SNAPSHOT_ARGS).toEqual(["--system-prompt-snapshot", "off"]);
+    const runner = read("src/claude/runner.ts");
+    const baseArgs = runner.slice(runner.indexOf("const baseArgs"), runner.indexOf("const env ="));
+    expect(baseArgs).toContain("...PROMPT_SNAPSHOT_ARGS,");
   });
 
   test("no other file starts the claude binary", () => {
