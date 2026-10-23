@@ -32,6 +32,7 @@ import {
 } from "./budget.ts";
 import { excerptNotes, excerptPersonFile } from "./excerpt.ts";
 import { resolveIntensity } from "./intensity.ts";
+import { withLandingEvidence } from "./landed.ts";
 import type { GhostPrefsStore } from "./prefs.ts";
 import { renderTagTrackRecord, tagTrackRecord } from "./tag-stats.ts";
 
@@ -119,8 +120,10 @@ const SEGMENT_BREAK_MIN = 30;
 /** How many days of attachment volume to surface. */
 const ATTACHMENT_WINDOW_DAYS = 14;
 /** Person-file budget. The excerpt keeps Open Items and every section (see
- *  excerpt.ts); a first-4000-bytes cut lost Open Items in 14 of 15 files. */
-const PERSON_FILE_MAX_CHARS = 6000;
+ *  excerpt.ts); a first-4000-bytes cut lost Open Items in 14 of 15 files.
+ *  7000 holds every undated open item of the live files (up to ~2100
+ *  chars) next to the newest dated ones. */
+const PERSON_FILE_MAX_CHARS = 7000;
 /** Ghost-notes budget; the newest entries are kept, whichever end they are. */
 const NOTES_MAX_CHARS = 4000;
 
@@ -174,6 +177,23 @@ function sessionHistory(
   );
   history.sort((a, b) => a.timestampMs - b.timestampMs);
   return history;
+}
+
+/**
+ * When the newest message in this session's chat was sent, either way and
+ * whoever wrote it; null when the chat can't be read. The session row's
+ * inbound time only moves when Edmund takes a turn, so in a group it misses
+ * all the chatter Edmund was not addressed in.
+ */
+export function lastMessageAtMs(
+  sessionKey: SessionKey,
+  deps: { chatDb: ChatDb; contacts: ContactBook; sms?: GhostSmsHistory },
+): number | null {
+  try {
+    return sessionHistory(sessionKey, deps, 1).at(-1)?.timestampMs ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Telemetry stamped by runGhostTick on every decision (additive — old
@@ -241,14 +261,39 @@ const PRESCREEN_TIMEOUT_MS = 90_000;
 const PRESCREEN_SKIPPED_SECTIONS =
   /^##\s+(You can DO WORK|Your decision is a TOOL CALL|What you decide|Snoozing|fire_at_ms|Tags\b|Workspace|Brief shape)/i;
 
+/**
+ * Drop each paragraph or list item that names submit_decision from text the
+ * pre-screen reads. The kept sections still carry such lines (live GHOST.md's
+ * hard rule 1: "Always finish with one submit_decision call. Printed text
+ * is ignored"), which contradict the JSON answer it is asked for. A list
+ * item runs until the next item, heading or blank line.
+ */
+function withoutDecisionCallBlocks(text: string): string {
+  const blocks: string[][] = [];
+  for (const line of text.split("\n")) {
+    const startsBlock =
+      blocks.length === 0 ||
+      !line.trim() ||
+      !blocks.at(-1)!.at(-1)!.trim() ||
+      /^\s*(?:[-*]|\d+\.)\s|^#/.test(line);
+    if (startsBlock) blocks.push([line]);
+    else blocks.at(-1)!.push(line);
+  }
+  return blocks
+    .filter((b) => !/submit_decision/.test(b.join("\n")))
+    .map((b) => b.join("\n"))
+    .join("\n");
+}
+
 /** The pre-screen's system prompt for this intensity. Exported for tests. */
 export function buildPreScreenSystem(intensity: number, ghostPrompt: string | null): string {
   const guidance = ghostPrompt
-    ? withEagerness(ghostPrompt, intensity)
-        .split(/^(?=## )/m)
-        .filter((s) => !PRESCREEN_SKIPPED_SECTIONS.test(s))
-        .join("")
-        .trim()
+    ? withoutDecisionCallBlocks(
+        withEagerness(ghostPrompt, intensity)
+          .split(/^(?=## )/m)
+          .filter((s) => !PRESCREEN_SKIPPED_SECTIONS.test(s))
+          .join(""),
+      ).trim()
     : `Calibration (operator-set intensity ${intensity}): ${resolveIntensity(intensity).eagerness}`;
   return [
     `You are the fast triage pass in front of the ghost, an agent that decides whether to proactively message someone. You do not decide that; you decide whether the ghost's full deliberation is worth running right now.`,
@@ -359,7 +404,13 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
   // 2. Pull engagement history for decay computation. We always recompute
   //    the multiplier from outcomes so a stale row doesn't lock us
   //    into a high multiplier forever.
-  const recentFires = prefs.recentFires(input.sessionKey, 10);
+  // Fire labels say what the send path reported; chat.db says what landed.
+  const recentFires = withLandingEvidence(
+    prefs.recentFires(input.sessionKey, 10),
+    input.sessionKey,
+    deps,
+    nowMs,
+  );
   const weekAgo = nowMs - 7 * 24 * 3_600_000;
   const weekFires = recentFires.filter((f) => f.firedAtMs >= weekAgo);
   const currentMultiplier = decayMultiplier(recentFires);
@@ -731,7 +782,10 @@ export function buildPromptInput(args: {
       const outcome =
         f.outcome === "reacted" && f.reactionGlyph
           ? `reacted ${f.reactionGlyph}`
-          : (f.outcome ?? (isContact(f, args.nowMs) ? "pending" : "interrupted — never delivered"));
+          : (f.outcome === "vetoed" || f.outcome === "error") && f.delivered
+            ? `${f.outcome}, though a message reached the chat then`
+            : (f.outcome ??
+              (isContact(f, args.nowMs) ? "pending" : "interrupted — never delivered"));
       lines.push(
         `  ${when} [${outcome}] tags=${JSON.stringify(f.tags)} brief="${truncate(f.brief, 120)}"`,
       );
@@ -862,7 +916,9 @@ export function buildPromptInput(args: {
     const persona = loadPersona(null, personHandle);
     if (persona.person) {
       lines.push(`PERSON_FILE (${persona.person.name}):`);
-      lines.push(excerptPersonFile(persona.person.body, PERSON_FILE_MAX_CHARS));
+      lines.push(
+        excerptPersonFile(persona.person.body, PERSON_FILE_MAX_CHARS, persona.person.path),
+      );
       lines.push("");
     } else {
       lines.push(`PERSON_FILE: (none yet — no durable context for this contact)`);

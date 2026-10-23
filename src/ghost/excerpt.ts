@@ -9,12 +9,17 @@
  *
  * Dates are the key: a dated bullet (`- **2026-10-08** — …`) or a dated
  * heading (`## 2026-10-18 update`) says what is newest, wherever it sits.
+ * Nothing undated is ranked by age: an undated line or section is a
+ * standing item (an open item with no date, what the ghost is watching, its
+ * snooze plan), so it is kept ahead of dated history.
  */
 
 type Section = { heading: string | null; lines: string[] };
 
 const DATE = /\b(\d{4}-\d{2}-\d{2})\b/;
 const DATED_BULLET = /^\s*[-*]\s+(?:\*\*)?(\d{4}-\d{2}-\d{2})/;
+/** "(NNN entries omitted)" and the newline before it, at most. */
+const MARKER_RESERVE = 32;
 
 function splitSections(body: string): Section[] {
   const out: Section[] = [{ heading: null, lines: [] }];
@@ -32,33 +37,61 @@ function render(s: Section): string {
     .trim();
 }
 
+const newestFirst = <T extends { date: string | null; i: number }>(a: T, b: T) =>
+  a.date! < b.date! ? 1 : a.date! > b.date! ? -1 : b.i - a.i;
+
 /**
- * Keep a section within `budget` chars. A section of dated bullets keeps its
- * newest bullets (in their original order) and its undated lines; anything
- * else keeps its head.
+ * Keep a section within `budget` chars. A section of dated bullets keeps
+ * every undated line it can (leaving room for the newest dated bullet),
+ * then its newest dated bullets, all in their original order. Undated
+ * lines are open items with no date (up to 13 in one live Open Items),
+ * not decoration. Anything else keeps its head.
  */
 function fitSection(s: Section, budget: number): string {
   const full = render(s);
   if (full.length <= budget) return full;
-  const dated = s.lines
+  const items = s.lines
     .map((line, i) => ({ line, i, date: line.match(DATED_BULLET)?.[1] ?? null }))
-    .filter((x) => x.date !== null);
+    .filter((x) => x.line.trim());
+  const dated = items.filter((x) => x.date !== null);
   if (dated.length >= 2) {
-    const fixed = s.lines.filter((l) => !DATED_BULLET.test(l) && l.trim()).slice(0, 2);
-    let used = (s.heading?.length ?? 0) + fixed.join("\n").length + 60;
+    const undated = items.filter((x) => x.date === null);
     const keep = new Set<number>();
-    for (const x of [...dated].sort((a, b) => (a.date! < b.date! ? 1 : -1))) {
-      if (used + x.line.length + 1 > budget && keep.size > 0) break;
+    let used = (s.heading ? s.heading.length + 1 : 0) + MARKER_RESERVE;
+    const take = (x: (typeof items)[number], limit: number) => {
+      if (keep.has(x.i) || used + x.line.length + 1 > limit) return false;
       keep.add(x.i);
       used += x.line.length + 1;
-    }
-    const omitted = dated.length - keep.size;
+      return true;
+    };
+    const byAge = [...dated].sort(newestFirst);
+    for (const x of undated) if (!take(x, budget - byAge[0]!.line.length - 1)) break;
+    for (const x of byAge) if (!take(x, budget)) break;
+    const omitted = items.length - keep.size;
     const kept = s.lines.filter((_, i) => keep.has(i));
-    return [s.heading, ...fixed, `(${omitted} older entries omitted)`, ...kept]
+    return [s.heading, ...kept, omitted > 0 ? `(${omitted} entries omitted)` : null]
       .filter((l) => l !== null)
       .join("\n");
   }
-  return `${full.slice(0, Math.max(0, budget - 2))}…`;
+  return `${full.slice(0, Math.max(0, budget - 1))}…`;
+}
+
+/**
+ * Fit sections into `budget` chars between them, smallest first: each gets
+ * an even share of what is left, so a short section is kept whole and what
+ * it doesn't use goes to the long ones. A share under 40 chars drops it.
+ */
+function fairFit<T extends { s: Section }>(items: T[], budget: number): Map<T, string> {
+  const out = new Map<T, string>();
+  let left = budget;
+  const bySize = [...items].sort((a, b) => render(a.s).length - render(b.s).length);
+  bySize.forEach((x, k) => {
+    const share = Math.floor(left / (bySize.length - k));
+    const t = share > 40 ? fitSection(x.s, share) : "";
+    out.set(x, t);
+    left -= t.length;
+  });
+  return out;
 }
 
 /**
@@ -71,63 +104,68 @@ export function excerptPersonFile(
   body: string,
   budget: number,
   path?: string,
-  openItemsShare = 0.4,
+  openItemsShare = 0.5,
 ): string {
   if (body.length <= budget) return body.trim();
   const sections = splitSections(body);
+  const note = `(excerpt: ${budget} of ${body.length} chars${path ? `; full file: ${path}` : ""})`;
   const isOpen = (s: Section) => /^##\s+Open Items\b/i.test(s.heading ?? "");
   const fitted = new Map<Section, string>();
-  let left = budget - 120;
+  // Every section and the note are joined by a blank line.
+  let left = budget - note.length - 2 * sections.length;
   const open = sections.find(isOpen);
   if (open) {
-    const text = fitSection(open, Math.floor(budget * openItemsShare));
+    const text = fitSection(open, Math.floor(left * openItemsShare));
     fitted.set(open, text);
     left -= text.length;
   }
-  const rest = sections.filter((s) => !isOpen(s));
-  rest.forEach((s, i) => {
-    const share = Math.max(0, Math.floor(left / (rest.length - i)));
-    const text = share > 40 ? fitSection(s, share) : "";
-    fitted.set(s, text);
-    left -= text.length;
-  });
-  const note = `(excerpt: ${budget} of ${body.length} chars${path ? `; full file: ${path}` : ""})`;
+  const rest = sections.filter((s) => !isOpen(s)).map((s) => ({ s }));
+  for (const [x, text] of fairFit(rest, left)) fitted.set(x.s, text);
   return [...sections.map((s) => fitted.get(s) ?? "").filter(Boolean), note].join("\n\n");
 }
 
 /**
- * The ghost's running notes within `budget` chars. Dated sections are kept
- * newest first by the date in their heading, whatever order the file uses.
- * Undated notes keep both ends, since nothing says which end is current.
+ * The ghost's running notes within `budget` chars. Standing sections (the
+ * preamble and every section without a date in its heading: what it is
+ * watching, what it leaves to others, its plan) are kept first, up to 70% of
+ * the budget. Dated sections are history: newest first by the date in their
+ * heading, whatever order the file uses, and the one at the boundary is cut
+ * rather than skipped.
  */
 export function excerptNotes(body: string, budget: number, path?: string): string {
   const text = body.trim();
   if (text.length <= budget) return text;
-  const note = `(excerpt of ${text.length} chars, newest kept${path ? `; full file: ${path}` : ""} — keep it short)`;
-  const sections = splitSections(text);
-  const dated = sections
-    .map((s, i) => ({ s, i, date: s.heading?.match(DATE)?.[1] ?? null }))
-    .filter((x) => x.date !== null);
-  if (dated.length >= 2) {
-    const keep = new Set<number>();
-    let used = note.length;
-    for (const x of [...dated].sort((a, b) =>
-      a.date! < b.date! ? 1 : a.date! > b.date! ? -1 : b.i - a.i,
-    )) {
-      const len = render(x.s).length + 2;
-      if (used + len > budget) {
-        if (keep.size === 0) keep.add(x.i);
-        break;
-      }
-      keep.add(x.i);
-      used += len;
-    }
-    const kept = sections
-      .map((s, i) => (keep.has(i) ? render(s) : null))
-      .filter((s): s is string => s !== null)
-      .map((s) => (s.length > budget ? `${s.slice(0, budget - note.length - 4)}…` : s));
-    return [note, ...kept].join("\n\n");
+  const note = `(excerpt of ${text.length} chars: standing sections first, then dated entries newest first${path ? `; full file: ${path}` : ""} — keep it short)`;
+  const parts = splitSections(text);
+  if (parts.length === 1 && parts[0]!.heading === null) {
+    // No headings: nothing says which end is current, so keep both.
+    const half = Math.floor((budget - note.length - 10) / 2);
+    return [note, `${text.slice(0, half)}…`, `…${text.slice(-half)}`].join("\n");
   }
-  const half = Math.floor((budget - note.length - 10) / 2);
-  return [note, `${text.slice(0, half)}…`, `…${text.slice(-half)}`].join("\n");
+  const sections = parts.map((s, i) => ({ s, i, date: s.heading?.match(DATE)?.[1] ?? null }));
+  const standing = sections.filter((x) => x.date === null);
+  const history = sections.filter((x) => x.date !== null);
+  const out = new Map<number, string>();
+  let left = budget - note.length - 2 * (sections.length + 1) - MARKER_RESERVE;
+  for (const [x, t] of fairFit(standing, history.length > 0 ? Math.floor(left * 0.7) : left)) {
+    out.set(x.i, t);
+    left -= t.length;
+  }
+  let omitted = 0;
+  for (const x of [...history].sort(newestFirst)) {
+    if (left < 200) {
+      omitted++;
+      continue;
+    }
+    const t = fitSection(x.s, left);
+    out.set(x.i, t);
+    left -= t.length;
+  }
+  return [
+    note,
+    ...sections.map((x) => out.get(x.i) ?? "").filter(Boolean),
+    omitted > 0 ? `(${omitted} older dated entries omitted)` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }

@@ -31,17 +31,19 @@ export const INTERRUPTED_FIRE_MS = 6 * 3_600_000;
 
 /**
  * Did this fire reach the person, or may it still? Only those pace the
- * next one. A vetoed fire (main's KEEP_QUIET) and an errored one never
- * reached them, and neither did an interrupted one: counting them held
- * chats in cooldown, against the weekly cap and, for an interrupted fire,
- * behind the one-open-thread gate with no way out but the person writing
- * first (one live fire sat that way from 2026-07-28 on).
+ * next one. A delivered fire did, whatever its label (the send path
+ * stamps it, and withLandingEvidence sets it from chat.db for fires whose
+ * label came from a send that only reported failure). Otherwise a vetoed
+ * fire (main's KEEP_QUIET) and an errored one did not, and neither did an
+ * interrupted one: counting them held chats in cooldown, against the
+ * weekly cap and, for an interrupted fire, behind the one-open-thread gate
+ * with no way out but the person writing first (one live fire sat that
+ * way from 2026-07-28 on).
  */
 export function isContact(f: FireRecord, nowMs: number): boolean {
+  if (f.delivered) return true;
   if (f.outcome === "vetoed" || f.outcome === "error") return false;
-  if (!f.delivered && f.outcome === null && nowMs - f.firedAtMs > INTERRUPTED_FIRE_MS) {
-    return false;
-  }
+  if (f.outcome === null && nowMs - f.firedAtMs > INTERRUPTED_FIRE_MS) return false;
   return true;
 }
 

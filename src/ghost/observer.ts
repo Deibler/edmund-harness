@@ -10,6 +10,7 @@ import { getSpendLedger, localDay } from "../spend/ledger.ts";
 import { log } from "../util/log.ts";
 import { isContact } from "./budget.ts";
 import { resolveIntensity } from "./intensity.ts";
+import { withLandingEvidence } from "./landed.ts";
 import {
   type SessionActivity,
   type TickReason,
@@ -24,6 +25,7 @@ import {
 import {
   type GhostDecision,
   type GhostSmsHistory,
+  lastMessageAtMs,
   lastTickTimes,
   recordDecisionNote,
   runGhostTick,
@@ -178,10 +180,13 @@ export class GhostObserver {
     this.armSettledTick(sessionKey, SETTLE_MS + Math.floor(Math.random() * SETTLE_JITTER_MS));
   }
 
-  /** Milliseconds since anything moved in this chat, either direction. */
+  /** Milliseconds since anything moved in this chat, either direction:
+   *  the chat's own newest message (group chatter Edmund wasn't addressed
+   *  in included), the session's turn times and the last reply seen. */
   quietForMs(sessionKey: SessionKey, nowMs: number): number {
     const s = this.deps.state.getSession(sessionKey);
     const last = Math.max(
+      lastMessageAtMs(sessionKey, this.deps) ?? 0,
       s?.lastInboundMs ?? 0,
       s?.lastOutboundMs ?? 0,
       this.lastReplyAtMs.get(sessionKey) ?? 0,
@@ -395,8 +400,12 @@ export class GhostObserver {
       // reached the person; vetoed, errored and interrupted fires did not.
       prefsStore: {
         recentFires: (key: SessionKey, limit: number) =>
-          this.deps.prefs
-            .recentFires(key, limit + 10)
+          withLandingEvidence(
+            this.deps.prefs.recentFires(key, limit + 10),
+            key,
+            this.deps,
+            Date.now(),
+          )
             .filter((f) => isContact(f, Date.now()))
             .slice(0, limit),
       },
