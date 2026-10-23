@@ -37,7 +37,7 @@ import { describeVideo } from "../media/video-probe.ts";
 import type { AutoRecallResult } from "../memory/auto-recall.ts";
 import { type ModelBackend, backendForModel, transitionModelSession } from "../model/backend.ts";
 import { modelProfileForSession } from "../model/profile.ts";
-import { compactConfigFor, runModel } from "../model/runner.ts";
+import { compactConfigFor, dropRefusedThread, runModel } from "../model/runner.ts";
 import { invocationsForSession, orchestratorForSession } from "../orchestrators/registry.ts";
 import { viewerForSession } from "../orchestrators/visibility.ts";
 import { copyReceivedAttachments } from "../persona/copy-received.ts";
@@ -314,6 +314,10 @@ function scheduleDeferredCompact(key: SessionKey, deps: Deps): void {
               dur_ms: compactResult.durationMs,
               error: compactResult.error,
             });
+            // Except a refusal: summarising re-sends the history that was
+            // judged, so every retry fails the same way while the thread
+            // grows. Re-anchor instead, as Codex does at the threshold.
+            await dropRefusedThread(compactResult, null, state, key, "claude");
           }
         } else {
           // No warm worker (rare — usually the just-finished turn left one

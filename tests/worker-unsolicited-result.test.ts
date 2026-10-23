@@ -10,6 +10,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker, isUnsolicitedResult, stampTurnUuid } from "../src/claude/worker.ts";
+import { classifyError } from "../src/recovery/classify.ts";
 
 const bin = mkdtempSync(join(tmpdir(), "fake-claude-"));
 writeFileSync(
@@ -52,6 +53,25 @@ describe("a result for a turn the CLI started itself", () => {
       expect((await w.turn({ stdinPayload: user("hello") })).ok).toBe(true);
       const c = await w.compact();
       expect(c.ok).toBe(true);
+    } finally {
+      await w.shutdown("test done");
+    }
+  });
+
+  test("a /compact the CLI reports as an error-text success is a failure", async () => {
+    const w = worker(["--replay-user-messages", "--resume", "fake-session", "--fail-compact"]);
+    try {
+      expect((await w.turn({ stdinPayload: user("hello") })).ok).toBe(true);
+      const c = await w.compact();
+      expect(c.ok).toBe(false);
+      if (!c.ok) {
+        expect(c.error).toStartWith("Error during compaction: API Error:");
+        // The caller re-anchors on exactly this class (dropRefusedThread).
+        expect(classifyError(c.error)).toBe("thread_refused");
+      }
+      // An ordinary turn on the same worker is untouched.
+      const r = await w.turn({ stdinPayload: user("again") });
+      expect(r.ok && r.reply).toBe("echo: again");
     } finally {
       await w.shutdown("test done");
     }

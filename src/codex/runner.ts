@@ -313,8 +313,7 @@ export async function runCodex(
     store.setClaudeSessionId(input.sessionKey, null);
     result = await attempt(null);
   }
-  result = dropRefusedThread(result, priorId, store, input.sessionKey);
-
+  // A refused thread is forgotten in runModel (dropRefusedThread), for both CLIs.
   if (result.ok) store.clearError(input.sessionKey);
   else if (!input.signal?.aborted) {
     store.recordError(input.sessionKey, classifyError(result.error), Date.now());
@@ -336,32 +335,6 @@ function scrubGuestSecrets(env: Record<string, string>): void {
   ]) {
     delete env[key];
   }
-}
-
-/**
- * A thread the provider refused is never resumed again. Resuming re-sends the
- * same history, which is what was judged, so it fails the same way every time
- * (10 of 10 on 2026-10-02, recovery retrying it every 30 minutes for 3h+).
- * Forget the stored id so the next turn cold-starts with the recent chat, and
- * strip it from the result: callers persist a failed turn's thread id, which
- * would put the refused thread straight back.
- *
- * No retry here: this turn's envelope was built for a resume and carries no
- * history, so a cold retry would answer without the conversation.
- */
-export function dropRefusedThread(
-  result: RunResult,
-  priorId: string | null,
-  store: Pick<StateStore, "setClaudeSessionId">,
-  sessionKey: SessionKey,
-): RunResult {
-  if (result.ok || classifyError(result.error) !== "thread_refused") return result;
-  log.warn("codex", "provider refused the thread — next turn starts a fresh one", {
-    session: sessionKey,
-    thread_id: result.claudeSessionId ?? priorId ?? undefined,
-  });
-  store.setClaudeSessionId(sessionKey, null);
-  return { ok: false, error: result.error };
 }
 
 function isMissingCodexSession(error: string): boolean {

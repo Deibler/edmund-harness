@@ -512,7 +512,7 @@ export class Worker {
    * next turn — the same teardown user-driven turn interrupts already
    * exercise, so no new failure mode.
    */
-  compact(signal?: AbortSignal): Promise<WorkerResult> {
+  async compact(signal?: AbortSignal): Promise<WorkerResult> {
     const stdinPayload = `${JSON.stringify({
       type: "user",
       message: {
@@ -520,7 +520,20 @@ export class Worker {
         content: [{ type: "text", text: "/compact" }],
       },
     })}\n`;
-    return this.turn({ stdinPayload, signal });
+    const result = await this.turn({ stdinPayload, signal });
+    // A failed /compact still ends in a success result whose text is the
+    // CLI's stderr ("Error during compaction: API Error: ..."). Taken at face
+    // value, seven refused compactions of one DM logged as applied on
+    // 2026-10-23 while its context grew from 209k to 259k.
+    if (result.ok && /^Error during compaction\b/.test(result.reply)) {
+      return {
+        ok: false,
+        error: result.reply,
+        claudeSessionId: result.claudeSessionId,
+        durationMs: result.durationMs,
+      };
+    }
+    return result;
   }
 
   /** Gracefully end the worker. End stdin first so the CLI sees EOF and

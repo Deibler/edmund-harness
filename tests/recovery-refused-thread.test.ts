@@ -6,17 +6,19 @@ import { Database } from "bun:sqlite";
  * healer ran, and recovery retried it every 30 minutes. These pin the way
  * out: classify it, drop the thread wherever it was stored, carry the recent
  * chat into the cold recovery turn, and clear the answered rows' acks so a
- * restart doesn't answer them twice.
+ * restart doesn't answer them twice. Claude's safeguards took the same shape
+ * on 2026-10-23 ("safeguards flagged this message"): four turns and seven
+ * /compacts of one DM failed on the same thread.
  */
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { wakeThread } from "../src/channels/history.ts";
-import type { RunResult } from "../src/claude/runner.ts";
-import { dropRefusedThread } from "../src/codex/runner.ts";
+import { type RunResult, inBandHealer } from "../src/claude/runner.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { ChatDb } from "../src/imessage/db.ts";
+import { dropRefusedThread } from "../src/model/runner.ts";
 import { classifyError } from "../src/recovery/classify.ts";
 import { HEALERS } from "../src/recovery/healers.ts";
 import { markRecovered, recoveryTurnEnvelope } from "../src/recovery/turn.ts";
@@ -26,6 +28,8 @@ import { emptyChatDb } from "./helpers/chat-db.ts";
 
 const REFUSAL =
   "This request was blocked by our safety systems. Reason: Potentially unintended activity.";
+const CLAUDE_REFUSAL =
+  "API Error: Opus 4.8's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate cybersecurity work.";
 const HANDLE = "+15550100003";
 const GUID = `any;-;${HANDLE}`;
 const KEY = `imessage:dm:${HANDLE}`;
@@ -84,19 +88,45 @@ describe("a thread the provider refused", () => {
     expect(classifyError(REFUSAL)).toBe("thread_refused");
   });
 
-  test("the runner forgets the thread and keeps the caller from restoring it", () => {
-    const failed: RunResult = { ok: false, error: REFUSAL, claudeSessionId: THREAD };
-    const out = dropRefusedThread(failed, THREAD, state, KEY);
-    expect(out.ok).toBe(false);
-    // The inbound path persists a failed turn's thread id; it must be gone.
-    expect(out.ok === false && out.claudeSessionId).toBeFalsy();
-    expect(state.getSession(KEY)?.claudeSessionId).toBeNull();
+  for (const [backend, error] of [
+    ["codex", REFUSAL],
+    ["claude", CLAUDE_REFUSAL],
+  ] as const) {
+    test(`runModel forgets a ${backend} thread and keeps the caller from restoring it`, async () => {
+      const failed: RunResult = { ok: false, error, claudeSessionId: THREAD };
+      const out = await dropRefusedThread(failed, THREAD, state, KEY, backend);
+      expect(out.ok).toBe(false);
+      // The inbound path persists a failed turn's thread id; it must be gone.
+      expect(out.ok === false && out.claudeSessionId).toBeFalsy();
+      expect(state.getSession(KEY)?.claudeSessionId).toBeNull();
+    });
+  }
+
+  test("any other failure keeps the thread", async () => {
+    const failed: RunResult = { ok: false, error: "overloaded (529)", claudeSessionId: THREAD };
+    expect(await dropRefusedThread(failed, THREAD, state, KEY, "claude")).toBe(failed);
+    expect(state.getSession(KEY)?.claudeSessionId).toBe(THREAD);
   });
 
-  test("any other failure keeps the thread", () => {
-    const failed: RunResult = { ok: false, error: "overloaded (529)", claudeSessionId: THREAD };
-    expect(dropRefusedThread(failed, THREAD, state, KEY)).toBe(failed);
-    expect(state.getSession(KEY)?.claudeSessionId).toBe(THREAD);
+  test("the Claude runner never heals a refusal and retries the same resume", () => {
+    expect(inBandHealer("thread_refused")).toBeNull();
+    expect(inBandHealer("bad_tool_ids")).toBe(HEALERS.bad_tool_ids);
+    // Both in-band heal sites (pool and spawn-per-turn) go through it.
+    const runner = readFileSync(join(import.meta.dir, "../src/claude/runner.ts"), "utf8");
+    expect(runner.match(/HEALERS\[/g)?.length).toBe(1);
+    expect(runner.match(/const healer = inBandHealer\(cls\)/g)?.length).toBe(2);
+  });
+
+  test("every turn, whichever CLI ran it, passes through the drop", () => {
+    const model = readFileSync(join(import.meta.dir, "../src/model/runner.ts"), "utf8");
+    expect(model).toMatch(
+      /result = await dropRefusedThread\(\s*result,\s*transition\.sessionId,\s*store,\s*rawInput\.sessionKey,\s*backend,?\s*\);/,
+    );
+  });
+
+  test("a refused /compact re-anchors the thread instead of retrying it", () => {
+    const turn = readFileSync(join(import.meta.dir, "../src/channels/turn.ts"), "utf8");
+    expect(turn).toContain('await dropRefusedThread(compactResult, null, state, key, "claude")');
   });
 
   test("the healer drops a refused thread that was stored anyway", async () => {

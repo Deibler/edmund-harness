@@ -7,7 +7,7 @@ import { deriveGuestLoadout } from "../guests/access.ts";
 import { buildRunSystemPrompt } from "../model/context.ts";
 import { modelProfileForSession } from "../model/profile.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
-import { classifyError } from "../recovery/classify.ts";
+import { type FailureClass, classifyError } from "../recovery/classify.ts";
 import { HEALERS } from "../recovery/healers.ts";
 import {
   disallowedBuiltinTools,
@@ -566,7 +566,7 @@ export async function runClaude(
     // crashed mid-turn, etc.) so we don't need a second retry layer here.
     const cls = classifyError(result.error);
     store.recordError(input.sessionKey, cls, Date.now());
-    const healer = HEALERS[cls];
+    const healer = inBandHealer(cls);
     if (healer) {
       try {
         const heal = await healer(input.sessionKey, {
@@ -768,7 +768,7 @@ async function runViaPool(args: {
 
     const cls = classifyError(result.error);
     store.recordError(input.sessionKey, cls, Date.now());
-    const healer = HEALERS[cls];
+    const healer = inBandHealer(cls);
     if (healer) {
       try {
         const heal = await healer(input.sessionKey, {
@@ -810,6 +810,16 @@ async function runViaPool(args: {
   if (cold.ok) store.clearError(input.sessionKey);
   else store.recordError(input.sessionKey, classifyError(cold.error), Date.now());
   return cold;
+}
+
+/**
+ * The healer a failed resume may apply before retrying that same resume. A
+ * refused thread gets none: the retry would re-send the history that was
+ * judged and be refused again. runModel forgets that thread instead
+ * (dropRefusedThread) and recovery answers on a fresh one.
+ */
+export function inBandHealer(cls: FailureClass) {
+  return cls === "thread_refused" ? null : HEALERS[cls];
 }
 
 async function coldStartViaPool(
