@@ -323,18 +323,17 @@ export function cancelAgent(store: AgentStore, id: string, reason: string): bool
 /**
  * Stop an agent's runner and its CLI. The runner is spawned detached, so it
  * leads its own process group and the CLI is in it; signalling the pid alone
- * (what cancel did) left the CLI running. Falls back to the pid for a runner
- * that is not a group leader.
+ * (what cancel did) left the CLI running. Only the group is signalled: when
+ * it is gone (ESRCH) the runner died without settling its row, and the bare
+ * pid may since belong to an unrelated process. A pid that is not positive
+ * is never signalled (kill(-0) is the caller's own group).
  */
 export function killAgentProcess(pid: number): void {
+  if (!(pid > 0)) return;
   try {
     process.kill(-pid, "SIGTERM");
   } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
+    // ESRCH: nothing of ours left to stop. EPERM: not ours.
   }
 }
 

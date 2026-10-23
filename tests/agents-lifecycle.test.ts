@@ -505,6 +505,41 @@ describe("a sub-agent's background job", () => {
     expect(await withAgentHeartbeat(PARENT, "/nonexistent", async () => 7)).toBe(7);
   });
 
+  test("stops stamping when the call ends, by return or by throw", async () => {
+    const f = fixture();
+    const a = f.add();
+    f.store.claimRunning(a.id, 0);
+    // Count beats, not timestamps: after the call its store is closed, so a
+    // leaked timer's beats would fail quietly and leave the row unchanged.
+    const real = AgentStore.prototype.heartbeat;
+    let beats = 0;
+    AgentStore.prototype.heartbeat = function (this: AgentStore, ...args) {
+      beats++;
+      return real.apply(this, args);
+    };
+    try {
+      for (const ends of ["return", "throw"] as const) {
+        const call = withAgentHeartbeat(
+          `agent:${a.id}`,
+          f.dataDir,
+          async () => {
+            await Bun.sleep(40);
+            if (ends === "throw") throw new Error("tool failed");
+          },
+          10,
+        );
+        if (ends === "throw") await expect(call).rejects.toThrow("tool failed");
+        else await call;
+        const atEnd = beats;
+        expect(atEnd).toBeGreaterThan(2); // it did beat during the call
+        await Bun.sleep(80);
+        expect(`${ends}: ${beats - atEnd}`).toBe(`${ends}: 0`);
+      }
+    } finally {
+      AgentStore.prototype.heartbeat = real;
+    }
+  });
+
   test("cannot be spawned for an agent: session", () => {
     expect(() =>
       spawnBgJob({
@@ -552,6 +587,35 @@ describe("stopping an agent stops its CLI too", () => {
     expect(alive(g.child)).toBe(true);
     killAgentProcess(g.leader);
     expect(await waitFor(() => !alive(g.child))).toBe(true);
+  });
+
+  test("a pid that leads no group is left alone: it may have been reused", async () => {
+    // Not detached: this process is in the test's own group, as an unrelated
+    // process that took a dead runner's pid would be in some other group.
+    const stranger = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      killAgentProcess(stranger.pid!);
+      await Bun.sleep(200);
+      expect(alive(stranger.pid!)).toBe(true);
+    } finally {
+      stranger.kill("SIGKILL");
+    }
+  });
+
+  test("a pid that is not positive is never signalled", () => {
+    const real = process.kill;
+    const sent: number[] = [];
+    process.kill = ((pid: number) => {
+      sent.push(pid);
+      return true;
+    }) as typeof process.kill;
+    try {
+      killAgentProcess(0);
+      killAgentProcess(-5);
+    } finally {
+      process.kill = real;
+    }
+    expect(sent).toEqual([]);
   });
 
   test("the dashboard's cancel takes the same path as cancel_agent", async () => {
@@ -681,7 +745,7 @@ describe("every path goes through the shared settle and kill", () => {
       const src = readFileSync(join(root, f), "utf8");
       expect(`${f}: ${/crons\.create\(/.test(src)}`).toBe(`${f}: false`);
       const kills = src.match(/process\.kill\(/g)?.length ?? 0;
-      expect(`${f}: ${kills}`).toBe(`${f}: ${f === "src/agents/spawn.ts" ? 2 : 0}`);
+      expect(`${f}: ${kills}`).toBe(`${f}: ${f === "src/agents/spawn.ts" ? 1 : 0}`);
       expect(`${f}: ${/\.finish\(/.test(src)}`).toBe(`${f}: false`);
     }
   });
