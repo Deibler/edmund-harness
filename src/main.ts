@@ -253,7 +253,7 @@ async function main() {
   const outcomeSweep = setInterval(
     () => {
       try {
-        sweepFireOutcomes({ prefs: ghostPrefs, chatDb, state });
+        sweepFireOutcomes({ prefs: ghostPrefs, chatDb, state, contacts });
       } catch (err) {
         console.error("[brown-nose-outcome] sweep failed", err);
       }
@@ -355,7 +355,7 @@ async function main() {
   // is missing or empty, the daemon still starts — but the warning lines in
   // daemon.log let the operator spot it before the first conversation goes
   // sideways ("why is Edmund ignoring his persona?").
-  const loadout = checkLoadout(config.claude.model);
+  const loadout = checkLoadout(config.claude.model, config.claude.agent_model);
   console.log(formatLoadoutReport(loadout));
 
   const activeSessions = new Set<SessionKey>();

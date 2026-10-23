@@ -63,7 +63,8 @@ export function withLandingEvidence(
   });
 }
 
-const SELF_ONLY = {
+/** A contact book that knows no one: each handle stands for itself. */
+export const SELF_ONLY_CONTACTS = {
   allKnownHandles: () => [],
   canon: (h: string) => h,
 } as unknown as ContactBook;
@@ -99,7 +100,7 @@ export function landingIn(
         ? "answering"
         : "unprompted";
     }
-    const guids = chatGuidsForSession(sessionKey, deps.chatDb, deps.contacts ?? SELF_ONLY);
+    const guids = chatGuidsForSession(sessionKey, deps.chatDb, deps.contacts ?? SELF_ONLY_CONTACTS);
     // No chat row for the session: chat.db holds every message the bridge
     // delivered, so nothing reached one.
     if (guids.length === 0) return "none";
