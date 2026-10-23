@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 /**
  * Tests for the brown-nose MCP tools. Each test constructs a fake
  * ToolContext pointed at a temp data dir + sandbox, invokes the tool
@@ -223,6 +224,17 @@ describe("ghost_status + query_ghost", () => {
 
   test("ghost_status counts a cooldown only from a fire that reached them", async () => {
     const { ctx, prefs, cleanup } = setup();
+    // A readable chat for this DM: with none, a vetoed fire counts as sent.
+    const db = emptyChatDb();
+    const w = new Database(db.path);
+    w.exec("ALTER TABLE chat ADD COLUMN style INTEGER");
+    w.exec(
+      "INSERT INTO chat (ROWID, guid, chat_identifier, style) VALUES (1, 'any;-;+19995550042', '+19995550042', 45)",
+    );
+    w.exec("INSERT INTO handle (ROWID, id, service) VALUES (1, '+19995550042', 'iMessage')");
+    w.exec("INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (1, 1)");
+    w.close();
+    ctx.chatDb = new ChatDb(db.path);
     try {
       await findTool(ctx, "set_brown_nose").handler({ enabled: true });
       const status = async () =>
@@ -236,6 +248,15 @@ describe("ghost_status + query_ghost", () => {
       });
       prefs.recordOutcome(vetoed, "vetoed");
       expect(await status()).toContain("(now — no active cooldown)");
+      // The same vetoed fire, but chat.db shows Edmund's message landed.
+      const w2 = new Database(db.path);
+      const dateNs = (Date.now() - 50_000 - 978_307_200_000) * 1_000_000;
+      w2.exec(
+        `INSERT INTO message (ROWID, guid, text, handle_id, is_from_me, date) VALUES (1, 'G1', 'hey', 0, 1, ${dateNs})`,
+      );
+      w2.exec("INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, 1)");
+      w2.close();
+      expect(await status()).not.toContain("no active cooldown");
       const sent = prefs.recordFire({
         sessionKey: JORDAN,
         firedAtMs: Date.now() - 30_000,
@@ -247,6 +268,8 @@ describe("ghost_status + query_ghost", () => {
       expect(after).not.toContain("no active cooldown");
       expect(after).toMatch(/next eligible: \w{3}, \w{3} \d+ \d{4} at .* E[SD]T/);
     } finally {
+      ctx.chatDb.close();
+      db.cleanup();
       cleanup();
     }
   });

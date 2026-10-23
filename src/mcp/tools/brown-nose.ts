@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { isContact } from "../../ghost/budget.ts";
 import { resolveIntensity } from "../../ghost/intensity.ts";
+import { withLandingEvidence } from "../../ghost/landed.ts";
 import {
   type ActiveHoursWindow,
   DEFAULT_ACTIVE_HOURS_DM,
@@ -348,7 +349,12 @@ export function brownNoseTools(ctx: ToolContext): ToolDef[] {
           // The cooldown runs from the last fire that reached them, as the
           // budget counts it: a vetoed or interrupted fire starts none.
           const now = Date.now();
-          const lastFire = prefs.recentFires(sessionKey, 20).find((f) => isContact(f, now));
+          const lastFire = withLandingEvidence(
+            prefs.recentFires(sessionKey, 20),
+            sessionKey,
+            { chatDb: ctx.chatDb, contacts: ctx.contacts },
+            now,
+          ).find((f) => isContact(f, now));
           const nextEligibleMs = lastFire
             ? lastFire.firedAtMs + params.cooldownHours * 3_600_000 * row.cooldownMultiplier
             : 0;
