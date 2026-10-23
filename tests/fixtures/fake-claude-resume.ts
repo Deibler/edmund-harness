@@ -6,9 +6,14 @@
  * before the first message on stdin is read. Each message then gets an init,
  * its --replay-user-messages echo (only when that flag is passed), a reply
  * and a result. "/compact" is answered like the real CLI: echo, then a
- * num_turns 0 result.
+ * num_turns 0 result. With --fail-compact that result carries the stderr the
+ * real CLI (2.1.x) printed for a refused compaction on 2026-10-23, still as a
+ * success.
  */
 const replay = process.argv.includes("--replay-user-messages");
+const failCompact = process.argv.includes("--fail-compact");
+const REFUSED_COMPACTION =
+  "Error during compaction: API Error: Opus 4.8's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate cybersecurity work. Learn more: https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude\n\nDetails: `[cyber]`\n\nRequest ID: req_011CgJmcQf43kt74HCFfdqWt\n\nMessage ID: msg_011CgJmcRG1ZAxfgjQyn5HM8";
 const sid = "fake-session";
 const out = (e: unknown) => process.stdout.write(`${JSON.stringify(e)}\n`);
 
@@ -55,7 +60,7 @@ process.stdin.on("data", (chunk) => {
         subtype: "success",
         is_error: false,
         num_turns: 0,
-        result: "",
+        result: failCompact ? REFUSED_COMPACTION : "",
         session_id: sid,
       });
       continue;

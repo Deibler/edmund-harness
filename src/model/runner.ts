@@ -6,6 +6,7 @@ import type { Config } from "../config/config.ts";
 import { endScreenHold, screenLockPath } from "../mcp/computer-use/lock.ts";
 import { noteTurnStart } from "../mcp/computer-use/turn.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
+import { classifyError } from "../recovery/classify.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { log } from "../util/log.ts";
@@ -100,6 +101,39 @@ export function noteScreenTurn(config: Config, sessionKey: string, cronJob: stri
   }
 }
 
+/**
+ * A thread the provider refused is never resumed again. Resuming re-sends the
+ * same history, which is what was judged, so it fails the same way every time
+ * (Codex: 10 of 10 on 2026-10-02, recovery retrying it every 30 minutes for
+ * 3h+; Claude: four turns running on 2026-10-23). Forget the stored id so the
+ * next turn cold-starts with the recent chat, and strip it from the result:
+ * callers persist a failed turn's thread id, which would put the refused
+ * thread straight back. A warm Claude worker goes too: it holds the refused
+ * history in memory, and the pool reuses a session's worker whatever id the
+ * next spawn asks for.
+ *
+ * No retry here: this turn's envelope was built for a resume and carries no
+ * history, so a cold retry would answer without the conversation. Recovery
+ * answers on the fresh thread, with the recent chat in its envelope.
+ */
+export async function dropRefusedThread(
+  result: RunResult,
+  priorId: string | null,
+  store: Pick<StateStore, "setModelSession">,
+  sessionKey: SessionKey,
+  backend: ModelBackend,
+): Promise<RunResult> {
+  if (result.ok || classifyError(result.error) !== "thread_refused") return result;
+  log.warn("model", "provider refused the thread — next turn starts a fresh one", {
+    session: sessionKey,
+    backend,
+    thread_id: result.claudeSessionId ?? priorId ?? undefined,
+  });
+  if (backend === "claude") await evictWarmWorker(sessionKey, "provider refused the thread");
+  store.setModelSession(sessionKey, null, backend);
+  return { ok: false, error: result.error };
+}
+
 /** The model a session runs on, and which CLI that model belongs to. */
 function sessionModel(sessionKey: SessionKey, config: Config) {
   const orchestrator = orchestratorForSession(sessionKey, config);
@@ -170,6 +204,13 @@ export async function runModel(
   } finally {
     releaseScreen(config, rawInput.sessionKey);
   }
+  result = await dropRefusedThread(
+    result,
+    transition.sessionId,
+    store,
+    rawInput.sessionKey,
+    backend,
+  );
 
   if (result.claudeSessionId !== undefined) {
     store.setModelSession(rawInput.sessionKey, result.claudeSessionId, backend);

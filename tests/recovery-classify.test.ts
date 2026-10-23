@@ -50,6 +50,22 @@ const CASES: Array<{ msg: string; cls: FailureClass }> = [
     msg: "This request was blocked by our safety systems. Reason: Potentially unintended activity.",
     cls: "thread_refused",
   },
+  // Claude's, verbatim from one DM on 2026-10-23: the fallback model's
+  // safeguards flagged the thread after the CLI's own retry and fallback.
+  // Four turns failed running; the same words failed seven /compacts.
+  {
+    msg: "API Error: Opus 4.8's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate cybersecurity work. Learn more: https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude\n\nDetails: `[cyber]`\n\nRequest ID: req_011CgKZqA2hWHZFXuDCMW5F8",
+    cls: "thread_refused",
+  },
+  {
+    msg: "Error during compaction: API Error: Opus 4.8's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster",
+    cls: "thread_refused",
+  },
+  // A different compaction failure is not a refusal of the thread.
+  {
+    msg: "Error during compaction: API Error: Output blocked by content filtering policy",
+    cls: "unknown",
+  },
   // transient_api
   { msg: "Rate limit exceeded — retry later", cls: "transient_api" },
   { msg: "got 429 Too Many Requests", cls: "transient_api" },

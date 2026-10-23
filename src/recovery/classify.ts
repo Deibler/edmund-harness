@@ -68,6 +68,13 @@ const CLASSIFIERS: ClassifierRow[] = [
   // 3h+ on 2026-10-02 while every other Codex thread ran clean. Resuming
   // cannot help; the one lever the harness has is a fresh thread.
   { pattern: /blocked by our safety systems/i, cls: "thread_refused" },
+  // Claude's version. The CLI absorbs the first flags itself (one retry with
+  // the flag noted, then a fall back to the previous Opus); this is what
+  // arrives when the fallback model's safeguards flag it too ("API Error:
+  // Opus 4.8's safeguards flagged this message."). Just as sticky: one DM
+  // failed four turns running on 2026-10-23, the recovery retry included,
+  // and every /compact of that thread failed with the same words.
+  { pattern: /safeguards flagged this/i, cls: "thread_refused" },
   // imsg IMCore bridge wedge: dylib in Messages.app stopped ACK'ing RPCs.
   // Heal by relaunching Messages with `imsg launch` (re-injects the dylib).
   // Matched BEFORE the generic /timeout/ pattern so it wins over transient_api.

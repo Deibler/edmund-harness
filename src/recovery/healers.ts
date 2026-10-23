@@ -142,17 +142,28 @@ async function healStaleSessionId(sessionKey: SessionKey, deps: HealerDeps): Pro
 /**
  * The provider refuses to continue this thread, so start a new one: the same
  * re-anchor auto-compact uses. The next turn cold-starts and carries the
- * recent chat instead of the refused history. The Codex runner already does
- * this the moment a turn is refused; this covers anything that persisted a
- * refused thread id anyway.
+ * recent chat instead of the refused history. runModel already does this the
+ * moment a turn is refused (dropRefusedThread); this covers anything that
+ * persisted a refused thread id anyway. The warm worker goes with it: the
+ * pool would otherwise hand the "cold" turn the process still holding the
+ * refused history.
  */
 async function healRefusedThread(sessionKey: SessionKey, deps: HealerDeps): Promise<HealResult> {
   const sess = deps.state.getSession(sessionKey);
+  const evicted = await evictWarmWorker(sessionKey, "thread_refused heal");
   if (!sess?.claudeSessionId) {
-    return { ok: true, changed: false, detail: "already on a fresh thread" };
+    return {
+      ok: true,
+      changed: evicted,
+      detail: evicted ? "evicted the warm worker" : "already on a fresh thread",
+    };
   }
   deps.state.setClaudeSessionId(sessionKey, null);
-  log.info("heal", "thread_refused", { session: sessionKey, dropped: sess.claudeSessionId });
+  log.info("heal", "thread_refused", {
+    session: sessionKey,
+    dropped: sess.claudeSessionId,
+    evicted_worker: evicted,
+  });
   return { ok: true, changed: true, detail: `dropped refused thread ${sess.claudeSessionId}` };
 }
 
