@@ -49,6 +49,8 @@ function fire(firedAtMs: number, outcome: FireRecord["outcome"] = null): FireRec
     tags: [],
     outcome,
     outcomeAtMs: outcome ? firedAtMs + 60_000 : null,
+    reactionGlyph: null,
+    delivered: true,
   };
 }
 

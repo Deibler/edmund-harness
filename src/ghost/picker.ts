@@ -32,7 +32,9 @@ import { type ActiveHoursWindow, type BrownNosePrefs, snoozeActive } from "./pre
  * so tests are deterministic.
  */
 
-export type TickReason = "window_start" | "quiet_4h" | "quiet_24h" | "sweep";
+/** "settled" is not picked here: the observer ticks a chat once an
+ *  exchange with Edmund has gone quiet (see GhostObserver.onMainReplied). */
+export type TickReason = "window_start" | "quiet_4h" | "quiet_24h" | "sweep" | "settled";
 
 export type SessionActivity = {
   /** Last user inbound timestamp; 0 if never. */

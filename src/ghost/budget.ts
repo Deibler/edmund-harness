@@ -24,6 +24,27 @@ import type { ActiveHoursWindow, BrownNosePrefs, FireRecord, FocusSuggestion } f
 
 export type GateResult = { ok: true } | { ok: false; reason: string };
 
+/** An undelivered, unscored fire this old was cut off mid-run (a restart
+ *  between recordFire and delivery) and will never be delivered. A fire's
+ *  main run is bounded by the turn timeout, minutes not hours. */
+export const INTERRUPTED_FIRE_MS = 6 * 3_600_000;
+
+/**
+ * Did this fire reach the person, or may it still? Only those pace the
+ * next one. A vetoed fire (main's KEEP_QUIET) and an errored one never
+ * reached them, and neither did an interrupted one: counting them held
+ * chats in cooldown, against the weekly cap and, for an interrupted fire,
+ * behind the one-open-thread gate with no way out but the person writing
+ * first (one live fire sat that way from 2026-07-28 on).
+ */
+export function isContact(f: FireRecord, nowMs: number): boolean {
+  if (f.outcome === "vetoed" || f.outcome === "error") return false;
+  if (!f.delivered && f.outcome === null && nowMs - f.firedAtMs > INTERRUPTED_FIRE_MS) {
+    return false;
+  }
+  return true;
+}
+
 export function checkEnabled(prefs: BrownNosePrefs, globalEnabled: boolean): GateResult {
   if (!globalEnabled) return { ok: false, reason: "global brown_nose disabled" };
   if (!prefs.enabled) {
@@ -88,8 +109,8 @@ export function checkCooldown(
   intensity: number,
   nowMs: number,
 ): GateResult {
-  if (recentFires.length === 0) return { ok: true };
-  const last = recentFires[0]!;
+  const last = recentFires.find((f) => isContact(f, nowMs));
+  if (!last) return { ok: true };
   const params = resolveIntensity(intensity);
   const jitter = cooldownJitterFactor(last.id);
   const cooldownMs = params.cooldownHours * 3_600_000 * prefs.cooldownMultiplier * jitter;
@@ -111,23 +132,32 @@ export function checkCooldown(
  * resolves the verdict within 36h (engaged/ignored) and normal pacing —
  * with decay if ignored — resumes from there.
  */
-export function checkOutstandingFire(recentFires: FireRecord[], lastInboundMs: number): GateResult {
-  const last = recentFires[0];
+export function checkOutstandingFire(
+  recentFires: FireRecord[],
+  lastInboundMs: number,
+  nowMs: number = Date.now(),
+): GateResult {
+  const last = recentFires.find((f) => isContact(f, nowMs));
   if (!last) return { ok: true };
   if (last.outcome !== null) return { ok: true };
   if (lastInboundMs > last.firedAtMs) return { ok: true };
   return {
     ok: false,
-    reason: `outstanding proactive thread — last fire (${formatDurationMs(Date.now() - last.firedAtMs)} ago) is unanswered; never stack proactive messages into silence`,
+    reason: `outstanding proactive thread — last fire (${formatDurationMs(nowMs - last.firedAtMs)} ago) is unanswered; never stack proactive messages into silence`,
   };
 }
 
-/** Fires in trailing 7 days vs the session's `weeklyCap`. */
-export function checkWeeklyCap(prefs: BrownNosePrefs, weekFires: FireRecord[]): GateResult {
-  if (weekFires.length < prefs.weeklyCap) return { ok: true };
+/** Fires that reached the person in the trailing 7 days vs `weeklyCap`. */
+export function checkWeeklyCap(
+  prefs: BrownNosePrefs,
+  weekFires: FireRecord[],
+  nowMs: number = Date.now(),
+): GateResult {
+  const used = weekFires.filter((f) => isContact(f, nowMs)).length;
+  if (used < prefs.weeklyCap) return { ok: true };
   return {
     ok: false,
-    reason: `weekly cap hit (${weekFires.length}/${prefs.weeklyCap})`,
+    reason: `weekly cap hit (${used}/${prefs.weeklyCap})`,
   };
 }
 
@@ -240,7 +270,7 @@ export function preflightGate(args: {
     checkEnabled(args.prefs, args.globalEnabled),
     checkActiveHours(args.prefs, args.nowMs),
     checkCooldown(args.prefs, args.recentFires, args.intensity, args.nowMs),
-    checkWeeklyCap(args.prefs, args.weekFires),
+    checkWeeklyCap(args.prefs, args.weekFires, args.nowMs),
   ];
   for (const c of checks) if (!c.ok) return c;
   return { ok: true };

@@ -1,0 +1,13 @@
+---
+"edmund-harness": patch
+---
+
+The ghost looks at chats once a conversation has settled, spreads its sweeps across every enabled chat, and its pre-screen judges with the ghost's own calibration.
+
+- **Settled ticks instead of post-reply ticks.** A reply used to schedule a ghost tick 60-120 seconds later. Over 2026-10-09..23, 288 of 394 ticks landed within 2.5 minutes of Edmund's own message, and the pre-screen declined nearly all of them as mid-conversation. The tick now waits until the chat has been quiet for 30 minutes (the gap that splits conversation episodes), re-arming while it isn't.
+- **Sweeps reach every chat.** The observer kept tick history in memory, so each restart (16 in those two weeks) made every chat look never-ticked and the sweep fell back to list order. 30 of 58 enabled chats got no sweep in that window. Each decision now records what triggered it, and the observer rebuilds its history from the decision logs at start.
+- **The pre-screen judges like the ghost.** It decided 371 of 381 verdicts on four generic lines, so the intensity setting never reached it. It now reads GHOST.md with the operator's intensity clause, minus the sections about tools, workspace and scheduling. It no longer receives the full tick's `submit_decision` directive and workspace paths: given them, it called ToolSearch 70 times and edited the ghost's notes. A pre-screen with no usable verdict still lets the tick run, but it is logged and stamped on the decision (`prescreen: "failed-open"`). GHOST.md without the `{{eagernessClause}}` placeholder (the shipped template) now gets the intensity clause appended.
+- **The full tick names its tools:** ToolSearch (19 of 20 ticks needed it to load `submit_decision`), Read, Write, Edit, Glob, Grep, WebSearch and WebFetch. No Bash.
+- **The ghost sees the right end of long files.** Person files were cut to their first 4000 bytes, which dropped Open Items in 14 of the 15 files over that size. The excerpt now keeps every section, with Open Items and the newest dated entries first. Ghost notes keep their newest dated sections wherever they sit in the file.
+- **Pacing reads as a status.** The prompt printed the effective cooldown hours even after the cooldown had cleared, and 42 of 393 decisions declined on "the 108h cooldown applies". It now says the cooldown is clear and how much of the weekly cap is used.
+- **Only messages that reached the person pace the next one.** Vetoed fires, errored fires and fires interrupted before delivery no longer start a cooldown, count toward the weekly cap or the 48-hour spacing, or hold the one-open-thread gate. An interrupted fire had held one chat's gate since 2026-07-28.

@@ -8,6 +8,7 @@ import { isGroupSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { getSpendLedger, localDay } from "../spend/ledger.ts";
 import { log } from "../util/log.ts";
+import { isContact } from "./budget.ts";
 import { resolveIntensity } from "./intensity.ts";
 import {
   type SessionActivity,
@@ -23,6 +24,7 @@ import {
 import {
   type GhostDecision,
   type GhostSmsHistory,
+  lastTickTimes,
   recordDecisionNote,
   runGhostTick,
 } from "./think.ts";
@@ -33,10 +35,13 @@ import {
  * Event triggers (Phase 4):
  *
  *   - **onMainReplied** — explicit method called from the daemon's
- *     `sendDeliver` path. The freshly-finished exchange is the most
- *     informative moment for the ghost to plant a future hook. Tick is
- *     deferred 60-120s so any rapid follow-up has time to land before
- *     the ghost looks.
+ *     `sendDeliver` path. A just-finished exchange is a good moment for
+ *     the ghost to plant a future hook, but only once it HAS finished:
+ *     the tick waits until the chat has been quiet for SETTLE_MS (the
+ *     episode gap), re-arming while it isn't. It used to fire 60-120s
+ *     after every reply: 288 of 394 ticks in 2026-10-09..23 landed
+ *     within 2.5 minutes of Edmund's own message, and the pre-screen
+ *     declined nearly all of them as mid-conversation.
  *
  *   - **window_start** — picker priority 1. When a session's active
  *     hours just opened (within the last 30 min), the next sweep tick
@@ -56,6 +61,24 @@ import {
 /** Floor between ghost ticks for one session, any trigger path. Mirrors
  *  the picker's default so reactive (post-reply) ticks can't stack. */
 const MIN_TICK_SPACING_MS = 45 * 60_000;
+/** A chat quiet this long has finished its exchange: the same 30-minute
+ *  gap that splits conversation episodes for the ghost's history. */
+export const SETTLE_MS = 30 * 60_000;
+/** Spread on top of SETTLE_MS so settled ticks don't land on a rhythm. */
+const SETTLE_JITTER_MS = 30 * 60_000;
+
+/** How much longer until a chat quiet for `quietMs` counts as settled. */
+export function settleRemainingMs(quietMs: number): number {
+  return Math.max(0, SETTLE_MS - quietMs);
+}
+
+const TICK_REASONS: readonly TickReason[] = [
+  "window_start",
+  "quiet_4h",
+  "quiet_24h",
+  "sweep",
+  "settled",
+];
 
 export class GhostObserver {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -65,6 +88,8 @@ export class GhostObserver {
    *  second reply in quick succession resets the delay rather than
    *  scheduling parallel ticks. */
   private pendingReplyTicks = new Map<SessionKey, ReturnType<typeof setTimeout>>();
+  /** Last reply seen per session, alongside the session store's times. */
+  private lastReplyAtMs = new Map<SessionKey, number>();
   private stopped = false;
 
   constructor(
@@ -92,7 +117,24 @@ export class GhostObserver {
     log.info("ghost-observer", "starting", {
       intensity: this.deps.config.brown_nose.intensity,
     });
+    this.seedTickHistory();
     this.scheduleNext();
+  }
+
+  /** Recover when each chat was last ticked from its decision log. */
+  seedTickHistory(): void {
+    for (const p of this.deps.prefs.list()) {
+      const key = p.sessionKey as SessionKey;
+      if (this.lastTickAtMs.has(key)) continue;
+      const seen = lastTickTimes(key);
+      if (seen.any > 0) this.lastTickAtMs.set(key, seen.any);
+      const perReason = new Map<TickReason, number>();
+      for (const r of TICK_REASONS) {
+        const at = seen.byTrigger.get(r);
+        if (at) perReason.set(r, at);
+      }
+      if (perReason.size > 0) this.lastTickByReason.set(key, perReason);
+    }
   }
 
   stop(): void {
@@ -116,6 +158,7 @@ export class GhostObserver {
         sessionKey,
         bypassActiveHours: opts.bypassActiveHours,
         bypassBudgets: opts.bypassBudgets,
+        trigger: "operator",
       },
       this.deps,
     );
@@ -125,17 +168,39 @@ export class GhostObserver {
   }
 
   /**
-   * Called from the daemon's sendDeliver path. Schedules a ghost tick
-   * 60-120s later so any rapid follow-up message lands before the
-   * ghost looks. Resets if another reply arrives within the window.
+   * Called from the daemon's sendDeliver path. Schedules a ghost tick for
+   * when the exchange has settled (SETTLE_MS of quiet, plus jitter). Each
+   * reply resets it; a timer that finds the chat still moving re-arms.
    */
   onMainReplied(sessionKey: SessionKey): void {
     if (!this.deps.config.brown_nose.enabled || this.stopped) return;
+    this.lastReplyAtMs.set(sessionKey, Date.now());
+    this.armSettledTick(sessionKey, SETTLE_MS + Math.floor(Math.random() * SETTLE_JITTER_MS));
+  }
+
+  /** Milliseconds since anything moved in this chat, either direction. */
+  quietForMs(sessionKey: SessionKey, nowMs: number): number {
+    const s = this.deps.state.getSession(sessionKey);
+    const last = Math.max(
+      s?.lastInboundMs ?? 0,
+      s?.lastOutboundMs ?? 0,
+      this.lastReplyAtMs.get(sessionKey) ?? 0,
+    );
+    return nowMs - last;
+  }
+
+  private armSettledTick(sessionKey: SessionKey, delayMs: number): void {
     const existing = this.pendingReplyTicks.get(sessionKey);
     if (existing) clearTimeout(existing);
-    const delayMs = 60_000 + Math.floor(Math.random() * 60_000); // 60-120s
     const t = setTimeout(() => {
       this.pendingReplyTicks.delete(sessionKey);
+      if (this.stopped) return;
+      const remaining = settleRemainingMs(this.quietForMs(sessionKey, Date.now()));
+      if (remaining > 0) {
+        // Still a live conversation the main turn is handling.
+        this.armSettledTick(sessionKey, remaining + Math.floor(Math.random() * 60_000));
+        return;
+      }
       // Skip the post-reply tick if the session isn't currently within
       // its active hours — it'd just produce a "outside active hours"
       // decision-log entry and waste a Haiku call slot.
@@ -146,7 +211,7 @@ export class GhostObserver {
         });
         return;
       }
-      void this.runReactiveTick(sessionKey, "sweep").catch((err) =>
+      void this.runReactiveTick(sessionKey, "settled").catch((err) =>
         log.warn("ghost-observer", "reactive tick crashed", { err: (err as Error).message }),
       );
     }, delayMs);
@@ -231,7 +296,7 @@ export class GhostObserver {
     // timestamp doubles as the in-flight guard — the spacing floor blocks
     // any other trigger path from double-ticking this session meanwhile.
     this.recordTick(sessionKey, reason);
-    const decision = await runGhostTick({ sessionKey }, this.deps);
+    const decision = await runGhostTick({ sessionKey, trigger: reason }, this.deps);
     this.applySnooze(sessionKey, decision);
     this.maybeEnqueue(sessionKey, decision);
   }
@@ -326,8 +391,15 @@ export class GhostObserver {
       // Lets the queue clamp an out-of-window fire time to the next window
       // opening instead of letting the fire-time gate drop the brief.
       sessionPrefs: this.deps.prefs.get(sessionKey),
-      // Enforces the 48h hard-spacing floor against the last real fire.
-      prefsStore: this.deps.prefs,
+      // Enforces the 48h hard-spacing floor against the last fire that
+      // reached the person; vetoed, errored and interrupted fires did not.
+      prefsStore: {
+        recentFires: (key: SessionKey, limit: number) =>
+          this.deps.prefs
+            .recentFires(key, limit + 10)
+            .filter((f) => isContact(f, Date.now()))
+            .slice(0, limit),
+      },
     });
     if (!res.enqueued) {
       log.warn("ghost-observer", "enqueue failed", {
