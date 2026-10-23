@@ -5,7 +5,7 @@
  */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HashEmbedProvider } from "../src/memory/embed-provider.ts";
@@ -382,6 +382,95 @@ describe("VectorStore.search", () => {
     } finally {
       cleanup();
     }
+  });
+});
+
+describe("the search cache", () => {
+  // Holding every row's text cost 1.6 GB for the live index (0.7 GB
+  // without), and a cold load blocked the daemon for up to 31 s.
+  const cacheOf = (store: VectorStore) =>
+    (store as unknown as { cache: Map<string, Record<string, unknown>> | null }).cache;
+  const twelve = async (store: VectorStore) => {
+    for (let i = 0; i < 12; i++) {
+      store.upsert([row(`msg:${i}`, `note ${i} about the garden`, await embed(`note ${i}`))]);
+    }
+  };
+
+  test("holds no row text, and the hits still carry theirs", async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      await twelve(store);
+      const hits = store.search(await embed("note 3"), { scope: { kind: "global" }, limit: 3 });
+      expect(hits[0]?.ref).toBe("msg:3");
+      expect(hits[0]?.text).toBe("note 3 about the garden");
+      for (const r of cacheOf(store)!.values()) expect("text" in r).toBe(false);
+      // Rows a write-through added hold none either.
+      store.upsert([row("msg:new", "a later note", await embed("a later note"))]);
+      expect("text" in cacheOf(store)!.get("msg:new")!).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a hit whose row another process deleted is dropped, not returned blank", async () => {
+    const { store, cleanup } = tempStore();
+    const path = (store as unknown as { path: string }).path;
+    try {
+      await twelve(store);
+      store.search(await embed("note 3"), { scope: { kind: "global" }, limit: 1 });
+      const other = new Database(path);
+      other.exec("DELETE FROM rows WHERE ref = 'msg:3'");
+      other.close();
+      const hits = store.search(await embed("note 3"), { scope: { kind: "global" }, limit: 12 });
+      expect(hits.map((h) => h.ref)).not.toContain("msg:3");
+      expect(hits.every((h) => h.text.length > 0)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("warms a slice at a time, yielding between slices", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "recall-warm-"));
+    const path = join(dir, "recall.sqlite");
+    const writer = new VectorStore(path);
+    await twelve(writer);
+    writer.close();
+    const store = new VectorStore(path, 0);
+    try {
+      const warming = store.warmCache(5);
+      // The first slice ran before the first yield; the rest has not.
+      expect(cacheOf(store)!.size).toBe(5);
+      await warming;
+      expect(cacheOf(store)!.size).toBe(12);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a search part-way through a warm-up sees every row", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "recall-warm-"));
+    const path = join(dir, "recall.sqlite");
+    const writer = new VectorStore(path);
+    await twelve(writer);
+    writer.close();
+    const store = new VectorStore(path, 0);
+    try {
+      const warming = store.warmCache(5);
+      const hits = store.search(await embed("note 11"), { scope: { kind: "global" }, limit: 1 });
+      expect(hits[0]?.ref).toBe("msg:11");
+      await warming;
+      expect(cacheOf(store)!.size).toBe(12);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the daemon keeps its cache and warms it at boot", () => {
+    const wire = readFileSync(join(import.meta.dir, "../src/boot/wire-recall.ts"), "utf8");
+    expect(wire).toMatch(/new VectorStore\(`[^`]+`, 0, \{/);
+    expect(wire).toContain(".warmCache()");
   });
 });
 
