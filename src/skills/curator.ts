@@ -59,13 +59,31 @@ import { describeLeaks, findLeaks } from "./privacy.ts";
 
 const CURATOR_TIMEOUT_MS = 180_000;
 
-/** Evidence thresholds. A "pattern" that clears neither is a coincidence.
- *  MIN_CHATS counts PEOPLE: distinct senders, not distinct chats. Counting
- *  chats let one person who asked in five chats (their DM and four groups)
- *  pass as five unrelated people; that is how one family's explainer-video
- *  project became a global skill on 2026-10-16 (7 refs, 5 chats, 1 sender). */
+/** Evidence thresholds. A "pattern" that clears them all is not a coincidence.
+ *  Chats and people are both required. Chats alone let one person who asked
+ *  in five chats (their DM and four groups) pass as five; that is how one
+ *  family's explainer-video project became a global skill on 2026-10-16
+ *  (7 refs, 5 chats, 1 sender). People alone let two members of one family
+ *  group pass as two unrelated rooms. */
 export const MIN_OCCURRENCES = 3;
 export const MIN_CHATS = 2;
+export const MIN_PEOPLE = 2;
+
+/**
+ * Who sent a message, as one key per person. `canon` merges only the handles
+ * listed together in `[[contacts]]`; the name the operator's books give a
+ * handle also joins a phone number and an Apple ID on the same contact card.
+ * Two different people with the same saved name merge too, which can only
+ * make the bar harder to clear. A person with no saved name who writes from
+ * two handles still counts twice; the two-chat requirement is the backstop.
+ */
+export function personKey(
+  contacts: Pick<ContactBook, "canon" | "displayName">,
+  handle: string,
+): string {
+  const name = contacts.displayName(handle)?.trim().toLowerCase();
+  return name ? `name:${name}` : contacts.canon(handle);
+}
 
 /** Sampling. Bounded so one run cannot cost an unbounded amount of context. */
 const MAX_SAMPLE_MESSAGES = 400;
@@ -112,9 +130,9 @@ export type SampledAsk = { ref: string; chat: string; sender: string; text: stri
  */
 export function sampleRecentAsks(
   recallDbPath: string,
-  opts: { sinceMs: number; now?: number; canon?: (handle: string) => string },
+  opts: { sinceMs: number; now?: number; personOf?: (handle: string) => string },
 ): SampledAsk[] {
-  const canon = opts.canon ?? ((h: string) => h);
+  const personOf = opts.personOf ?? ((h: string) => h);
   const db = new Database(recallDbPath, { readonly: true });
   try {
     const rows = db
@@ -138,7 +156,7 @@ export function sampleRecentAsks(
       const text = stripIndexPrefix(r.text);
       if (text.length < MIN_MESSAGE_CHARS) continue;
       const chat = r.chat_guid ?? "(unknown)";
-      const sender = canon(r.sender);
+      const sender = personOf(r.sender);
       const bucket = byPerson.get(sender) ?? [];
       if (bucket.length >= MAX_PER_CHAT) continue;
       bucket.push({ ref: r.ref, chat, sender, text: text.slice(0, MAX_MESSAGE_CHARS), ts: r.ts });
@@ -185,9 +203,10 @@ write a skill that makes the assistant better at that job next time.
 
 WHAT COUNTS AS A PATTERN
   • The same underlying task, asked by people who do not know each other.
-  • At least ${MIN_OCCURRENCES} separate occurrences, from at least ${MIN_CHATS} different people.
-    The same person asking in several chats (their DM and a group) is one
-    person. Every sample line carries an opaque person id for this.
+  • At least ${MIN_OCCURRENCES} separate occurrences, from at least ${MIN_PEOPLE} different people
+    in at least ${MIN_CHATS} different chats. The same person asking in several
+    chats (their DM and a group) is one person, and two people in one group
+    chat are one room. Every sample line carries an opaque person id.
   • The repetition must be in the TASK, not the topic. Four people mentioning
     the weather is not a pattern. Four people asking "should I leave now given
     the radar" is a pattern: it has a procedure.
@@ -228,7 +247,8 @@ OUTPUT — raw JSON, no prose, no code fence:
 }
 
 Return at most ONE skill. Cite real refs from the sample — an entry whose
-evidence does not come from ${MIN_CHATS} distinct people will be discarded.`;
+evidence does not come from ${MIN_PEOPLE} distinct people in ${MIN_CHATS} distinct chats
+will be discarded.`;
 
 type ProposedSkill = {
   name?: unknown;
@@ -330,12 +350,14 @@ export function vetProposal(args: {
   // invented pattern.
   const sampleRefs = new Map(sample.map((s) => [s.ref, s]));
   const people = new Set<string>();
+  const chats = new Set<string>();
   let realRefs = 0;
   for (const e of proposal.evidence) {
     const ask = sampleRefs.get(e.ref);
     if (!ask) continue;
     realRefs++;
     people.add(ask.sender);
+    chats.add(ask.chat);
   }
   if (realRefs < MIN_OCCURRENCES) {
     return {
@@ -343,10 +365,16 @@ export function vetProposal(args: {
       reason: `only ${realRefs} of ${proposal.evidence.length} cited refs exist in the sample (need ${MIN_OCCURRENCES})`,
     };
   }
-  if (people.size < MIN_CHATS) {
+  if (people.size < MIN_PEOPLE) {
     return {
       ok: false,
-      reason: `evidence comes from ${people.size} person(s), need ${MIN_CHATS} — this is one person's habit`,
+      reason: `evidence comes from ${people.size} person(s), need ${MIN_PEOPLE} — this is one person's habit`,
+    };
+  }
+  if (chats.size < MIN_CHATS) {
+    return {
+      ok: false,
+      reason: `evidence spans ${chats.size} chat(s), need ${MIN_CHATS} — this is one room's habit`,
     };
   }
 
@@ -388,17 +416,20 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
   const sinceMs = now() - cfg.lookback_days * 86_400_000;
   let sample: SampledAsk[];
   try {
-    sample = sampleRecentAsks(recallPath, { sinceMs, canon: (h) => deps.contacts.canon(h) });
+    sample = sampleRecentAsks(recallPath, {
+      sinceMs,
+      personOf: (h) => personKey(deps.contacts, h),
+    });
   } catch (err) {
     return { ran: false, reason: `could not read the recall index: ${(err as Error).message}` };
   }
 
   const distinctChats = new Set(sample.map((s) => s.chat)).size;
   const people = [...new Set(sample.map((s) => s.sender))];
-  if (people.length < MIN_CHATS) {
+  if (people.length < MIN_PEOPLE || distinctChats < MIN_CHATS) {
     return {
       ran: false,
-      reason: `only ${people.length} person(s) in the window — nothing to compare`,
+      reason: `only ${people.length} person(s) in ${distinctChats} chat(s) in the window — nothing to compare`,
     };
   }
   // Opaque per-run ids, so the model can tell people apart without seeing a

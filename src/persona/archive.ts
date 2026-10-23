@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { GROUPS_DIR, PEOPLE_DIR, PERSONA_DIR } from "../claude/persona.ts";
+import { easternDate } from "../util/clock.ts";
 import { log } from "../util/log.ts";
 import { readPrinciples } from "./principles.ts";
 
@@ -28,16 +29,28 @@ export const ARCHIVE_TARGET_BYTES = 6 * 1024;
 /** Never archive a section below this many most-recent dated bullets. */
 export const KEEP_RECENT_BULLETS = 15;
 /**
- * The recency floors are counts of notes the size the maintainer is told to
- * write ("Each note ≤ 140 chars"), so what a floor protects is that many
- * notes' worth of BYTES, not that many bullets. Counted in bullets, the
- * floors outgrew the gate: notes now run 235-625 bytes on average, so the
- * protected tail alone was about five times the target, the live files sat
- * at 20-54 KB, and every pass archived a bullet or two while the file stayed
- * where it was. Measured 2026-10-23: the operator's DM held 42 Open Items
- * (16.5 KB) covering nine days.
+ * The retrospective floors are counts of notes the size the maintainer is
+ * told to write ("Each note ≤ 140 chars"), so what such a floor protects is
+ * that many notes' worth of BYTES, not that many bullets. Counted in
+ * bullets, the floors outgrew the gate: notes now run 235-625 bytes on
+ * average, so the protected tail alone was about five times the target, the
+ * live files sat at 20-54 KB, and every pass archived a bullet or two while
+ * the file stayed where it was. Those sections are history: what they
+ * taught is distilled into principles, and the archive is recalled.
  */
 export const NOTE_BYTES = 140;
+/**
+ * Open Items is not history. Each bullet may be a commitment still owed, and
+ * nothing marks one closed (46 of 437 live items on 2026-10-23 used a word
+ * like "done" or "shipped", mostly in passing), so size is the wrong reason
+ * to drop one from the prompt. An item stays live while it is this recent,
+ * up to the section's count floor; older ones go however small they are.
+ * The cap keeps the busiest chat (about 4.4 items a day) where it was rather
+ * than growing it, and expiry is what keeps the tail bounded.
+ */
+export const OPEN_ITEM_DAYS = 14;
+/** Sections protected by age instead of by bytes. */
+const AGE_PROTECTED_SECTIONS = new Map([["Open Items", OPEN_ITEM_DAYS]]);
 /** However long they are, a section's newest few bullets stay live. */
 export const MIN_RECENT_BULLETS = 3;
 /** Per-section overrides of the recency floor. Open Items reads as history
@@ -125,6 +138,7 @@ export function archivePersonFile(
   liveName: string,
   baseDir = PEOPLE_DIR,
   archivableSections: Set<string> = PERSON_ARCHIVABLE_SECTIONS,
+  nowMs = Date.now(),
 ): ArchiveResult | null {
   const livePath = join(baseDir, liveName);
   if (!existsSync(livePath)) return null;
@@ -159,8 +173,13 @@ export function archivePersonFile(
 
   // Per-section recency floor: the newest bullets of each section are never
   // candidates, whatever the size pressure — up to `keep` of them, as long as
-  // they fit in `keep` notes' worth of bytes (NOTE_BYTES), and never fewer
-  // than MIN_RECENT_BULLETS.
+  // they fit in `keep` notes' worth of bytes (NOTE_BYTES) or, for Open Items,
+  // are younger than OPEN_ITEM_DAYS; never fewer than MIN_RECENT_BULLETS.
+  // Every floor is bounded (a count, and bytes or age), so whatever is not in
+  // one can always move. For a busy chat the protected tails alone sit above
+  // ARCHIVE_TARGET_BYTES; the gate then archives everything else and the
+  // file holds at that bound instead of growing.
+  const today = easternDate(new Date(nowMs));
   const bySection = new Map<string, Bullet[]>();
   for (const b of bullets) {
     const list = bySection.get(b.section) ?? [];
@@ -172,10 +191,15 @@ export function archivePersonFile(
     const keep = SECTION_KEEP_RECENT.get(sec) ?? KEEP_RECENT_BULLETS;
     const newestFirst = [...list].sort((a, b) => (a.date < b.date ? 1 : -1));
     let used = 0;
+    const maxAgeDays = AGE_PROTECTED_SECTIONS.get(sec);
     for (const [i, b] of newestFirst.entries()) {
       if (i >= keep) break;
       const size = Buffer.byteLength(lines[b.line]!, "utf8") + 1;
-      if (i >= MIN_RECENT_BULLETS && used + size > keep * NOTE_BYTES) break;
+      const fits =
+        maxAgeDays === undefined
+          ? used + size <= keep * NOTE_BYTES
+          : daysBetween(b.date, today) <= maxAgeDays;
+      if (i >= MIN_RECENT_BULLETS && !fits) break;
       protectedLines.add(b.line);
       used += size;
     }
@@ -234,6 +258,10 @@ export function archivePersonFile(
   return { moved: movedLines.size, liveBytes };
 }
 
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
 /** The archive file that belongs to a live file: `<dir>/archive/<name>`. */
 export function archivePathFor(livePath: string): string {
   return join(dirname(livePath), "archive", basename(livePath));
@@ -241,11 +269,39 @@ export function archivePathFor(livePath: string): string {
 
 /** Dated observations already moved out of a live file into its archive. */
 export function archivedObservationCount(livePath: string): number {
+  return archivedBullets(livePath).length;
+}
+
+function archivedBullets(livePath: string): string[] {
   const p = archivePathFor(livePath);
-  if (!existsSync(p)) return 0;
+  if (!existsSync(p)) return [];
   return readFileSync(p, "utf8")
     .split("\n")
-    .filter((l) => DATED_BULLET_RE.test(l)).length;
+    .filter((l) => DATED_BULLET_RE.test(l));
+}
+
+/**
+ * Archived observations dated on or after `since` (all of them when null),
+ * newest first up to `maxBytes`, returned oldest first. What the size gate
+ * moved out before the consolidator could read it.
+ */
+export function archivedObservationsSince(
+  livePath: string,
+  since: string | null,
+  maxBytes: number,
+): string[] {
+  const dated = archivedBullets(livePath)
+    .map((line) => ({ line, date: line.match(DATED_BULLET_RE)![1]! }))
+    .filter((b) => since === null || b.date >= since)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const out: string[] = [];
+  let used = 0;
+  for (const b of dated) {
+    used += Buffer.byteLength(b.line, "utf8") + 1;
+    if (used > maxBytes) break;
+    out.push(b.line);
+  }
+  return out.reverse();
 }
 
 function appendToArchive(
@@ -276,6 +332,47 @@ function appendToArchive(
 }
 
 /**
+ * Fit a rewrite to the file as it is NOW.
+ *
+ * The maintainer's model call takes 30-180 s, and the live turn can append a
+ * note meanwhile (`remember_about_person`). The rewrite was produced from the
+ * snapshot, so those notes are not in it. Bullets appended since the
+ * snapshot are merged into the rewrite under their section. Any other change
+ * (an edit or a removal, e.g. the model honouring "forget that") makes the
+ * rewrite stale: null, and the caller must not write it.
+ */
+export function reconcileRewrite(snapshot: string, latest: string, rewrite: string): string | null {
+  const meaningful = (body: string) =>
+    body.split("\n").filter((l) => l.trim() && !/^_\(.*\)_$/.test(l.trim()));
+  const before = meaningful(snapshot);
+  const known = new Set(before);
+  const appended: { line: string; section: string }[] = [];
+  const rest: string[] = [];
+  let section = "";
+  for (const line of meaningful(latest)) {
+    const h = line.match(/^#{2,}\s+(.+?)\s*$/);
+    if (h) section = h[1]!;
+    if (DATED_BULLET_RE.test(line) && !known.has(line)) appended.push({ line, section });
+    else rest.push(line);
+  }
+  if (rest.length !== before.length || rest.some((l, i) => l !== before[i])) return null;
+
+  const lines = rewrite.split("\n");
+  for (const a of appended) {
+    const heading = lines.findIndex((l) => l.match(/^#{2,}\s+(.+?)\s*$/)?.[1] === a.section);
+    if (heading === -1) {
+      lines.push("", `## ${a.section}`, a.line);
+      continue;
+    }
+    let end = heading + 1;
+    while (end < lines.length && !/^#{1,6}\s/.test(lines[end]!)) end++;
+    while (end > heading + 1 && !lines[end - 1]!.trim()) end--;
+    lines.splice(end, 0, a.line);
+  }
+  return lines.join("\n");
+}
+
+/**
  * Archive the dated observations a full rewrite is about to drop.
  *
  * The maintainer's full rewrite replaced the file wholesale and kept the old
@@ -284,6 +381,10 @@ function appendToArchive(
  * then in neither the live file nor the archive. A bullet the rewrite kept
  * verbatim stays where it is; anything else that was a dated observation
  * goes to the archive under its old section, so recall can still reach it.
+ * Matching is by exact line, so a bullet the rewrite reworded is archived in
+ * its old wording beside the new one: a near-duplicate in recall, never a
+ * loss. `oldBody` must be the file as it is when the rewrite is written (see
+ * reconcileRewrite), not the snapshot the model was shown.
  *
  * Only for the maintainer's housekeeping rewrite. A model-requested write
  * (`write_person_file`) may be removing something the person asked it to
@@ -313,8 +414,12 @@ export function archiveRewriteDrops(livePath: string, oldBody: string, newBody: 
 }
 
 /** Group-file variant: same mover, group section names, GROUPS_DIR. */
-export function archiveGroupFile(liveName: string, baseDir = GROUPS_DIR): ArchiveResult | null {
-  return archivePersonFile(liveName, baseDir, GROUP_ARCHIVABLE_SECTIONS);
+export function archiveGroupFile(
+  liveName: string,
+  baseDir = GROUPS_DIR,
+  nowMs = Date.now(),
+): ArchiveResult | null {
+  return archivePersonFile(liveName, baseDir, GROUP_ARCHIVABLE_SECTIONS, nowMs);
 }
 
 /**

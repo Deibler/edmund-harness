@@ -4,14 +4,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config/config.ts";
+import type { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import {
   MIN_CHATS,
   MIN_OCCURRENCES,
+  MIN_PEOPLE,
   type Proposal,
   type SampledAsk,
   chatTag,
   parseProposals,
+  personKey,
   runCurator,
   sampleRecentAsks,
   vetProposal,
@@ -131,6 +134,25 @@ describe("what the curator is allowed to write", () => {
     expect(result.reason).toContain("one person's habit");
   });
 
+  test("two people in one room are one room", () => {
+    // Two members of one family group asking for the family's own project.
+    const room: SampledAsk[] = [
+      { ref: "msg:r1", chat: "chatFAM", sender: "+15550001111", text: "next video", ts: 1 },
+      { ref: "msg:r2", chat: "chatFAM", sender: "+15550002222", text: "next video", ts: 2 },
+      { ref: "msg:r3", chat: "chatFAM", sender: "+15550001111", text: "next video", ts: 3 },
+    ];
+    const result = vetProposal({
+      ...base,
+      sample: room,
+      proposal: proposal({
+        evidence: room.map((a) => ({ ref: a.ref, chat: a.chat, reading: "video" })),
+      }),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toContain("one room's habit");
+  });
+
   test("too few sightings is rejected", () => {
     const result = vetProposal({
       proposal: proposal({
@@ -194,6 +216,7 @@ describe("what the curator is allowed to write", () => {
     // than a silent disagreement.
     expect(MIN_OCCURRENCES).toBe(3);
     expect(MIN_CHATS).toBe(2);
+    expect(MIN_PEOPLE).toBe(2);
   });
 });
 
@@ -304,13 +327,14 @@ describe("sampling across conversations", () => {
           chat,
           "+1777",
           2000 + i,
-          `a fairly long ask ${i}`,
+          `a fairly long question about the family video ${i}`,
         );
       }
     }
     db.close();
     const asks = sampleRecentAsks(dbPath, { sinceMs: 0 });
-    expect(asks.filter((a) => a.sender === "+1777").length).toBeLessThanOrEqual(40);
+    // 90 long-enough asks from one person across three rooms: 40 sampled.
+    expect(asks.filter((a) => a.sender === "+1777").length).toBe(40);
     // The other people are still there.
     expect(asks.some((a) => a.sender === "+1666")).toBe(true);
   });
@@ -471,6 +495,107 @@ describe("at the ceiling", () => {
         },
       });
       expect(result).toMatchObject({ ran: false, atCeiling: true });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("who counts as one person", () => {
+  // A phone number and an Apple ID on one contact card, which [[contacts]]
+  // does not list together.
+  const book = {
+    lookup: (h: string) => (h === "+15550007777" || h === "pat@example.com" ? "Pat Doe" : null),
+  } as unknown as AddressBook;
+  const withCards = new ContactBook([], book);
+
+  test("two handles on one contact card are one person", () => {
+    expect(personKey(withCards, "+15550007777")).toBe(personKey(withCards, "pat@example.com"));
+    expect(personKey(withCards, "+15550008888")).not.toBe(personKey(withCards, "+15550007777"));
+  });
+
+  test("two people in one chat are nothing to compare either", async () => {
+    const root = mkdtempSync(join(tmpdir(), "curator-room-"));
+    try {
+      const db = new Database(join(root, "recall.sqlite"));
+      db.exec(
+        `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
+                            ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
+      );
+      const insert = db.query(
+        "INSERT INTO rows (ref, kind, chat_guid, sender, ts, text, vec, model, dim) VALUES (?,?,?,?,?,?,x'00','m',1)",
+      );
+      insert.run(
+        "msg:f1",
+        "message",
+        "chatFAM",
+        "+15550001111",
+        1000,
+        "make the next family video",
+      );
+      insert.run(
+        "msg:f2",
+        "message",
+        "chatFAM",
+        "+15550002222",
+        1001,
+        "make the next family video too",
+      );
+      db.close();
+      const result = await runCurator({
+        config: loadConfig(join(import.meta.dir, "..", "config.example.toml")),
+        dataDir: root,
+        skillsRoot: root,
+        dbPath: join(root, "installed-skills.json"),
+        contacts,
+        now: () => 10_000,
+        runModel: async () => {
+          throw new Error("one room is nothing to compare");
+        },
+      });
+      expect(result).toMatchObject({ ran: false });
+      if (result.ran) throw new Error("unreachable");
+      expect(result.reason).toContain("in 1 chat(s)");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the curator resolves people through the operator's books", async () => {
+    const root = mkdtempSync(join(tmpdir(), "curator-people-"));
+    try {
+      const db = new Database(join(root, "recall.sqlite"));
+      db.exec(
+        `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
+                            ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
+      );
+      const insert = db.query(
+        "INSERT INTO rows (ref, kind, chat_guid, sender, ts, text, vec, model, dim) VALUES (?,?,?,?,?,?,x'00','m',1)",
+      );
+      insert.run("msg:p1", "message", "chatA", "+15550007777", 1000, "please plan the trip for us");
+      insert.run(
+        "msg:p2",
+        "message",
+        "chatB",
+        "pat@example.com",
+        1001,
+        "please plan the trip for me",
+      );
+      db.close();
+      const result = await runCurator({
+        config: loadConfig(join(import.meta.dir, "..", "config.example.toml")),
+        dataDir: root,
+        skillsRoot: root,
+        dbPath: join(root, "installed-skills.json"),
+        contacts: withCards,
+        now: () => 10_000,
+        runModel: async () => {
+          throw new Error("one person in two chats is nothing to compare");
+        },
+      });
+      expect(result).toMatchObject({ ran: false });
+      if (result.ran) throw new Error("unreachable");
+      expect(result.reason).toContain("1 person(s)");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

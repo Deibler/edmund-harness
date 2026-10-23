@@ -1,12 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { personFilePath } from "../claude/persona.ts";
 import { log } from "../util/log.ts";
-import { archivedObservationCount } from "./archive.ts";
+import { easternDate } from "../util/clock.ts";
+import { archivedObservationCount, archivedObservationsSince } from "./archive.ts";
 import {
   MAX_PRINCIPLES,
   type Principle,
   type PrincipleScope,
   principlesDerivedAt,
+  principlesDerivedOn,
   readPrinciples,
   writePrinciples,
 } from "./principles.ts";
@@ -31,6 +33,16 @@ import {
 
 /** How many new observations since the last pass before it is worth re-deriving. */
 export const CONSOLIDATE_AFTER_NEW_BULLETS = 12;
+
+/** Cap on the archived observations shown with the file (about 4k tokens).
+ *  The size gate can move new observations out before a pass runs. */
+export const ARCHIVED_CONTEXT_BYTES = 16 * 1024;
+
+/** Shared by both prompts: the file is not the whole record any more. */
+const ARCHIVE_RULE = `The file is not the whole record. Older observations are moved out of it into
+an archive, and the newest of those are listed separately below. A principle
+whose evidence you cannot see is NOT unsupported: keep it unless something
+you can see contradicts it.`;
 
 export const CONSOLIDATION_PROMPT = `You maintain the OPERATING PRINCIPLES for one person: the short list of rules
 for how to work with them. You are not writing to the user and you are not
@@ -63,10 +75,12 @@ the rule is to work around it. Write those down. A list that only contains
 what they like is a list that will make you agreeable and useless.
 
 REVISION IS THE POINT
-You are given the current principles. For each one, ask whether the file still
-supports it. If a later observation CONTRADICTS a principle, correct it or
-drop it and say so in "revised". Principles that survive should keep their
-original evidence dates and gain new ones. Do not simply re-emit the list.
+You are given the current principles. If a later observation CONTRADICTS a
+principle, correct it or drop it and say so in "revised". Principles that
+survive should keep their original evidence dates and gain new ones.
+Do not simply re-emit the list.
+
+${ARCHIVE_RULE}
 
 Output ONE valid JSON object, nothing else, no markdown fences:
 {
@@ -141,6 +155,8 @@ REVISION IS THE POINT. You are given the standing principles. If the log
 CONTRADICTS one, correct or retire it and say so in "revised". Do not re-emit
 the list unchanged.
 
+${ARCHIVE_RULE}
+
 Cite the dates behind each principle so it can be audited.
 
 Output ONE valid JSON object, nothing else, no markdown fences:
@@ -175,7 +191,7 @@ export function countObservations(body: string): number {
  * pass and had not consolidated since 10-02. Stamps written before this are
  * live counts, which only makes the next pass come sooner.
  */
-export function shouldConsolidate(body: string, archived = 0): boolean {
+export function shouldConsolidate(body: string, archived: number): boolean {
   return (
     countObservations(body) + archived - principlesDerivedAt(body) >= CONSOLIDATE_AFTER_NEW_BULLETS
   );
@@ -193,6 +209,11 @@ export function parseConsolidation(raw: string): { principles: Principle[]; revi
   }
   const obj = parsed as { principles?: unknown; revised?: unknown };
   if (!Array.isArray(obj.principles)) return null;
+  // "Return fewer, or none" is an answer the prompt allows. It must still be
+  // recorded, or the pass reruns on every maintainer pass.
+  if (obj.principles.length === 0) {
+    return { principles: [], revised: typeof obj.revised === "string" ? obj.revised : "" };
+  }
   const principles: Principle[] = [];
   for (const p of obj.principles) {
     const rule = (p as { rule?: unknown })?.rule;
@@ -212,8 +233,13 @@ export function parseConsolidation(raw: string): { principles: Principle[]; revi
   };
 }
 
-/** Build the user prompt: the file, plus the principles standing today. */
-export function buildConsolidationPrompt(handle: string, body: string): string {
+/** Build the user prompt: the file, the principles standing today, and the
+ *  observations archived since the last pass. */
+export function buildConsolidationPrompt(
+  handle: string,
+  body: string,
+  archived: string[],
+): string {
   const current = readPrinciples(body);
   const standing = current.length
     ? current.map((p) => `- ${p.rule} (${p.evidence.join(", ")})`).join("\n")
@@ -224,10 +250,13 @@ export function buildConsolidationPrompt(handle: string, body: string): string {
     "PRINCIPLES STANDING TODAY:",
     standing,
     "",
+    "OBSERVATIONS ARCHIVED SINCE THE LAST PASS (moved out of the file by size, still on record):",
+    archived.length ? archived.join("\n") : "(none)",
+    "",
     "THE PERSON FILE:",
     body,
     "",
-    "Derive the operating principles. Revise or retire any the file no longer supports.",
+    "Derive the operating principles. Revise or retire any that something above contradicts; evidence that was archived still counts.",
   ].join("\n");
 }
 
@@ -247,18 +276,26 @@ export async function consolidatePerson(
   if (!existsSync(path)) return { ok: false, reason: "no person file" };
   const body = readFileSync(path, "utf8");
 
-  const raw = await runModel(systemPrompt, buildConsolidationPrompt(handle, body));
+  const archived = archivedObservationsSince(
+    path,
+    principlesDerivedOn(body),
+    ARCHIVED_CONTEXT_BYTES,
+  );
+  const raw = await runModel(systemPrompt, buildConsolidationPrompt(handle, body, archived));
   if (!raw) return { ok: false, reason: "model call failed" };
 
   const parsed = parseConsolidation(raw);
   if (!parsed) return { ok: false, reason: "unparseable output" };
 
   const recorded = countObservations(body) + archivedObservationCount(path);
-  writePrinciples(handle, parsed.principles, recorded, pathFor, scope);
+  // No rules this time keeps the standing ones (a weak pass must not wipe
+  // them) but still stamps, so the next pass waits for new observations.
+  const rules = parsed.principles.length ? parsed.principles : readPrinciples(body);
+  writePrinciples(handle, rules, recorded, pathFor, scope, easternDate());
   log.info("persona-consolidate", "operating principles updated", {
     handle,
     principles: parsed.principles.length,
     revised: parsed.revised.slice(0, 120),
   });
-  return { ok: true, handle, count: parsed.principles.length, revised: parsed.revised };
+  return { ok: true, handle, count: rules.length, revised: parsed.revised };
 }

@@ -48,14 +48,15 @@ export type Principle = {
  *  counter that could drift from the file it describes. */
 export type PrincipleScope = "person" | "group";
 
-function note(observedAt: number, scope: PrincipleScope): string {
+function note(observedAt: number, scope: PrincipleScope, on: string | null): string {
   const subject =
     scope === "group"
       ? "how this room works and how I behave in it — including where my own register has drifted"
       : "working with this person, including what they will reject";
+  const when = on ? ` on ${on}` : "";
   return (
     `_(Distilled from the observations below — the rules for ${subject}. ` +
-    `Revised when a conversation contradicts one. Derived at ${observedAt} observations.)_`
+    `Revised when a conversation contradicts one. Derived at ${observedAt} observations${when}.)_`
   );
 }
 
@@ -65,13 +66,23 @@ export function principlesDerivedAt(body: string): number {
   return m ? Number(m[1]) : 0;
 }
 
+/** The date the last pass ran, when it stamped one (stamps before 2026-10-23
+ *  did not); else the newest evidence date it cited; else null. */
+export function principlesDerivedOn(body: string): string | null {
+  const m = body.match(/Derived at \d+ observations on (\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1]!;
+  const dates = readPrinciples(body).flatMap((p) => p.evidence);
+  return dates.length ? dates.sort().at(-1)! : null;
+}
+
 /** Render the section body. */
 export function renderPrinciples(
   principles: Principle[],
   observedAt = 0,
   scope: PrincipleScope = "person",
+  on: string | null = null,
 ): string {
-  const lines = [PRINCIPLES_HEADING, note(observedAt, scope), ""];
+  const lines = [PRINCIPLES_HEADING, note(observedAt, scope, on), ""];
   for (const p of principles.slice(0, MAX_PRINCIPLES)) {
     const ev = p.evidence.length ? ` _(${p.evidence.join(", ")})_` : "";
     lines.push(`- ${p.rule.trim()}${ev}`);
@@ -117,10 +128,11 @@ export function writePrinciples(
   observedAt = 0,
   pathFor: (h: string) => string = personFilePath,
   scope: PrincipleScope = "person",
+  on: string | null = null,
 ): string {
   const path = pathFor(handle);
   const current = existsSync(path) ? readFileSync(path, "utf8") : "";
-  const rendered = renderPrinciples(principles, observedAt, scope);
+  const rendered = renderPrinciples(principles, observedAt, scope, on);
   const lines = current.split("\n");
 
   const start = lines.findIndex((l) => l.trim() === PRINCIPLES_HEADING);

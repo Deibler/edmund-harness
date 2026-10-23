@@ -17,6 +17,7 @@ import {
   archiveRewriteDrops,
   archivedObservationCount,
   personArchivableSections,
+  reconcileRewrite,
 } from "./archive.ts";
 import {
   GROUP_CONSOLIDATION_PROMPT,
@@ -182,9 +183,8 @@ async function runDmMaintenance(args: {
   const parsed = parseOutput(raw, DM_SECTIONS);
   if (!parsed) return { ok: false, reason: "parse failed" };
 
-  deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
-
   if (cfg.dry_run) {
+    deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
     log.info("maintainer", `dm:${shortHandle(handle)} → dry-run`, {
       proposed_notes: parsed.notes.length,
       rewrite: parsed.fullRewrite ? "yes" : "no",
@@ -194,12 +194,18 @@ async function runDmMaintenance(args: {
   }
 
   if (parsed.fullRewrite) {
-    // Whatever the rewrite drops goes to the archive first; see
-    // archiveRewriteDrops. Live and archive together lose nothing.
-    if (current) archiveRewriteDrops(current.path, current.body, parsed.fullRewrite);
-    writePersonFile({ handle, displayName, body: parsed.fullRewrite });
+    const written = applyFullRewrite(
+      current,
+      () => readPersonFile(handle),
+      parsed.fullRewrite,
+      (body) => writePersonFile({ handle, displayName, body }),
+      `dm:${shortHandle(handle)}`,
+    );
+    if (!written) return { ok: false, reason: "rewrite not applied" };
+    // Stamped only once it landed, so a rewrite that did not is retried.
+    deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
     log.info("maintainer", `dm:${shortHandle(handle)} → full rewrite`, {
-      chars: parsed.fullRewrite.length,
+      chars: written.length,
       reason: parsed.reason,
     });
     return {
@@ -211,6 +217,7 @@ async function runDmMaintenance(args: {
     };
   }
 
+  deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
   let applied = 0;
   for (const n of parsed.notes) {
     try {
@@ -306,9 +313,8 @@ async function runGroupMaintenance(args: {
   const parsed = parseOutput(raw, GROUP_SECTIONS);
   if (!parsed) return { ok: false, reason: "parse failed" };
 
-  deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
-
   if (cfg.dry_run) {
+    deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
     log.info("maintainer", `group:${shortGuid(chatGuid)} → dry-run`, {
       proposed_notes: parsed.notes.length,
       rewrite: parsed.fullRewrite ? "yes" : "no",
@@ -318,10 +324,17 @@ async function runGroupMaintenance(args: {
   }
 
   if (parsed.fullRewrite) {
-    if (current) archiveRewriteDrops(current.path, current.body, parsed.fullRewrite);
-    writeGroupFile({ chatGuid, displayName, body: parsed.fullRewrite });
+    const written = applyFullRewrite(
+      current,
+      () => readGroupFile(chatGuid),
+      parsed.fullRewrite,
+      (body) => writeGroupFile({ chatGuid, displayName, body }),
+      `group:${shortGuid(chatGuid)}`,
+    );
+    if (!written) return { ok: false, reason: "rewrite not applied" };
+    deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
     log.info("maintainer", `group:${shortGuid(chatGuid)} → full rewrite`, {
-      chars: parsed.fullRewrite.length,
+      chars: written.length,
       reason: parsed.reason,
     });
     return {
@@ -333,6 +346,7 @@ async function runGroupMaintenance(args: {
     };
   }
 
+  deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
   let applied = 0;
   for (const n of parsed.notes) {
     try {
@@ -473,6 +487,41 @@ function parseOutput(
     typeof o.full_rewrite === "string" && o.full_rewrite.trim().length > 0 ? o.full_rewrite : null;
   const reason = typeof o.reason === "string" ? o.reason : "";
   return { notes, fullRewrite, reason };
+}
+
+/**
+ * Write a full rewrite without losing anything. The file is re-read right
+ * before writing, notes the live turn appended during the model call are
+ * merged in (reconcileRewrite), and whatever the rewrite drops from THAT
+ * version goes to the archive first, so live and archive together hold
+ * every observation the file held. A file that changed in any other way is
+ * left alone. Returns the body written, or null when nothing was written.
+ */
+export function applyFullRewrite(
+  snapshot: { path: string; body: string } | null,
+  reread: () => { path: string; body: string } | null,
+  rewrite: string,
+  write: (body: string) => void,
+  label: string,
+): string | null {
+  try {
+    const latest = reread();
+    let body = rewrite;
+    if (latest) {
+      const merged = reconcileRewrite(snapshot?.body ?? "", latest.body, rewrite);
+      if (merged === null) {
+        log.info("maintainer", `${label} → rewrite skipped, the file changed during the pass`);
+        return null;
+      }
+      body = merged;
+      archiveRewriteDrops(latest.path, latest.body, body);
+    }
+    write(body);
+    return body;
+  } catch (err) {
+    log.warn("maintainer", `${label} → rewrite failed`, { err: (err as Error).message });
+    return null;
+  }
 }
 
 /** The model for the judgment pass (consolidation): its own knob, falling

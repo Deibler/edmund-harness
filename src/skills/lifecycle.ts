@@ -38,6 +38,7 @@ import type { ContactBook } from "../sessions/contacts.ts";
 import { log } from "../util/log.ts";
 import { updateAuthoredSkill } from "./author.ts";
 import { revokeConsentFor } from "./consent.ts";
+import { MIN_CHATS, MIN_PEOPLE, personKey } from "./curator.ts";
 import { type InstallRecord, categoryOf, readDb, uninstallSkill, writeDb } from "./installer.ts";
 import { existingSkillRoot, skillDirectoryForRecord } from "./paths.ts";
 import { describeLeaks, findLeaks } from "./privacy.ts";
@@ -267,7 +268,7 @@ async function reviewOne(
     `USAGE: read ${stats.reads} times across ${stats.sessions.size} conversation(s).`,
     "",
     "WHAT PEOPLE WERE ACTUALLY ASKING, in the conversations where it was read:",
-    ...context.map((c) => `  • ${c}`),
+    ...context.map((c) => `  • ${c.text}`),
   ].join("\n");
 
   const run = deps.runModel ?? runModelOneShot;
@@ -310,7 +311,7 @@ async function reviewOne(
       });
     }
   } else if (parsed.verdict === "revise" && parsed.instructions) {
-    reviseCurated(name, record, parsed.instructions, parsed.reason, deps);
+    reviseCurated(name, record, parsed.instructions, parsed.reason, support(context, deps), deps);
   } else {
     log.info("skill-curator", "kept a curated skill", { name, reason: parsed.reason });
   }
@@ -333,10 +334,23 @@ export function reviseCurated(
   record: InstallRecord,
   instructions: string,
   reason: string,
+  evidence: { people: number; chats: number },
   deps: LifecycleDeps,
 ): boolean {
   if (!deps.contacts) {
     log.warn("skill-curator", "revision skipped — no contacts for the leak scan", { name });
+    return false;
+  }
+  // The bar a new curated skill clears. A revision is written from the asks
+  // around the skill's recent reads, and those can all come from one person
+  // in one chat: without this, a review could re-aim a global skill at that
+  // person's own project, the incident the curator's bar exists to prevent.
+  if (evidence.people < MIN_PEOPLE || evidence.chats < MIN_CHATS) {
+    log.info("skill-curator", "revision not applied — the asks behind it are too narrow", {
+      name,
+      people: evidence.people,
+      chats: evidence.chats,
+    });
     return false;
   }
   const leaks = findLeaks(`${name}\n${instructions}`, deps.contacts, deps.config.identity.names, {
@@ -407,12 +421,23 @@ export function parseVerdict(
  * db yields no context, and no context means no verdict rather than a
  * confident one.
  */
-function asksAroundReads(dataDir: string, reads: { session: string; at_ms: number }[]): string[] {
+type Ask = { text: string; chat: string; sender: string };
+
+/** How many people, in how many chats, the asks behind a verdict came from. */
+function support(asks: Ask[], deps: LifecycleDeps): { people: number; chats: number } {
+  const person = (h: string) => (deps.contacts ? personKey(deps.contacts, h) : h);
+  return {
+    people: new Set(asks.map((a) => person(a.sender))).size,
+    chats: new Set(asks.map((a) => a.chat)).size,
+  };
+}
+
+function asksAroundReads(dataDir: string, reads: { session: string; at_ms: number }[]): Ask[] {
   const statePath = join(dataDir, "state.db");
   const recallPath = join(dataDir, "recall.sqlite");
   if (!existsSync(statePath) || !existsSync(recallPath)) return [];
 
-  const out: string[] = [];
+  const out: Ask[] = [];
   let state: Database | null = null;
   let recall: Database | null = null;
   try {
@@ -421,8 +446,8 @@ function asksAroundReads(dataDir: string, reads: { session: string; at_ms: numbe
     const chatFor = state.query<{ chat_guid: string }, [string]>(
       "SELECT chat_guid FROM sessions WHERE session_key = ? LIMIT 1",
     );
-    const asks = recall.query<{ text: string }, [string, number, number]>(
-      `SELECT text FROM rows
+    const asks = recall.query<{ text: string; sender: string }, [string, number, number]>(
+      `SELECT text, sender FROM rows
         WHERE kind = 'message' AND chat_guid = ?
           AND sender IS NOT NULL AND sender != 'me'
           AND ts BETWEEN ? AND ?
@@ -439,7 +464,7 @@ function asksAroundReads(dataDir: string, reads: { session: string; at_ms: numbe
         const text = row.text.replace(/^\[\d{4}-\d{2}-\d{2}\]\s*[^:]{0,64}:\s*/, "").trim();
         if (!text || seen.has(text)) continue;
         seen.add(text);
-        out.push(text.slice(0, 300));
+        out.push({ text: text.slice(0, 300), chat, sender: row.sender });
       }
     }
   } catch {

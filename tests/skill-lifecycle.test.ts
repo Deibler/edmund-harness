@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,12 +6,14 @@ import { join } from "node:path";
 import { loadConfig } from "../src/config/config.ts";
 import type { Config } from "../src/config/config.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
+import { StateStore } from "../src/sessions/store.ts";
 import { updateAuthoredSkill } from "../src/skills/author.ts";
 import { type InstallRecord, readDb, writeDb } from "../src/skills/installer.ts";
 import {
   type LifecycleDeps,
   parseVerdict,
   retireUnusedCurated,
+  reviewUsedCurated,
   reviseCurated,
   skillDescription,
   usageRetentionDays,
@@ -242,6 +245,8 @@ describe("reading a description off disk", () => {
   });
 });
 
+const BROAD = { people: 2, chats: 2 };
+
 describe("a review verdict of revise", () => {
   const contacts = new ContactBook([{ name: "Morgan", handles: ["+15550004444"] }]);
   const curatedDir = () => join(skillsRoot, "curated");
@@ -258,6 +263,7 @@ describe("a review verdict of revise", () => {
       rec,
       "Ask for the race date first, then build backwards from it.",
       "the asks were about taper timing",
+      BROAD,
       { ...deps(), contacts },
     );
     expect(ok).toBe(true);
@@ -270,7 +276,7 @@ describe("a review verdict of revise", () => {
 
   test("a revision carrying someone's name is refused", () => {
     const rec = setup();
-    const ok = reviseCurated("race-week-plan", rec, "Ask Morgan for the date.", "x", {
+    const ok = reviseCurated("race-week-plan", rec, "Ask Morgan for the date.", "x", BROAD, {
       ...deps(),
       contacts,
     });
@@ -281,7 +287,88 @@ describe("a review verdict of revise", () => {
 
   test("without contacts for the leak scan, nothing is applied", () => {
     const rec = setup();
-    expect(reviseCurated("race-week-plan", rec, "New steps here.", "x", deps())).toBe(false);
+    expect(reviseCurated("race-week-plan", rec, "New steps here.", "x", BROAD, deps())).toBe(false);
+  });
+
+  test("a revision the asks of one person or one room support is refused", () => {
+    const rec = setup();
+    for (const narrow of [
+      { people: 1, chats: 3 },
+      { people: 3, chats: 1 },
+    ]) {
+      const ok = reviseCurated("race-week-plan", rec, "Plan their family's race.", "x", narrow, {
+        ...deps(),
+        contacts,
+      });
+      expect(ok).toBe(false);
+    }
+    const body = readFileSync(join(curatedDir(), "race-week-plan", "SKILL.md"), "utf8");
+    expect(body).toContain("Do the thing.");
+  });
+
+  test("the review measures the asks it was shown", async () => {
+    // Three reads of the skill: two in one person's DM, one in another
+    // person's DM. Then the same with all three in one DM.
+    for (const [sessions, expectApplied] of [
+      [["imessage:dm:+15550005551", "imessage:dm:+15550005551", "imessage:dm:+15550005552"], true],
+      [["imessage:dm:+15550005551", "imessage:dm:+15550005551", "imessage:dm:+15550005551"], false],
+    ] as const) {
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(skillsRoot, { recursive: true });
+      setup();
+      const state = new StateStore(dir);
+      const recall = new Database(join(dir, "recall.sqlite"));
+      recall.exec(
+        `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
+                            ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
+      );
+      for (const [i, session] of sessions.entries()) {
+        const handle = session.slice("imessage:dm:".length);
+        state.upsertSession({
+          sessionKey: session as `imessage:dm:${string}`,
+          claudeSessionId: null,
+          chatGuid: `any;-;${handle}`,
+          isGroup: 0,
+          lastInboundMs: 0,
+          lastOutboundMs: 0,
+        });
+        recall
+          .query("INSERT OR IGNORE INTO rows VALUES (?,?,?,?,?,?,x'00','m',1)")
+          .run(
+            `msg:${i}`,
+            "message",
+            `any;-;${handle}`,
+            handle,
+            Date.now() - 60_000,
+            `plan my race week ${i}`,
+          );
+        recordSkillRead(dir, "race-week-plan", session);
+      }
+      recall.close();
+      state.close();
+      await reviewUsedCurated({
+        ...deps(),
+        contacts,
+        runModel: async () => ({
+          ok: true,
+          text: JSON.stringify({
+            verdict: "revise",
+            reason: "aimed slightly off",
+            instructions: "Ask for the race date first, then build backwards from it.",
+          }),
+          error: null,
+          status: 0,
+          stderr: "",
+          costUsd: 0,
+          usage: null,
+          model: "test",
+          numTurns: 1,
+          durationMs: 1,
+        }),
+      });
+      const body = readFileSync(join(curatedDir(), "race-week-plan", "SKILL.md"), "utf8");
+      expect(body.includes("build backwards")).toBe(expectApplied);
+    }
   });
 
   test("a conversation still cannot edit a curated skill", () => {

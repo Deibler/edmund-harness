@@ -8,21 +8,29 @@ import {
   ARCHIVE_TRIGGER_BYTES,
   MIN_RECENT_BULLETS,
   NOTE_BYTES,
+  OPEN_ITEM_DAYS,
   SECTION_KEEP_RECENT,
   archiveGroupFile,
   archivePathFor,
   archivePersonFile,
   archiveRewriteDrops,
   archivedObservationCount,
+  reconcileRewrite,
 } from "../src/persona/archive.ts";
 import {
   CONSOLIDATE_AFTER_NEW_BULLETS,
+  CONSOLIDATION_PROMPT,
+  GROUP_CONSOLIDATION_PROMPT,
   consolidatePerson,
   countObservations,
   shouldConsolidate,
 } from "../src/persona/consolidate.ts";
-import { judgmentModel } from "../src/persona/maintainer.ts";
-import { principlesDerivedAt, renderPrinciples } from "../src/persona/principles.ts";
+import { applyFullRewrite, judgmentModel } from "../src/persona/maintainer.ts";
+import {
+  principlesDerivedAt,
+  readPrinciples,
+  renderPrinciples,
+} from "../src/persona/principles.ts";
 
 /**
  * The gates between the maintainer, the consolidator and the archiver, as
@@ -48,9 +56,11 @@ const day = (n: number) => {
   const d = new Date(Date.UTC(2026, 8, 1) + n * 86_400_000);
   return d.toISOString().slice(0, 10);
 };
+/** Noon Eastern on day(60), 2026-10-31: the clock the age tests run at. */
+const NOW = Date.UTC(2026, 9, 31, 16);
 /** A note the length notes actually are, not the 140 the prompt asks for. */
-const note = (n: number, text = "observation") =>
-  `- **${day(n)}** — ${text} ${n}: ${"a realistic amount of detail about what happened ".repeat(7)}`;
+const note = (n: number, text = "observation", repeat = 7) =>
+  `- **${day(n)}** — ${text} ${n}: ${"a realistic amount of detail about what happened ".repeat(repeat)}`;
 
 function personFile(learned: string[], openItems: string[], principlesAt?: number): string {
   return [
@@ -77,6 +87,12 @@ function personFile(learned: string[], openItems: string[], principlesAt?: numbe
   ].join("\n");
 }
 
+const liveItems = (body: string, marker: string) =>
+  body
+    .split("\n")
+    .filter((l) => l.includes(marker))
+    .map((l) => Number(l.match(new RegExp(`${marker} (\\d+):`))?.[1]));
+
 describe("the consolidation trigger survives the archiver", () => {
   test("new observations count even after the size gate moves old ones out", () => {
     const name = "15550100001.md";
@@ -102,7 +118,7 @@ describe("the consolidation trigger survives the archiver", () => {
     }
     const live = readFileSync(path, "utf8");
     // The bug: the live count is held near the stamp by the archiver.
-    expect(shouldConsolidate(live)).toBeFalse();
+    expect(shouldConsolidate(live, 0)).toBeFalse();
     // Counting what was recorded, the pass is due.
     expect(shouldConsolidate(live, archivedObservationCount(path))).toBeTrue();
   });
@@ -120,66 +136,196 @@ describe("the consolidation trigger survives the archiver", () => {
       () => path,
     );
     expect(r.ok).toBeTrue();
-    expect(principlesDerivedAt(readFileSync(path, "utf8"))).toBe(4);
+    const after = readFileSync(path, "utf8");
+    expect(principlesDerivedAt(after)).toBe(4);
+    // Dated, so the next pass knows which archived observations are new.
+    expect(after).toMatch(/Derived at 4 observations on \d{4}-\d{2}-\d{2}\./);
+  });
+});
+
+describe("consolidation sees what the size gate moved out", () => {
+  const stamped = (on: string | null) =>
+    personFile([note(40)], [], 10).replace(
+      "Derived at 10 observations",
+      `Derived at 10 observations${on ? ` on ${on}` : ""}`,
+    );
+
+  test("observations archived since the last pass are in the prompt", async () => {
+    const path = join(dir, "p.md");
+    writeFileSync(path, stamped(day(35)));
+    mkdirSync(join(dir, "archive"));
+    writeFileSync(
+      archivePathFor(path),
+      `# P — archived history\n\n${note(30, "seen before")}\n${note(37, "moved out unseen")}\n`,
+    );
+    let prompt = "";
+    await consolidatePerson(
+      "p",
+      async (_s, user) => {
+        prompt = user;
+        return null;
+      },
+      undefined,
+      () => path,
+    );
+    expect(prompt).toContain("moved out unseen 37");
+    expect(prompt).not.toContain("seen before 30");
+  });
+
+  test("an old stamp with no date falls back to the newest evidence date", async () => {
+    const path = join(dir, "p.md");
+    const body = personFile([note(40)], []).replace(
+      "## Who They Are",
+      `${renderPrinciples([{ rule: "Lead with the verdict, then ship.", evidence: [day(33)] }], 10)}\n\n## Who They Are`,
+    );
+    writeFileSync(path, body);
+    mkdirSync(join(dir, "archive"));
+    writeFileSync(archivePathFor(path), `# P\n\n${note(32, "older")}\n${note(34, "newer")}\n`);
+    let prompt = "";
+    await consolidatePerson(
+      "p",
+      async (_s, user) => {
+        prompt = user;
+        return null;
+      },
+      undefined,
+      () => path,
+    );
+    expect(prompt).toContain("newer 34");
+    expect(prompt).not.toContain("older 32");
+  });
+
+  test("a principle whose evidence was archived is not retired for that", () => {
+    for (const p of [CONSOLIDATION_PROMPT, GROUP_CONSOLIDATION_PROMPT]) {
+      expect(p).toContain("is NOT unsupported");
+      expect(p).not.toMatch(/whether the file still\s+supports it/);
+    }
+  });
+
+  test("no rules this time keeps the standing ones and still stamps", async () => {
+    const path = join(dir, "p.md");
+    writeFileSync(
+      path,
+      personFile(
+        Array.from({ length: 20 }, (_, i) => note(i)),
+        [],
+        3,
+      ),
+    );
+    const before = readFileSync(path, "utf8");
+    expect(shouldConsolidate(before, 0)).toBeTrue();
+    const r = await consolidatePerson(
+      "p",
+      async () => '{"principles": [], "revised": "nothing new"}',
+      undefined,
+      () => path,
+    );
+    expect(r.ok).toBeTrue();
+    const after = readFileSync(path, "utf8");
+    expect(readPrinciples(after).map((p) => p.rule)).toEqual(["Lead with the verdict, then ship."]);
+    // Stamped, so the next maintainer pass does not run it again.
+    expect(shouldConsolidate(after, 0)).toBeFalse();
   });
 });
 
 describe("the size gate can reach what it protects", () => {
-  test("a recency floor holds that many notes' worth of bytes, not that many bullets", () => {
+  test("a history floor holds that many notes' worth of bytes, not that many bullets", () => {
     const name = "15550100002.md";
-    const items = Array.from({ length: 60 }, (_, i) => note(i, "open item"));
-    const body = personFile([], items);
+    const body = personFile(
+      Array.from({ length: 60 }, (_, i) => note(i, "observation", 18)),
+      [],
+    );
     writeFileSync(join(dir, name), body);
     expect(Buffer.byteLength(body)).toBeGreaterThan(ARCHIVE_TRIGGER_BYTES);
-    archivePersonFile(name, dir);
+    archivePersonFile(name, dir, undefined, NOW);
 
     const live = readFileSync(join(dir, name), "utf8");
-    const kept = live.split("\n").filter((l) => l.includes("open item"));
-    // Counted in bullets, 40 of these (15 KB) were untouchable and the file
-    // could never get near its target. Counted in bytes, it gets there.
-    expect(kept.length).toBeLessThan(SECTION_KEEP_RECENT.get("Open Items")!);
+    // Counted in bullets, 15 of these (13.5 KB) were untouchable and the file
+    // could not reach its target. Counted in bytes, it does.
+    expect(liveItems(live, "observation").length).toBeLessThan(15);
     expect(Buffer.byteLength(live)).toBeLessThanOrEqual(ARCHIVE_TARGET_BYTES);
-    // The newest stay, the oldest went, and nothing was lost.
     expect(live).toContain(day(59));
-    expect(live).not.toContain(`${day(0)}**`);
     const archived = readFileSync(archivePathFor(join(dir, name)), "utf8");
     expect(countObservations(live) + countObservations(archived)).toBe(60);
   });
 
-  test("notes the size the maintainer is asked for keep the full count", () => {
+  test("history notes the size the maintainer is asked for keep the full count", () => {
     const name = "15550100003.md";
-    const short = (i: number) => `- **${day(i)}** — short open item ${i}`;
+    const short = (i: number) => `- **${day(i)}** — short lesson ${i}`;
     expect(Buffer.byteLength(short(10))).toBeLessThanOrEqual(NOTE_BYTES);
-    const filler = Array.from({ length: 80 }, (_, i) => note(i));
-    writeFileSync(
-      join(dir, name),
+    const body = [
       personFile(
-        filler,
-        Array.from({ length: 50 }, (_, i) => short(i)),
-      ),
-    );
-    archivePersonFile(name, dir);
-    const live = readFileSync(join(dir, name), "utf8");
-    const kept = live.split("\n").filter((l) => l.includes("short open item")).length;
-    expect(kept).toBe(SECTION_KEEP_RECENT.get("Open Items"));
-  });
-
-  test("the newest few stay however long they are", () => {
-    const name = "15550100004.md";
-    const huge = (i: number) => `- **${day(i)}** — open item ${i}: ${"x".repeat(9_000)}`;
-    writeFileSync(
-      join(dir, name),
-      personFile(
+        Array.from({ length: 30 }, (_, i) => short(i)),
         [],
-        Array.from({ length: 6 }, (_, i) => huge(i)),
       ),
-    );
-    archivePersonFile(name, dir);
+      "## Shared History",
+      ...Array.from({ length: 40 }, (_, i) => note(i, "event")),
+    ].join("\n");
+    writeFileSync(join(dir, name), body);
+    archivePersonFile(name, dir, undefined, NOW);
     const live = readFileSync(join(dir, name), "utf8");
-    expect(live.split("\n").filter((l) => l.includes("open item")).length).toBe(MIN_RECENT_BULLETS);
+    expect(liveItems(live, "short lesson").length).toBe(15);
   });
 
-  test("a group's Open Items sheds its oldest like a person's", () => {
+  test("the newest few history notes stay however long they are", () => {
+    const name = "15550100004.md";
+    const huge = (i: number) => `- **${day(i)}** — lesson ${i}: ${"x".repeat(9_000)}`;
+    writeFileSync(
+      join(dir, name),
+      personFile(
+        Array.from({ length: 6 }, (_, i) => huge(i)),
+        [],
+      ),
+    );
+    archivePersonFile(name, dir, undefined, NOW);
+    const live = readFileSync(join(dir, name), "utf8");
+    expect(liveItems(live, "lesson").length).toBe(MIN_RECENT_BULLETS);
+  });
+});
+
+describe("open commitments are not archived by size", () => {
+  test("an open item stays while it is recent, however large the section is", () => {
+    const name = "15550100005.md";
+    // 900-byte items, one a day for 60 days: the last 14 are 12.6 KB, far
+    // over any byte floor, and all of them stay.
+    const items = Array.from({ length: 60 }, (_, i) => note(i, "open item", 18));
+    writeFileSync(join(dir, name), personFile([], items));
+    archivePersonFile(name, dir, undefined, NOW);
+    const kept = liveItems(readFileSync(join(dir, name), "utf8"), "open item");
+    const recent = Array.from({ length: 60 }, (_, i) => i).filter((i) => 60 - i <= OPEN_ITEM_DAYS);
+    expect(kept.sort((a, b) => a - b)).toEqual(recent);
+  });
+
+  test("an old one goes however small the section is", () => {
+    const name = "15550100006.md";
+    const items = Array.from({ length: 20 }, (_, i) => note(i, "open item"));
+    const body = [
+      personFile([], items),
+      "## Shared History",
+      ...Array.from({ length: 30 }, (_, i) => note(i, "event")),
+    ].join("\n");
+    writeFileSync(join(dir, name), body);
+    archivePersonFile(name, dir, undefined, NOW);
+    // All 20 are weeks old: only the newest few stay.
+    expect(
+      liveItems(readFileSync(join(dir, name), "utf8"), "open item").sort((a, b) => a - b),
+    ).toEqual([17, 18, 19]);
+  });
+
+  test("the count floor still caps a burst of recent items", () => {
+    const name = "15550100007.md";
+    const items = Array.from({ length: 60 }, (_, i) =>
+      note(50 + Math.floor(i / 6), `open item ${i} on`),
+    );
+    writeFileSync(join(dir, name), personFile([], items));
+    archivePersonFile(name, dir, undefined, NOW);
+    const live = readFileSync(join(dir, name), "utf8");
+    expect(live.split("\n").filter((l) => l.includes("open item")).length).toBe(
+      SECTION_KEEP_RECENT.get("Open Items"),
+    );
+  });
+
+  test("a group's Open Items is protected and sheds the same way", () => {
     const name = "any-deadbeef.md";
     const body = [
       "# The Crew",
@@ -188,15 +334,15 @@ describe("the size gate can reach what it protects", () => {
       "- **2026-08-15** — Alice plans the meals",
       "",
       "## Open Items",
-      ...Array.from({ length: 60 }, (_, i) => note(i, "group plan")),
+      ...Array.from({ length: 60 }, (_, i) => note(i, "group plan", 18)),
       "",
     ].join("\n");
     writeFileSync(join(dir, name), body);
-    expect(archiveGroupFile(name, dir)).not.toBeNull();
+    expect(archiveGroupFile(name, dir, NOW)).not.toBeNull();
     const live = readFileSync(join(dir, name), "utf8");
     expect(live).toContain("Alice plans the meals");
-    expect(live).toContain(day(59));
-    expect(live).not.toContain(`${day(0)}**`);
+    const kept = liveItems(live, "group plan");
+    expect(Math.min(...kept)).toBe(60 - OPEN_ITEM_DAYS);
     const archived = readFileSync(archivePathFor(join(dir, name)), "utf8");
     expect(countObservations(live) + countObservations(archived)).toBe(61);
   });
@@ -204,7 +350,7 @@ describe("the size gate can reach what it protects", () => {
 
 describe("a full rewrite loses nothing", () => {
   test("dated bullets the rewrite dropped go to the archive under their section", () => {
-    const path = join(dir, "15550100005.md");
+    const path = join(dir, "15550100008.md");
     const old = personFile([note(1), note(2), note(3)], [note(4, "open item")]);
     const rewritten = personFile([note(3)], []);
     writeFileSync(path, old);
@@ -217,26 +363,102 @@ describe("a full rewrite loses nothing", () => {
     // What the rewrite kept verbatim is not duplicated; prose is not a bullet.
     expect(archived).not.toContain(note(3));
     expect(archived).not.toContain("A test subject.");
-    // Together the two files hold every observation the old file held.
-    for (const l of old.split("\n").filter((x) => x.startsWith("- **"))) {
-      expect(`${rewritten}\n${archived}`).toContain(l);
+  });
+
+  test("a note the live turn appended during the model call is merged in", () => {
+    const snapshot = personFile([note(1), note(2)], [note(3, "open item")]);
+    const appended = note(9, "added meanwhile");
+    const latest = snapshot.replace(note(2), `${note(2)}\n${appended}`);
+    const rewrite = personFile([note(2)], []);
+    const merged = reconcileRewrite(snapshot, latest, rewrite);
+    expect(merged).not.toBeNull();
+    const learned = merged!.slice(
+      merged!.indexOf("## What I've Learned"),
+      merged!.indexOf("## Open Items"),
+    );
+    expect(learned).toContain(appended);
+  });
+
+  test("a file edited or trimmed during the call is not overwritten", () => {
+    const snapshot = personFile([note(1), note(2)], []);
+    const rewrite = personFile([note(2)], []);
+    // The live turn removed a note (say, asked to forget it).
+    expect(reconcileRewrite(snapshot, snapshot.replace(`${note(1)}\n`, ""), rewrite)).toBeNull();
+    // Or reworded prose.
+    expect(
+      reconcileRewrite(snapshot, snapshot.replace("A test subject.", "A tester."), rewrite),
+    ).toBeNull();
+    // Nothing changed: the rewrite as produced.
+    expect(reconcileRewrite(snapshot, snapshot, rewrite)).toBe(rewrite);
+  });
+
+  test("live and archive together hold everything the file held when it was written", () => {
+    const path = join(dir, "15550100009.md");
+    const snapshot = personFile([note(1), note(2), note(3)], []);
+    const latest = snapshot.replace(note(3), `${note(3)}\n${note(9, "added meanwhile")}`);
+    writeFileSync(path, latest);
+    const written = applyFullRewrite(
+      { path, body: snapshot },
+      () => ({ path, body: readFileSync(path, "utf8") }),
+      personFile([note(3)], []),
+      (body) => writeFileSync(path, body),
+      "test",
+    );
+    expect(written).not.toBeNull();
+    const live = readFileSync(path, "utf8");
+    const archived = readFileSync(archivePathFor(path), "utf8");
+    for (const l of latest.split("\n").filter((x) => x.startsWith("- **"))) {
+      expect(`${live}\n${archived}`).toContain(l);
     }
+    // The appended note is live, not archived.
+    expect(live).toContain("added meanwhile 9");
+    expect(archived).not.toContain("added meanwhile 9");
   });
 
-  test("a rewrite that keeps everything archives nothing", () => {
-    const path = join(dir, "15550100006.md");
-    const body = personFile([note(1)], []);
-    expect(archiveRewriteDrops(path, body, `${body}\n## Extra\nmore prose`)).toBe(0);
+  test("a rewrite that cannot be applied writes nothing and reports it", () => {
+    const path = join(dir, "15550100010.md");
+    const snapshot = personFile([note(1)], []);
+    writeFileSync(path, snapshot);
+    let wrote = false;
+    const changed = applyFullRewrite(
+      { path, body: snapshot },
+      () => ({ path, body: personFile([], []) }),
+      personFile([], []),
+      () => {
+        wrote = true;
+      },
+      "test",
+    );
+    expect(changed).toBeNull();
+    expect(wrote).toBeFalse();
+    const threw = applyFullRewrite(
+      { path, body: snapshot },
+      () => ({ path, body: snapshot }),
+      personFile([], []),
+      () => {
+        throw new Error("disk full");
+      },
+      "test",
+    );
+    expect(threw).toBeNull();
   });
 
-  test("the maintainer archives before each of its full rewrites", () => {
+  test("the maintainer stamps a rewrite only once it landed", () => {
     const src = readFileSync(join(import.meta.dir, "..", "src/persona/maintainer.ts"), "utf8");
-    for (const writer of ["writePersonFile({ handle", "writeGroupFile({ chatGuid"]) {
-      const at = src.indexOf(writer);
-      expect(at).toBeGreaterThan(-1);
-      const before = src.slice(src.lastIndexOf("if (parsed.fullRewrite)", at), at);
-      expect(before).toContain(
-        "archiveRewriteDrops(current.path, current.body, parsed.fullRewrite)",
+    const parsedAt = [...src.matchAll(/const parsed = parseOutput\(raw, (DM|GROUP)_SECTIONS\);/g)];
+    expect(parsedAt.length).toBe(2);
+    for (const m of parsedAt) {
+      const start = src.indexOf("if (parsed.fullRewrite)", m.index!);
+      const branch = src.slice(m.index!, src.indexOf('log.info("maintainer"', start + 1));
+      const rewrite = branch.slice(branch.indexOf("if (parsed.fullRewrite)"));
+      // Not stamped between the parse and the rewrite...
+      expect(branch.slice(0, branch.indexOf("if (cfg.dry_run)"))).not.toContain(
+        "setLastMaintainedAtMs",
+      );
+      // ...and in the rewrite branch only after applyFullRewrite returned.
+      expect(rewrite.indexOf("applyFullRewrite(")).toBeGreaterThan(-1);
+      expect(rewrite.indexOf("setLastMaintainedAtMs")).toBeGreaterThan(
+        rewrite.indexOf("if (!written)"),
       );
     }
   });
