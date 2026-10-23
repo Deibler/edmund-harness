@@ -15,6 +15,7 @@ import {
   sampleRecentAsks,
   vetProposal,
 } from "../src/skills/curator.ts";
+import { type InstallRecord, writeDb } from "../src/skills/installer.ts";
 
 /**
  * The curator's bar.
@@ -31,10 +32,22 @@ const contacts = new ContactBook([
 ]);
 
 const sample: SampledAsk[] = [
-  { ref: "msg:a1", chat: "chatA", text: "how long should my long run be", ts: 1 },
-  { ref: "msg:a2", chat: "chatA", text: "what pace for the tempo", ts: 2 },
-  { ref: "msg:b1", chat: "chatB", text: "am i tapering right", ts: 3 },
-  { ref: "msg:c1", chat: "chatC", text: "what should i eat before the race", ts: 4 },
+  {
+    ref: "msg:a1",
+    chat: "chatA",
+    sender: "+15550001111",
+    text: "how long should my long run be",
+    ts: 1,
+  },
+  { ref: "msg:a2", chat: "chatA", sender: "+15550001111", text: "what pace for the tempo", ts: 2 },
+  { ref: "msg:b1", chat: "chatB", sender: "+15550002222", text: "am i tapering right", ts: 3 },
+  {
+    ref: "msg:c1",
+    chat: "chatC",
+    sender: "+15550003333",
+    text: "what should i eat before the race",
+    ts: 4,
+  },
 ];
 
 function proposal(overrides: Partial<Proposal> = {}): Proposal {
@@ -89,6 +102,28 @@ describe("what the curator is allowed to write", () => {
         ],
       }),
       ...base,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toContain("one person's habit");
+  });
+
+  test("one person asking in several chats is still one person", () => {
+    // 2026-10-16: seven asks across five chats (a DM and four groups), every
+    // one from the same person, became a global skill.
+    const spread: SampledAsk[] = ["chatA", "chatB", "chatC"].map((chat, i) => ({
+      ref: `msg:s${i}`,
+      chat,
+      sender: "+15550001111",
+      text: "make the next explainer video",
+      ts: i,
+    }));
+    const result = vetProposal({
+      ...base,
+      sample: spread,
+      proposal: proposal({
+        evidence: spread.map((a) => ({ ref: a.ref, chat: a.chat, reading: "video" })),
+      }),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
@@ -255,6 +290,30 @@ describe("sampling across conversations", () => {
     expect(perChat.get("chatQ2")).toBe(5);
   });
 
+  test("one person in many rooms is capped like one loud room", () => {
+    const db = new Database(dbPath);
+    const insert = db.query(
+      "INSERT INTO rows (ref, kind, chat_guid, sender, ts, text, vec, model, dim) VALUES (?,?,?,?,?,?,x'00','m',1)",
+    );
+    for (const chat of ["chatG1", "chatG2", "chatG3"]) {
+      for (let i = 0; i < 30; i++) {
+        insert.run(
+          `msg:${chat}-${i}`,
+          "message",
+          chat,
+          "+1777",
+          2000 + i,
+          `a fairly long ask ${i}`,
+        );
+      }
+    }
+    db.close();
+    const asks = sampleRecentAsks(dbPath, { sinceMs: 0 });
+    expect(asks.filter((a) => a.sender === "+1777").length).toBeLessThanOrEqual(40);
+    // The other people are still there.
+    expect(asks.some((a) => a.sender === "+1666")).toBe(true);
+  });
+
   test("Edmund's own messages are never sampled", () => {
     const asks = sampleRecentAsks(dbPath, { sinceMs: 0 });
     expect(asks.some((a) => a.text.includes("here is my long answer"))).toBe(false);
@@ -318,6 +377,7 @@ describe("where curated skills are written", () => {
       db.close();
 
       const config = loadConfig(join(import.meta.dir, "..", "config.example.toml"));
+      let prompt = "";
       const result = await runCurator({
         config,
         dataDir,
@@ -325,38 +385,84 @@ describe("where curated skills are written", () => {
         dbPath: join(dataDir, "installed-skills.json"),
         contacts,
         now: () => 10_000,
-        runModel: async () => ({
-          ok: true,
-          text: JSON.stringify({
-            skills: [
-              {
-                name: "race-week-plan",
-                description: "Build a complete plan for race week.",
-                instructions: "Ask for the race date and distance, then build the schedule.",
-                evidence: [
-                  { ref: "msg:a1", chat: "chatA", reading: "asked for a race week plan" },
-                  { ref: "msg:b1", chat: "chatB", reading: "asked for a race week plan" },
-                  { ref: "msg:b2", chat: "chatB", reading: "asked for a race week schedule" },
-                ],
-                whyNow: "the same planning request appeared in two chats",
-              },
-            ],
-            notes: "",
-          }),
-          error: null,
-          status: 0,
-          stderr: "",
-          costUsd: 0,
-          usage: null,
-          model: "test",
-          numTurns: 1,
-          durationMs: 1,
-        }),
+        runModel: async (opts) => {
+          prompt = opts.input;
+          return {
+            ok: true,
+            text: JSON.stringify({
+              skills: [
+                {
+                  name: "race-week-plan",
+                  description: "Build a complete plan for race week.",
+                  instructions: "Ask for the race date and distance, then build the schedule.",
+                  evidence: [
+                    { ref: "msg:a1", chat: "chatA", reading: "asked for a race week plan" },
+                    { ref: "msg:b1", chat: "chatB", reading: "asked for a race week plan" },
+                    { ref: "msg:b2", chat: "chatB", reading: "asked for a race week schedule" },
+                  ],
+                  whyNow: "the same planning request appeared in two chats",
+                },
+              ],
+              notes: "",
+            }),
+            error: null,
+            status: 0,
+            stderr: "",
+            costUsd: 0,
+            usage: null,
+            model: "test",
+            numTurns: 1,
+            durationMs: 1,
+          };
+        },
       });
 
       expect(result).toMatchObject({ ran: true, created: "race-week-plan" });
+      // People are told apart by opaque ids; a handle never reaches the prompt.
+      expect(prompt).toContain("person p1");
+      expect(prompt).not.toContain("+1555");
       expect(existsSync(join(skillsRoot, "curated", "race-week-plan", "SKILL.md"))).toBe(true);
       expect(existsSync(join(skillsRoot, "race-week-plan"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("at the ceiling", () => {
+  test("the pass says so, so the scheduler can wait a full interval", async () => {
+    const root = mkdtempSync(join(tmpdir(), "curator-ceiling-"));
+    try {
+      const config = loadConfig(join(import.meta.dir, "..", "config.example.toml"));
+      const dbPath = join(root, "installed-skills.json");
+      const skills: Record<string, InstallRecord> = {};
+      for (let i = 0; i < config.skill_curator.max_curated_skills; i++) {
+        skills[`curated-${i}`] = {
+          name: `curated-${i}`,
+          source: "curated",
+          version: null,
+          sha: "x",
+          installed_at: 0,
+          needs_approval: false,
+          approved_at: null,
+          has_scripts: false,
+          disabled: false,
+          category: "curated",
+          scope: null,
+        };
+      }
+      writeDb(dbPath, { version: 1, skills });
+      const result = await runCurator({
+        config,
+        dataDir: root,
+        skillsRoot: root,
+        dbPath,
+        contacts,
+        runModel: async () => {
+          throw new Error("no model call at the ceiling");
+        },
+      });
+      expect(result).toMatchObject({ ran: false, atCeiling: true });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -515,6 +515,10 @@ stripe_tax_code = "txcd_10105001"   # tax code for the inline product (AI as a S
 [people_maintainer]
 enabled = false
 model = "claude-sonnet-5"
+# Consolidation (observations -> the operating principles read on every turn)
+# is judgment, not extraction, and can run on its own model. It runs once per
+# 12 new observations per chat, not every pass. Empty = same as `model`.
+consolidation_model = ""
 min_interval_minutes = 10
 recent_messages = 30
 dry_run = false               # true = compute the edit and log it, don't write

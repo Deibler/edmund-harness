@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { GROUPS_DIR, PEOPLE_DIR, PERSONA_DIR } from "../claude/persona.ts";
 import { log } from "../util/log.ts";
 import { readPrinciples } from "./principles.ts";
@@ -27,6 +27,19 @@ export const ARCHIVE_TRIGGER_BYTES = 8 * 1024;
 export const ARCHIVE_TARGET_BYTES = 6 * 1024;
 /** Never archive a section below this many most-recent dated bullets. */
 export const KEEP_RECENT_BULLETS = 15;
+/**
+ * The recency floors are counts of notes the size the maintainer is told to
+ * write ("Each note ≤ 140 chars"), so what a floor protects is that many
+ * notes' worth of BYTES, not that many bullets. Counted in bullets, the
+ * floors outgrew the gate: notes now run 235-625 bytes on average, so the
+ * protected tail alone was about five times the target, the live files sat
+ * at 20-54 KB, and every pass archived a bullet or two while the file stayed
+ * where it was. Measured 2026-10-23: the operator's DM held 42 Open Items
+ * (16.5 KB) covering nine days.
+ */
+export const NOTE_BYTES = 140;
+/** However long they are, a section's newest few bullets stay live. */
+export const MIN_RECENT_BULLETS = 3;
 /** Per-section overrides of the recency floor. Open Items reads as history
  *  but each bullet may still be a live commitment, so it keeps a much
  *  deeper tail in the live file than the purely retrospective sections. */
@@ -77,9 +90,11 @@ export function personArchivableSections(body: string): Set<string> {
 }
 
 /** Group files: dated observations pile up in Group Dynamic and Shared
- *  History; Who's In It / Recurring Topics / Open Items are the curated
- *  core and always stay live. */
-const GROUP_ARCHIVABLE_SECTIONS = new Set(["Group Dynamic", "Shared History"]);
+ *  History. Open Items joined them for the reason it did in person files:
+ *  nothing closes an item, and it was the largest section of the biggest
+ *  group files (87 bullets, 46% of one; 55% of another) while exempt from
+ *  the gate. Who's In It and Recurring Topics stay live. */
+const GROUP_ARCHIVABLE_SECTIONS = new Set(["Group Dynamic", "Shared History", "Open Items"]);
 
 /** SOUL.md's evolving-character subsections: Edmund's notes about HIMSELF,
  *  appended by `appendSelfNote` and pruned by nothing. The same unbounded
@@ -142,8 +157,10 @@ export function archivePersonFile(
   }
   if (bullets.length === 0) return null;
 
-  // Per-section recency floor: the newest KEEP_RECENT_BULLETS of each
-  // section are never candidates, whatever the size pressure.
+  // Per-section recency floor: the newest bullets of each section are never
+  // candidates, whatever the size pressure — up to `keep` of them, as long as
+  // they fit in `keep` notes' worth of bytes (NOTE_BYTES), and never fewer
+  // than MIN_RECENT_BULLETS.
   const bySection = new Map<string, Bullet[]>();
   for (const b of bullets) {
     const list = bySection.get(b.section) ?? [];
@@ -153,8 +170,15 @@ export function archivePersonFile(
   const protectedLines = new Set<number>();
   for (const [sec, list] of bySection) {
     const keep = SECTION_KEEP_RECENT.get(sec) ?? KEEP_RECENT_BULLETS;
-    const sorted = [...list].sort((a, b) => (a.date < b.date ? -1 : 1));
-    for (const b of sorted.slice(-keep)) protectedLines.add(b.line);
+    const newestFirst = [...list].sort((a, b) => (a.date < b.date ? 1 : -1));
+    let used = 0;
+    for (const [i, b] of newestFirst.entries()) {
+      if (i >= keep) break;
+      const size = Buffer.byteLength(lines[b.line]!, "utf8") + 1;
+      if (i >= MIN_RECENT_BULLETS && used + size > keep * NOTE_BYTES) break;
+      protectedLines.add(b.line);
+      used += size;
+    }
   }
 
   // Oldest-first candidates across both sections; move until the live
@@ -173,26 +197,12 @@ export function archivePersonFile(
 
   // Archive append: moved bullets grouped under their section headings,
   // original order preserved (they're chronological already).
-  const title = raw.match(/^#\s+(.+?)\s*$/m)?.[1] ?? liveName.replace(/\.md$/, "");
-  const archiveDir = join(baseDir, "archive");
-  mkdirSync(archiveDir, { recursive: true });
-  const archivePath = join(archiveDir, liveName);
-  const stamp = new Date().toISOString().slice(0, 10);
-  const parts: string[] = [];
-  if (!existsSync(archivePath)) {
-    parts.push(
-      `# ${title} — archived history`,
-      "",
-      "_Aged out of the live profile by the size gate. Append-only — nothing is ever deleted. Indexed for recall; also readable directly._",
-    );
-  }
+  const bySectionMoved = new Map<string, string[]>();
   for (const sec of archivableSections) {
     const moved = [...movedLines].filter((i) => sectionOf[i] === sec).sort((a, b) => a - b);
-    if (moved.length === 0) continue;
-    parts.push("", `## ${sec} (archived ${stamp})`, ...moved.map((i) => lines[i]!));
+    if (moved.length > 0) bySectionMoved.set(sec, moved.map((i) => lines[i]!));
   }
-  parts.push("");
-  appendFileSync(archivePath, `${parts.join("\n")}\n`);
+  appendToArchive(livePath, raw, bySectionMoved, "archived");
 
   // Rewrite the live file without the moved lines; leave one pointer note
   // per section that actually LOST bullets, so the model knows the deep
@@ -222,6 +232,84 @@ export function archivePersonFile(
     live_bytes: liveBytes,
   });
   return { moved: movedLines.size, liveBytes };
+}
+
+/** The archive file that belongs to a live file: `<dir>/archive/<name>`. */
+export function archivePathFor(livePath: string): string {
+  return join(dirname(livePath), "archive", basename(livePath));
+}
+
+/** Dated observations already moved out of a live file into its archive. */
+export function archivedObservationCount(livePath: string): number {
+  const p = archivePathFor(livePath);
+  if (!existsSync(p)) return 0;
+  return readFileSync(p, "utf8")
+    .split("\n")
+    .filter((l) => DATED_BULLET_RE.test(l)).length;
+}
+
+function appendToArchive(
+  livePath: string,
+  liveBody: string,
+  bySection: Map<string, string[]>,
+  verb: string,
+): void {
+  if (bySection.size === 0) return;
+  const title =
+    liveBody.match(/^#\s+(.+?)\s*$/m)?.[1] ?? basename(livePath).replace(/\.md$/, "");
+  const archivePath = archivePathFor(livePath);
+  mkdirSync(dirname(archivePath), { recursive: true });
+  const stamp = new Date().toISOString().slice(0, 10);
+  const parts: string[] = [];
+  if (!existsSync(archivePath)) {
+    parts.push(
+      `# ${title} — archived history`,
+      "",
+      "_Aged out of the live profile by the size gate. Append-only — nothing is ever deleted. Indexed for recall; also readable directly._",
+    );
+  }
+  for (const [sec, bullets] of bySection) {
+    parts.push("", `## ${sec} (${verb} ${stamp})`, ...bullets);
+  }
+  parts.push("");
+  appendFileSync(archivePath, `${parts.join("\n")}\n`);
+}
+
+/**
+ * Archive the dated observations a full rewrite is about to drop.
+ *
+ * The maintainer's full rewrite replaced the file wholesale and kept the old
+ * version only as `<file>.bak`, which the next rewrite overwrites. On
+ * 2026-10-22 two rewrites dropped 45 of 98 and 41 of 91 bullets that were
+ * then in neither the live file nor the archive. A bullet the rewrite kept
+ * verbatim stays where it is; anything else that was a dated observation
+ * goes to the archive under its old section, so recall can still reach it.
+ *
+ * Only for the maintainer's housekeeping rewrite. A model-requested write
+ * (`write_person_file`) may be removing something the person asked it to
+ * forget, and archiving that would bring it back through recall.
+ */
+export function archiveRewriteDrops(livePath: string, oldBody: string, newBody: string): number {
+  const kept = new Set(newBody.split("\n"));
+  const dropped = new Map<string, string[]>();
+  let section = "";
+  let count = 0;
+  for (const line of oldBody.split("\n")) {
+    const h = line.match(/^#{2,}\s+(.+?)\s*$/);
+    if (h) section = h[1]!;
+    if (!DATED_BULLET_RE.test(line) || kept.has(line)) continue;
+    const list = dropped.get(section) ?? [];
+    list.push(line);
+    dropped.set(section, list);
+    count++;
+  }
+  appendToArchive(livePath, oldBody, dropped, "removed by rewrite");
+  if (count > 0) {
+    log.info("persona-archive", `archived bullets a rewrite dropped from ${basename(livePath)}`, {
+      moved: count,
+    });
+  }
+  return count;
 }
 
 /** Group-file variant: same mover, group section names, GROUPS_DIR. */

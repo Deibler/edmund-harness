@@ -11,7 +11,13 @@ import type { StateStore } from "../sessions/store.ts";
 import { recordSpend } from "../spend/ledger.ts";
 import { easternDateTime } from "../util/clock.ts";
 import { log } from "../util/log.ts";
-import { archiveGroupFile, archivePersonFile, personArchivableSections } from "./archive.ts";
+import {
+  archiveGroupFile,
+  archivePersonFile,
+  archiveRewriteDrops,
+  archivedObservationCount,
+  personArchivableSections,
+} from "./archive.ts";
 import {
   GROUP_CONSOLIDATION_PROMPT,
   consolidatePerson,
@@ -188,6 +194,9 @@ async function runDmMaintenance(args: {
   }
 
   if (parsed.fullRewrite) {
+    // Whatever the rewrite drops goes to the archive first; see
+    // archiveRewriteDrops. Live and archive together lose nothing.
+    if (current) archiveRewriteDrops(current.path, current.body, parsed.fullRewrite);
     writePersonFile({ handle, displayName, body: parsed.fullRewrite });
     log.info("maintainer", `dm:${shortHandle(handle)} → full rewrite`, {
       chars: parsed.fullRewrite.length,
@@ -227,9 +236,9 @@ async function runDmMaintenance(args: {
   // evidence dates still resolve because the archive is recall-indexed.
   try {
     const before = readPersonFile(handle);
-    if (before?.body && shouldConsolidate(before.body)) {
+    if (before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path))) {
       await consolidatePerson(handle, (system, user) =>
-        spawnMaintainerModel(cfg.model, system, user, {
+        spawnMaintainerModel(judgmentModel(cfg), system, user, {
           dataDir: deps.config.paths.data_dir,
           sessionKey,
         }),
@@ -309,6 +318,7 @@ async function runGroupMaintenance(args: {
   }
 
   if (parsed.fullRewrite) {
+    if (current) archiveRewriteDrops(current.path, current.body, parsed.fullRewrite);
     writeGroupFile({ chatGuid, displayName, body: parsed.fullRewrite });
     log.info("maintainer", `group:${shortGuid(chatGuid)} → full rewrite`, {
       chars: parsed.fullRewrite.length,
@@ -349,11 +359,11 @@ async function runGroupMaintenance(args: {
   // his own drift rather than ratify it.
   try {
     const before = readGroupFile(chatGuid);
-    if (before?.body && shouldConsolidate(before.body)) {
+    if (before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path))) {
       await consolidatePerson(
         chatGuid,
         (system, user) =>
-          spawnMaintainerModel(cfg.model, system, user, {
+          spawnMaintainerModel(judgmentModel(cfg), system, user, {
             dataDir: deps.config.paths.data_dir,
             sessionKey,
           }),
@@ -463,6 +473,12 @@ function parseOutput(
     typeof o.full_rewrite === "string" && o.full_rewrite.trim().length > 0 ? o.full_rewrite : null;
   const reason = typeof o.reason === "string" ? o.reason : "";
   return { notes, fullRewrite, reason };
+}
+
+/** The model for the judgment pass (consolidation): its own knob, falling
+ *  back to the append pass's model when unset. */
+export function judgmentModel(cfg: Config["people_maintainer"]): string {
+  return cfg.consolidation_model || cfg.model;
 }
 
 /** One maintainer model call, spend-accounted (subsystem "maintainer"). */

@@ -31,12 +31,16 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
+import type { ContactBook } from "../sessions/contacts.ts";
 import { log } from "../util/log.ts";
+import { updateAuthoredSkill } from "./author.ts";
 import { revokeConsentFor } from "./consent.ts";
 import { type InstallRecord, categoryOf, readDb, uninstallSkill, writeDb } from "./installer.ts";
 import { existingSkillRoot, skillDirectoryForRecord } from "./paths.ts";
+import { describeLeaks, findLeaks } from "./privacy.ts";
 import { type UsageSummary, pruneUsage, readUsageEvents, summarizeUsage } from "./usage.ts";
 
 const REVIEW_TIMEOUT_MS = 120_000;
@@ -47,6 +51,10 @@ export type LifecycleDeps = {
   skillsRoot: string;
   dbPath: string;
   consentDbPath: string;
+  /** For the leak scan a revision must pass. Without it no revision is
+   *  applied: the reviewer reads real messages, and a rewrite it supplies
+   *  becomes a globally readable skill. */
+  contacts?: ContactBook;
   runModel?: typeof runModelOneShot;
   now?: () => number;
 };
@@ -302,29 +310,70 @@ async function reviewOne(
       });
     }
   } else if (parsed.verdict === "revise" && parsed.instructions) {
-    const { updateAuthoredSkill } = await import("./author.ts");
-    const updated = updateAuthoredSkill({
-      name,
-      instructions: parsed.instructions,
-      extraFiles: [],
-      // A curated skill has no owning chat, so ownership cannot block this.
-      sessionKey: record.origin_scope ?? "",
-      opts: {
-        skillsRoot: existingSkillRoot(deps.skillsRoot, name, record),
-        dbPath: deps.dbPath,
-        requireApprovalForScripts: deps.config.skills_marketplace.require_approval_for_scripts,
-      },
-    });
-    if (!updated.ok) {
-      log.warn("skill-curator", "revision rejected", { name, err: updated.reason });
-    } else {
-      log.info("skill-curator", "revised a curated skill", { name, reason: parsed.reason });
-    }
+    reviseCurated(name, record, parsed.instructions, parsed.reason, deps);
   } else {
     log.info("skill-curator", "kept a curated skill", { name, reason: parsed.reason });
   }
 
   return { verdict: parsed.verdict, reason: parsed.reason };
+}
+
+/**
+ * Apply a reviewer's replacement body to a curated skill.
+ *
+ * This could never happen before 2026-10-23: the edit path accepted only
+ * self-authored skills, so every "revise" verdict was logged as rejected and
+ * the skill kept the instructions the reviewer had just called wrong. The
+ * replacement is held to the bar a new curated skill meets: the reviewer was
+ * shown real messages, so its text gets the same leak scan before it is
+ * written anywhere every conversation can read.
+ */
+export function reviseCurated(
+  name: string,
+  record: InstallRecord,
+  instructions: string,
+  reason: string,
+  deps: LifecycleDeps,
+): boolean {
+  if (!deps.contacts) {
+    log.warn("skill-curator", "revision skipped — no contacts for the leak scan", { name });
+    return false;
+  }
+  const leaks = findLeaks(`${name}\n${instructions}`, deps.contacts, deps.config.identity.names, {
+    personaDir: PERSONA_DIR,
+  });
+  if (leaks.length > 0) {
+    log.warn("skill-curator", "revision rejected", {
+      name,
+      err: `carries personal detail: ${describeLeaks(leaks)}`,
+    });
+    return false;
+  }
+  const updated = updateAuthoredSkill({
+    name,
+    instructions,
+    extraFiles: [],
+    sessionKey: "",
+    curatedReview: true,
+    opts: {
+      skillsRoot: existingSkillRoot(deps.skillsRoot, name, record),
+      dbPath: deps.dbPath,
+      requireApprovalForScripts: deps.config.skills_marketplace.require_approval_for_scripts,
+    },
+  });
+  if (!updated.ok) {
+    log.warn("skill-curator", "revision rejected", { name, err: updated.reason });
+    return false;
+  }
+  const db = readDb(deps.dbPath);
+  const live = db.skills[name];
+  if (live) {
+    const stamp = new Date((deps.now ?? Date.now)()).toISOString().slice(0, 10);
+    live.provenance = [...(live.provenance ?? []), `revised ${stamp}: ${reason}`];
+    writeDb(deps.dbPath, db);
+  }
+  log.info("skill-curator", "revised a curated skill", { name, reason });
+  return true;
 }
 
 export function parseVerdict(

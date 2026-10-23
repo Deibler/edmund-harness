@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { personFilePath } from "../claude/persona.ts";
 import { log } from "../util/log.ts";
+import { archivedObservationCount } from "./archive.ts";
 import {
   MAX_PRINCIPLES,
   type Principle,
@@ -160,11 +161,24 @@ export function countObservations(body: string): number {
   return body.split("\n").filter((l) => /^- \*\*\d{4}-\d{2}-\d{2}\*\* — /.test(l)).length;
 }
 
-/** Whether enough has accumulated to be worth another pass. Reads the count
- *  the last pass stamped into the file, so the trigger cannot drift from the
- *  thing it is measuring. */
-export function shouldConsolidate(body: string): boolean {
-  return countObservations(body) - principlesDerivedAt(body) >= CONSOLIDATE_AFTER_NEW_BULLETS;
+/**
+ * Whether enough has accumulated to be worth another pass. Reads the count
+ * the last pass stamped into the file, so the trigger cannot drift from the
+ * thing it is measuring.
+ *
+ * What it counts is every observation ever recorded: the live file's plus the
+ * ones already archived out of it (`archived`). Counting the live file alone
+ * let the archiver pin the trigger: once a file is over the size gate, every
+ * pass moves out about as many old bullets as it adds, so the live count
+ * stays where the last pass stamped it and "12 new since then" never comes.
+ * Measured 2026-10-23: the operator's DM archived 1-5 bullets on nearly every
+ * pass and had not consolidated since 10-02. Stamps written before this are
+ * live counts, which only makes the next pass come sooner.
+ */
+export function shouldConsolidate(body: string, archived = 0): boolean {
+  return (
+    countObservations(body) + archived - principlesDerivedAt(body) >= CONSOLIDATE_AFTER_NEW_BULLETS
+  );
 }
 
 export function parseConsolidation(raw: string): { principles: Principle[]; revised: string } | null {
@@ -239,7 +253,8 @@ export async function consolidatePerson(
   const parsed = parseConsolidation(raw);
   if (!parsed) return { ok: false, reason: "unparseable output" };
 
-  writePrinciples(handle, parsed.principles, countObservations(body), pathFor, scope);
+  const recorded = countObservations(body) + archivedObservationCount(path);
+  writePrinciples(handle, parsed.principles, recorded, pathFor, scope);
   log.info("persona-consolidate", "operating principles updated", {
     handle,
     principles: parsed.principles.length,

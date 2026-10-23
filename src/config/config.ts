@@ -1044,6 +1044,11 @@ export const ConfigSchema = z.object({
        *  upward (deliberate? it runs per active session every
        *  min_interval_minutes, so the delta compounds). */
       model: z.string().default("claude-haiku-4-5"),
+      /** Model for consolidation, the pass that turns observations into the
+       *  operating principles read on every turn. That is judgment, not
+       *  extraction: the first principles that worked were derived by Opus.
+       *  Empty = the same model as the append pass. */
+      consolidation_model: z.string().default(""),
       /** Per-session min interval. Bursty back-and-forth replies
        *  collapse to one maintenance run per this window. */
       min_interval_minutes: z.number().int().positive().default(15),

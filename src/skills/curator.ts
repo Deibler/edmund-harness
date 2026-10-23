@@ -58,7 +58,11 @@ import { describeLeaks, findLeaks } from "./privacy.ts";
 
 const CURATOR_TIMEOUT_MS = 180_000;
 
-/** Evidence thresholds. A "pattern" that clears neither is a coincidence. */
+/** Evidence thresholds. A "pattern" that clears neither is a coincidence.
+ *  MIN_CHATS counts PEOPLE: distinct senders, not distinct chats. Counting
+ *  chats let one person who asked in five chats (their DM and four groups)
+ *  pass as five unrelated people; that is how one family's explainer-video
+ *  project became a global skill on 2026-10-16 (7 refs, 5 chats, 1 sender). */
 export const MIN_OCCURRENCES = 3;
 export const MIN_CHATS = 2;
 
@@ -81,11 +85,12 @@ export type CuratorDeps = {
 };
 
 export type CuratorOutcome =
-  | { ran: false; reason: string }
+  | { ran: false; reason: string; atCeiling?: true }
   | { ran: true; created: string | null; considered: number; rejected: string[] };
 
-/** One human message, flattened for the prompt. */
-export type SampledAsk = { ref: string; chat: string; text: string; ts: number };
+/** One human message, flattened for the prompt. `sender` is for vetting
+ *  only and never reaches the prompt. */
+export type SampledAsk = { ref: string; chat: string; sender: string; text: string; ts: number };
 
 /**
  * Pull a diverse sample of what people actually asked for.
@@ -97,13 +102,17 @@ export type SampledAsk = { ref: string; chat: string; text: string; ts: number }
  */
 export function sampleRecentAsks(
   recallDbPath: string,
-  opts: { sinceMs: number; now?: number },
+  opts: { sinceMs: number; now?: number; canon?: (handle: string) => string },
 ): SampledAsk[] {
+  const canon = opts.canon ?? ((h: string) => h);
   const db = new Database(recallDbPath, { readonly: true });
   try {
     const rows = db
-      .query<{ ref: string; chat_guid: string | null; text: string; ts: number }, [number]>(
-        `SELECT ref, chat_guid, text, ts
+      .query<
+        { ref: string; chat_guid: string | null; sender: string; text: string; ts: number },
+        [number]
+      >(
+        `SELECT ref, chat_guid, sender, text, ts
            FROM rows
           WHERE kind = 'message'
             AND sender IS NOT NULL AND sender != 'me'
@@ -112,20 +121,23 @@ export function sampleRecentAsks(
       )
       .all(opts.sinceMs);
 
-    const byChat = new Map<string, SampledAsk[]>();
+    // Bucketed by person, not by chat: the cap exists so one loud voice
+    // cannot be the pattern, and one person in five chats is still one voice.
+    const byPerson = new Map<string, SampledAsk[]>();
     for (const r of rows) {
       const text = stripIndexPrefix(r.text);
       if (text.length < MIN_MESSAGE_CHARS) continue;
       const chat = r.chat_guid ?? "(unknown)";
-      const bucket = byChat.get(chat) ?? [];
+      const sender = canon(r.sender);
+      const bucket = byPerson.get(sender) ?? [];
       if (bucket.length >= MAX_PER_CHAT) continue;
-      bucket.push({ ref: r.ref, chat, text: text.slice(0, MAX_MESSAGE_CHARS), ts: r.ts });
-      byChat.set(chat, bucket);
+      bucket.push({ ref: r.ref, chat, sender, text: text.slice(0, MAX_MESSAGE_CHARS), ts: r.ts });
+      byPerson.set(sender, bucket);
     }
 
     // Round-robin so the sample is wide before it is deep.
     const out: SampledAsk[] = [];
-    const buckets = [...byChat.values()];
+    const buckets = [...byPerson.values()];
     for (let i = 0; out.length < MAX_SAMPLE_MESSAGES; i++) {
       let progressed = false;
       for (const b of buckets) {
@@ -163,7 +175,9 @@ write a skill that makes the assistant better at that job next time.
 
 WHAT COUNTS AS A PATTERN
   • The same underlying task, asked by people who do not know each other.
-  • At least ${MIN_OCCURRENCES} separate occurrences, spanning at least ${MIN_CHATS} different chats.
+  • At least ${MIN_OCCURRENCES} separate occurrences, from at least ${MIN_CHATS} different people.
+    The same person asking in several chats (their DM and a group) is one
+    person. Every sample line carries an opaque person id for this.
   • The repetition must be in the TASK, not the topic. Four people mentioning
     the weather is not a pattern. Four people asking "should I leave now given
     the radar" is a pattern: it has a procedure.
@@ -204,7 +218,7 @@ OUTPUT — raw JSON, no prose, no code fence:
 }
 
 Return at most ONE skill. Cite real refs from the sample — an entry whose
-evidence does not span ${MIN_CHATS} distinct chats will be discarded.`;
+evidence does not come from ${MIN_CHATS} distinct people will be discarded.`;
 
 type ProposedSkill = {
   name?: unknown;
@@ -304,14 +318,14 @@ export function vetProposal(args: {
   // the question is whether they point at anything. Refs are checked against
   // the sample it was actually shown, so an invented ref cannot vouch for an
   // invented pattern.
-  const sampleRefs = new Map(sample.map((s) => [s.ref, s.chat]));
-  const chats = new Set<string>();
+  const sampleRefs = new Map(sample.map((s) => [s.ref, s]));
+  const people = new Set<string>();
   let realRefs = 0;
   for (const e of proposal.evidence) {
-    const chat = sampleRefs.get(e.ref);
-    if (!chat) continue;
+    const ask = sampleRefs.get(e.ref);
+    if (!ask) continue;
     realRefs++;
-    chats.add(chat);
+    people.add(ask.sender);
   }
   if (realRefs < MIN_OCCURRENCES) {
     return {
@@ -319,10 +333,10 @@ export function vetProposal(args: {
       reason: `only ${realRefs} of ${proposal.evidence.length} cited refs exist in the sample (need ${MIN_OCCURRENCES})`,
     };
   }
-  if (chats.size < MIN_CHATS) {
+  if (people.size < MIN_CHATS) {
     return {
       ok: false,
-      reason: `evidence spans ${chats.size} chat(s), need ${MIN_CHATS} — this is one person's habit`,
+      reason: `evidence comes from ${people.size} person(s), need ${MIN_CHATS} — this is one person's habit`,
     };
   }
 
@@ -353,25 +367,33 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
 
   const db = readDb(deps.dbPath);
   if (curatedCount(db.skills) >= cfg.max_curated_skills) {
-    return { ran: false, reason: `at the ceiling of ${cfg.max_curated_skills} curated skills` };
+    return {
+      ran: false,
+      reason: `at the ceiling of ${cfg.max_curated_skills} curated skills`,
+      atCeiling: true,
+    };
   }
 
   const recallPath = join(deps.dataDir, "recall.sqlite");
   const sinceMs = now() - cfg.lookback_days * 86_400_000;
   let sample: SampledAsk[];
   try {
-    sample = sampleRecentAsks(recallPath, { sinceMs });
+    sample = sampleRecentAsks(recallPath, { sinceMs, canon: (h) => deps.contacts.canon(h) });
   } catch (err) {
     return { ran: false, reason: `could not read the recall index: ${(err as Error).message}` };
   }
 
   const distinctChats = new Set(sample.map((s) => s.chat)).size;
-  if (distinctChats < MIN_CHATS) {
+  const people = [...new Set(sample.map((s) => s.sender))];
+  if (people.length < MIN_CHATS) {
     return {
       ran: false,
-      reason: `only ${distinctChats} chat(s) in the window — nothing to compare`,
+      reason: `only ${people.length} person(s) in the window — nothing to compare`,
     };
   }
+  // Opaque per-run ids, so the model can tell people apart without seeing a
+  // handle (the leak scan is the backstop, not the plan).
+  const personId = new Map(people.map((p, i) => [p, `p${i + 1}`]));
 
   const catalogue = Object.entries(db.skills)
     .map(([name, r]) => `  • ${name} — ${r.source}`)
@@ -390,8 +412,10 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
     "ALREADY TRIED AND RETIRED — do not propose these again, or a variation:",
     graveyard || "  (none)",
     "",
-    `SAMPLE — ${sample.length} asks across ${distinctChats} chats, last ${cfg.lookback_days} days:`,
-    ...sample.map((s) => `[${s.ref}] (chat ${s.chat.slice(0, 12)}) ${s.text}`),
+    `SAMPLE — ${sample.length} asks from ${people.length} people across ${distinctChats} chats, last ${cfg.lookback_days} days:`,
+    ...sample.map(
+      (s) => `[${s.ref}] (chat ${s.chat.slice(0, 12)}, person ${personId.get(s.sender)}) ${s.text}`,
+    ),
   ].join("\n");
 
   const run = deps.runModel ?? runModelOneShot;

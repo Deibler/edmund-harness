@@ -1,0 +1,13 @@
+---
+"edmund-harness": patch
+---
+
+Operating principles keep being re-derived, person files get back toward their size target, rewrites lose nothing, and the skill curator can revise what it wrote and tells people apart.
+
+- **Consolidation is no longer pinned by the archiver.** The trigger counted the live file's observations, and once a file is over the size gate every pass archives about as many old bullets as it adds, so "12 new since the last pass" never arrived. On 2026-10-23, 6 of 9 chats with principles were stuck; the operator's DM archived 1-5 bullets on nearly every pass and had not consolidated since 10-02. The trigger and the stamp now count live plus archived observations. On a copy of the live files, 11 of 22 files with principles are due on their next pass.
+- **The size gate can reach what it protects.** Its recency floors were bullet counts set for the maintainer's 140-character notes; notes now run 235-625 bytes, so the protected tail alone was about five times the target and live files sat at 20-54 KB. A floor now protects that many notes' worth of bytes (never fewer than the newest three bullets). Group Open Items joins the archivable sections, as it did for person files: it was the largest section of the biggest group files. On a copy of the live files: 572 KB to 404 KB across 99 files; the operator's DM 41 KB to 23 KB.
+- **A full rewrite loses nothing.** The maintainer's rewrite kept the old file only as `.bak`, which the next rewrite overwrites; two rewrites on 10-22 dropped 45 and 41 observations that were then nowhere else. Dropped dated bullets now go to the archive first. A model-requested `write_person_file` is unchanged, because it may be removing something a person asked to forget.
+- **Consolidation has its own model knob.** `[people_maintainer] consolidation_model`, empty by default (the append pass's model, so no cost change).
+- **The curator can apply a revision.** The edit path accepted only self-authored skills, so every "revise" verdict was rejected. The review may now rewrite a curated skill, after the same leak scan a new curated skill passes; a conversation still cannot edit one.
+- **The curator waits a full interval at its ceiling.** A pass stopped by the 12-skill ceiling did not stamp the clock, so the whole pass reran every hour from 10-22.
+- **The curator counts people, not chats.** One person asking in five chats passed as five; that is how one family's project became a global skill on 10-16 (7 refs, 5 chats, 1 sender). Evidence must now come from two distinct people, sampling is capped per person, and the prompt tells people apart by opaque ids.

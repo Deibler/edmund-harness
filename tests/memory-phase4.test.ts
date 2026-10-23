@@ -490,7 +490,7 @@ describe("group-file indexing", () => {
 });
 
 describe("group-file archive size gate", () => {
-  test("Group Dynamic + Shared History archive; core sections never move", () => {
+  test("Group Dynamic, Shared History and Open Items archive; the rest never moves", () => {
     const dir = mkdtempSync(join(tmpdir(), "groups-arch-"));
     try {
       const bullet = (month: string, day: number, s: string) =>
@@ -526,7 +526,8 @@ describe("group-file archive size gate", () => {
       const live = readFileSync(join(dir, "any-deadbeef.md"), "utf8");
       const archived = readFileSync(join(dir, "archive", "any-deadbeef.md"), "utf8");
 
-      // Core sections stay whole.
+      // Who's In It and Recurring Topics stay whole; the one open item is
+      // inside its recency floor.
       expect(live).toContain("meal planning");
       expect(live).toContain("lake house maintenance");
       expect(live).toContain("dock permit");

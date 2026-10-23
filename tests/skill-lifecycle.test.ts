@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config/config.ts";
 import type { Config } from "../src/config/config.ts";
+import { ContactBook } from "../src/sessions/contacts.ts";
+import { updateAuthoredSkill } from "../src/skills/author.ts";
 import { type InstallRecord, readDb, writeDb } from "../src/skills/installer.ts";
 import {
   type LifecycleDeps,
   parseVerdict,
   retireUnusedCurated,
+  reviseCurated,
   skillDescription,
   usageRetentionDays,
 } from "../src/skills/lifecycle.ts";
@@ -236,5 +239,60 @@ describe("reading a description off disk", () => {
       "The line people see.",
     );
     expect(skillDescription(skillsRoot, "missing")).toBe("");
+  });
+});
+
+describe("a review verdict of revise", () => {
+  const contacts = new ContactBook([{ name: "Morgan", handles: ["+15550004444"] }]);
+  const curatedDir = () => join(skillsRoot, "curated");
+  const setup = () => {
+    makeSkill("race-week-plan", "Plan race week.");
+    writeDb(dbPath, { version: 1, skills: { "race-week-plan": record("race-week-plan") } });
+    return readDb(dbPath).skills["race-week-plan"]!;
+  };
+
+  test("rewrites the curated skill and records why", () => {
+    const rec = setup();
+    const ok = reviseCurated(
+      "race-week-plan",
+      rec,
+      "Ask for the race date first, then build backwards from it.",
+      "the asks were about taper timing",
+      { ...deps(), contacts },
+    );
+    expect(ok).toBe(true);
+    const body = readFileSync(join(curatedDir(), "race-week-plan", "SKILL.md"), "utf8");
+    expect(body).toContain("build backwards from it");
+    expect(readDb(dbPath).skills["race-week-plan"]?.provenance?.at(-1)).toContain(
+      "the asks were about taper timing",
+    );
+  });
+
+  test("a revision carrying someone's name is refused", () => {
+    const rec = setup();
+    const ok = reviseCurated("race-week-plan", rec, "Ask Morgan for the date.", "x", {
+      ...deps(),
+      contacts,
+    });
+    expect(ok).toBe(false);
+    const body = readFileSync(join(curatedDir(), "race-week-plan", "SKILL.md"), "utf8");
+    expect(body).toContain("Do the thing.");
+  });
+
+  test("without contacts for the leak scan, nothing is applied", () => {
+    const rec = setup();
+    expect(reviseCurated("race-week-plan", rec, "New steps here.", "x", deps())).toBe(false);
+  });
+
+  test("a conversation still cannot edit a curated skill", () => {
+    setup();
+    const r = updateAuthoredSkill({
+      name: "race-week-plan",
+      instructions: "hijacked",
+      extraFiles: [],
+      sessionKey: "imessage:dm:+15550004444",
+      opts: { skillsRoot: curatedDir(), dbPath, requireApprovalForScripts: true },
+    });
+    expect(r.ok).toBe(false);
   });
 });
