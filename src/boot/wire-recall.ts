@@ -242,13 +242,10 @@ export function wireRecall(args: {
           minScore: config.memory_recall.auto_recall_min_score,
           // Being addressed by name is not a subject to search for.
           selfNames: config.identity.names,
-          // A group turn's history ends where its active thread starts;
+          excludeRecentMs: config.memory_recall.auto_recall_window_hours * 3_600_000,
+          // A group turn's history ends where its shown thread starts;
           // recall picks up from there instead of skipping a fixed window.
-          excludeRecentMs: recallExcludeMs(
-            shownSinceMs,
-            config.memory_recall.auto_recall_window_hours,
-            Date.now(),
-          ),
+          excludeFromMs: shownSinceMs,
           excludeRefs: surfaced?.refs,
           deepSplitDays: config.memory_recall.auto_recall_deep_split_days,
           deepLimit: config.memory_recall.auto_recall_deep_limit,
@@ -299,17 +296,6 @@ export function wireRecall(args: {
     : undefined;
 
   return { interval, store, provider, autoRecallClosure };
-}
-
-/** How far back auto-recall skips, as a duration: from the start of what
- *  the envelope's history shows when the caller knows it (groups), else the
- *  configured window. */
-export function recallExcludeMs(
-  shownSinceMs: number | undefined,
-  windowHours: number,
-  nowMs: number,
-): number {
-  return shownSinceMs !== undefined ? Math.max(1, nowMs - shownSinceMs) : windowHours * 3_600_000;
 }
 
 function formatCoverage(c: {

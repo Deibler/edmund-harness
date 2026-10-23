@@ -170,6 +170,51 @@ describe("wake-ups and the recent thread", () => {
     for (const c of calls) expect(c).toBe("wakeThread(key, guid, deps, sinceMs)");
   });
 
+  test("a second wake-up with no turn between shows only what came after the first", () => {
+    // Both group lines are newer than the last inbound turn.
+    session(
+      "11111111-2222-3333-4444-555555555555",
+      GROUP_KEY,
+      GROUP_GUID,
+      Date.now() - 20 * 60_000,
+    );
+    const first = wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread);
+    expect(first).toContain("who is driving saturday");
+    // The first fire replied with plain text: no inbound, no outbound stamp,
+    // but runModel recorded the turn.
+    state.markModelTurn(GROUP_KEY, Date.now() - 5 * 60_000);
+    const second = wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread);
+    expect(second).not.toContain("who is driving saturday");
+    expect(second).toContain("I can drive, leaving at 9");
+    state.markModelTurn(GROUP_KEY, Date.now());
+    expect(wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread)).toBe("");
+  });
+
+  test("a recovery turn, which lists the unanswered messages itself, gets no warm block", () => {
+    session(
+      "11111111-2222-3333-4444-555555555555",
+      GROUP_KEY,
+      GROUP_GUID,
+      Date.now() - 20 * 60_000,
+    );
+    expect(wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread, false)).toBe("");
+    const recovery = readFileSync(join(import.meta.dir, "../src/recovery/turn.ts"), "utf8");
+    expect(recovery).toMatch(/wakeThreadBlock\([^)]*deps\.recentThread,\s*false,?\s*\)/);
+  });
+
+  test("a successful turn of any kind records when it started, outbound untouched", () => {
+    const key = "imessage:group:any;+;chat0000000099";
+    session(null, key, "any;+;chat0000000099", 1_000);
+    state.markModelTurn(key, 5_000);
+    state.markModelTurn(key, 4_000); // never moves back
+    expect(state.getSession(key)?.lastTurnMs).toBe(5_000);
+    expect(state.getSession(key)?.lastOutboundMs).toBe(0);
+    const runner = readFileSync(join(import.meta.dir, "../src/model/runner.ts"), "utf8");
+    expect(runner).toContain(
+      "if (result.ok) store.markModelTurn(rawInput.sessionKey, startedAtMs);",
+    );
+  });
+
   test("a resumed group with nothing new gets nothing", () => {
     session("11111111-2222-3333-4444-555555555555", GROUP_KEY, GROUP_GUID, Date.now());
     expect(wakeThreadBlock(GROUP_KEY, GROUP_GUID, config, state, recentThread)).toBe("");

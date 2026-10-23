@@ -195,6 +195,7 @@ export async function runModel(
   }
 
   noteScreenTurn(config, rawInput.sessionKey, rawInput.cronJob ?? null);
+  const startedAtMs = Date.now();
   let result: RunResult;
   try {
     result =
@@ -217,5 +218,7 @@ export async function runModel(
   } else {
     store.setSessionBackend(rawInput.sessionKey, backend);
   }
+  // Everything before the turn started was in front of the model.
+  if (result.ok) store.markModelTurn(rawInput.sessionKey, startedAtMs);
   return { ...result, backend };
 }

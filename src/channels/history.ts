@@ -36,11 +36,12 @@ export type HistoryBundle = {
    *  messages have piled up since the model last spoke, recommend
    *  calling `catch_me_up`. */
   catchUpNudge: string | undefined;
-  /** Groups: when the active thread starts, the oldest message these lines
-   *  show. Auto-recall excludes from here rather than its fixed window: a
-   *  group turn shows only the active thread, so chatter from earlier the
-   *  same day was in neither the history nor recall (30% of group turns
-   *  missed messages in that gap, 2026-10-23). */
+  /** Groups: the oldest message these lines show (the active thread's
+   *  start, or its first kept line when the thread was trimmed). Auto-recall
+   *  excludes from here rather than its fixed window: a group turn shows
+   *  only the active thread, so chatter from earlier the same day was in
+   *  neither the history nor recall (30% of group turns missed messages in
+   *  that gap, 2026-10-23). */
   shownSinceMs?: number;
 };
 
@@ -256,7 +257,14 @@ export function buildHistoryBundle(
       ? buildCatchUpNudge(sinceLastSpoke, Date.now() - lastOutboundMs)
       : undefined;
 
-  return { lines: renderedLines, scope, invocation, catchUpNudge, shownSinceMs: active.startMs };
+  return {
+    lines: renderedLines,
+    scope,
+    invocation,
+    catchUpNudge,
+    // Lines trimmed off the front stay findable by recall.
+    shownSinceMs: trimmed[0]?.timestampMs ?? active.startMs,
+  };
 }
 
 /**

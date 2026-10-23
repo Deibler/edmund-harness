@@ -38,11 +38,15 @@ export function wakeThreadBlock(
   config: Config,
   state: StateStore,
   recentThread: RecentThread,
+  /** False for a turn that lists the unseen messages itself (recovery). */
+  warmGroupLines = true,
 ): string {
   const cold = startsCold(sessionKey, config, state);
-  if (!cold && !isGroupSession(sessionKey)) return "";
+  if (!cold && (!warmGroupLines || !isGroupSession(sessionKey))) return "";
   const session = cold ? null : state.getSession(sessionKey);
-  const sinceMs = session ? Math.max(session.lastInboundMs, session.lastOutboundMs) : undefined;
+  const sinceMs = session
+    ? Math.max(session.lastInboundMs, session.lastOutboundMs, session.lastTurnMs)
+    : undefined;
   let thread: WakeThread;
   try {
     thread = recentThread(sessionKey, chatGuid, sinceMs);

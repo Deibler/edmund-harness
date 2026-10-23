@@ -105,20 +105,33 @@ export function cooldownJitterFactor(seed: number): number {
   return 1 + (x / 0xffffffff) * 2;
 }
 
+/** When the cooldown from the last fire that reached them ends, or null
+ *  when nothing has. ghost_status reads it too, so the two cannot differ. */
+export function cooldownEndsAtMs(
+  prefs: Pick<BrownNosePrefs, "cooldownMultiplier">,
+  recentFires: FireRecord[],
+  intensity: number,
+  nowMs: number,
+): number | null {
+  const last = recentFires.find((f) => isContact(f, nowMs));
+  if (!last) return null;
+  const params = resolveIntensity(intensity);
+  const jitter = cooldownJitterFactor(last.id);
+  return last.firedAtMs + params.cooldownHours * 3_600_000 * prefs.cooldownMultiplier * jitter;
+}
+
 export function checkCooldown(
   prefs: BrownNosePrefs,
   recentFires: FireRecord[],
   intensity: number,
   nowMs: number,
 ): GateResult {
-  const last = recentFires.find((f) => isContact(f, nowMs));
-  if (!last) return { ok: true };
+  const endsAt = cooldownEndsAtMs(prefs, recentFires, intensity, nowMs);
+  if (endsAt === null || nowMs >= endsAt) return { ok: true };
+  const last = recentFires.find((f) => isContact(f, nowMs))!;
   const params = resolveIntensity(intensity);
   const jitter = cooldownJitterFactor(last.id);
-  const cooldownMs = params.cooldownHours * 3_600_000 * prefs.cooldownMultiplier * jitter;
-  const elapsed = nowMs - last.firedAtMs;
-  if (elapsed >= cooldownMs) return { ok: true };
-  const remaining = cooldownMs - elapsed;
+  const remaining = endsAt - nowMs;
   return {
     ok: false,
     reason: `cooldown active (${formatDurationMs(remaining)} remaining, ${(params.cooldownHours * jitter).toFixed(1)}h effective: ${prefs.cooldownMultiplier.toFixed(1)}× decay · ${jitter.toFixed(2)}× jitter)`,

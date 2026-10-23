@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { isContact } from "../../ghost/budget.ts";
+import { cooldownEndsAtMs } from "../../ghost/budget.ts";
 import { resolveIntensity } from "../../ghost/intensity.ts";
 import { withLandingEvidence } from "../../ghost/landed.ts";
 import {
@@ -349,15 +349,18 @@ export function brownNoseTools(ctx: ToolContext): ToolDef[] {
           // The cooldown runs from the last fire that reached them, as the
           // budget counts it: a vetoed or interrupted fire starts none.
           const now = Date.now();
-          const lastFire = withLandingEvidence(
-            prefs.recentFires(sessionKey, 20),
-            sessionKey,
-            { chatDb: ctx.chatDb, contacts: ctx.contacts },
-            now,
-          ).find((f) => isContact(f, now));
-          const nextEligibleMs = lastFire
-            ? lastFire.firedAtMs + params.cooldownHours * 3_600_000 * row.cooldownMultiplier
-            : 0;
+          const nextEligibleMs =
+            cooldownEndsAtMs(
+              row,
+              withLandingEvidence(
+                prefs.recentFires(sessionKey, 20),
+                sessionKey,
+                { chatDb: ctx.chatDb, contacts: ctx.contacts },
+                now,
+              ),
+              ctx.config.brown_nose.intensity,
+              now,
+            ) ?? 0;
           const lines = [
             `enabled: ${row.enabled}`,
             `weekly cap: ${row.weeklyCap}`,

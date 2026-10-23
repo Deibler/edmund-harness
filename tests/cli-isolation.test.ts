@@ -45,6 +45,14 @@ describe("oneShotArgv", () => {
     expect(toolsArg(oneShotArgv([...base, "--tools", "Read"]))).toEqual(["Read"]);
   });
 
+  test("effort comes from the harness config unless the caller names one", () => {
+    const effortArg = (argv: string[]) =>
+      argv.flatMap((a, i) => (a === "--effort" ? [argv[i + 1]] : []));
+    expect(effortArg(oneShotArgv(base, "xhigh"))).toEqual(["xhigh"]);
+    expect(effortArg(oneShotArgv([...base, "--effort", "low"], "xhigh"))).toEqual(["low"]);
+    expect(effortArg(oneShotArgv(base, undefined))).toEqual([]);
+  });
+
   test("a caller with its own MCP config keeps its tool choice", () => {
     const argv = oneShotArgv([...base, "--mcp-config", "{}", "--strict-mcp-config"]);
     expect(toolsArg(argv)).toEqual([]);

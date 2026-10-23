@@ -33,6 +33,11 @@ export type SessionRecord = {
    *  its worker process starts, which resumes the conversation. Codex starts
    *  a fresh thread on drift. */
   systemPromptHash: string | null;
+  /** When the last successful model turn of any kind (inbound, scheduled,
+   *  proactive, recovery) started. A scheduled reply sent as plain text
+   *  moves neither inbound nor outbound, so without this a wake-up into a
+   *  warm group could not tell what the model had already been shown. */
+  lastTurnMs: number;
 };
 
 export class StateStore {
@@ -205,6 +210,7 @@ export class StateStore {
       // Provider owning claude_session_id. Existing non-null ids are treated
       // as Claude by the routing layer for backward compatibility.
       "ALTER TABLE sessions ADD COLUMN session_backend TEXT",
+      "ALTER TABLE sessions ADD COLUMN last_turn_ms INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.db.exec(sql);
@@ -359,6 +365,16 @@ export class StateStore {
   /** Stamp that a fallback "still on it" notice went out for the current
    *  unanswered burst. Does NOT touch last_outbound_ms — the session still
    *  owes its real reply, so the recovery sweeper must keep seeing it. */
+  /** Record a successful model turn that started at `startedAtMs`. Leaves
+   *  last_outbound_ms alone: the recovery sweeper reads that to decide who
+   *  is still owed a reply. */
+  markModelTurn(sessionKey: SessionKey, startedAtMs: number): void {
+    this.q("UPDATE sessions SET last_turn_ms = MAX(last_turn_ms, ?) WHERE session_key = ?").run(
+      startedAtMs,
+      sessionKey,
+    );
+  }
+
   markFallbackSent(sessionKey: SessionKey, sentAtMs: number): void {
     this.q("UPDATE sessions SET last_fallback_ms = ? WHERE session_key = ?").run(
       sentAtMs,
@@ -479,6 +495,7 @@ export class StateStore {
       | "lastFallbackMs"
       | "systemPromptHash"
       | "sessionBackend"
+      | "lastTurnMs"
     > & {
       createdAt?: number;
     },
@@ -847,6 +864,7 @@ const SESSION_SELECT_COLS = `
     last_error_at_ms         AS lastErrorAtMs,
     heal_attempts_count      AS healAttemptsCount,
     last_fallback_ms         AS lastFallbackMs,
-    system_prompt_hash       AS systemPromptHash
+    system_prompt_hash       AS systemPromptHash,
+    last_turn_ms             AS lastTurnMs
   FROM sessions
 `;

@@ -306,7 +306,15 @@ export function recoveryTurnEnvelope(
 ): string {
   const envelope = buildRecoveryEnvelope(ctx);
   if (!deps.recentThread) return envelope;
-  const thread = wakeThreadBlock(sessionKey, chatGuid, deps.config, deps.state, deps.recentThread);
+  // Warm, the recovery envelope already carries the unanswered messages.
+  const thread = wakeThreadBlock(
+    sessionKey,
+    chatGuid,
+    deps.config,
+    deps.state,
+    deps.recentThread,
+    false,
+  );
   return thread ? `${envelope}\n\n${thread}` : envelope;
 }
 

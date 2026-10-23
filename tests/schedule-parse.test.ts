@@ -45,5 +45,9 @@ describe("homeWallClockMs", () => {
     expect(homeWallClockMs(2026, 11, 1, 1, 30)).toBe(Date.UTC(2026, 10, 1, 5, 30));
     expect(homeWallClockMs(2026, 11, 1, 3, 0)).toBe(Date.UTC(2026, 10, 1, 8, 0));
     expect(homeWallClockMs(2026, 3, 8, 12, 0)).toBe(Date.UTC(2026, 2, 8, 16, 0));
+    // 2026-03-08 02:30 does not exist; it moves forward to 03:30 EDT.
+    expect(homeWallClockMs(2026, 3, 8, 2, 30)).toBe(Date.UTC(2026, 2, 8, 7, 30));
+    expect(homeWallClockMs(2026, 3, 8, 1, 30)).toBe(Date.UTC(2026, 2, 8, 6, 30)); // EST
+    expect(homeWallClockMs(2026, 3, 8, 3, 30)).toBe(Date.UTC(2026, 2, 8, 7, 30)); // EDT
   });
 });

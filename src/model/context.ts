@@ -27,7 +27,6 @@ export function buildRunSystemPrompt(
   input: PromptInput,
   config: Config,
   orchestrator: Orchestrator | null,
-  loadout: { browser: boolean } = { browser: true },
 ): string {
   const isGroup = isGroupSession(input.sessionKey);
   const isTrading = isTradingSession(input.sessionKey);
@@ -48,7 +47,6 @@ export function buildRunSystemPrompt(
           config,
         ),
     radarOmegaEnabled: intSettings.radaromega(config).enabled,
-    browserLoaded: loadout.browser,
     orchestrator: orchestrator ? { key: orchestrator.key, name: orchestrator.name } : null,
     guestTier: input.guest?.tier ?? null,
     campaignContextPath: input.guest?.campaignContextPath ?? null,

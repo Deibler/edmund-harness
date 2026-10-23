@@ -5,7 +5,6 @@ import { type InlineImage, prepareInlineImages } from "../claude/inline-images.t
 import {
   ensureMcpConfig,
   envelopeNeedsBrowser,
-  hasBrowser,
   pickMcpConfig,
   toolEnv,
 } from "../claude/mcp-config.ts";
@@ -240,9 +239,7 @@ export async function runCodex(
   // spends the same word very differently, and inheriting "medium" quietly
   // ran gpt-5.6-sol well below what it is capable of.
   const effort = config.codex.effort ?? profile.effort;
-  const systemPrompt = buildRunSystemPrompt(input, config, orchestrator, {
-    browser: !isGuest && hasBrowser(configs, mcpConfig),
-  });
+  const systemPrompt = buildRunSystemPrompt(input, config, orchestrator);
 
   const imageCache = join(input.sandboxPath, ".inline-images");
   if (input.images?.length) mkdirSync(imageCache, { recursive: true });

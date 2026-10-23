@@ -85,6 +85,11 @@ export type AutoRecallOptions = {
   selfNames?: readonly string[];
   /** Drop hits younger than this many ms (already in recent-thread window). */
   excludeRecentMs: number;
+  /** Absolute boundary that takes the place of `excludeRecentMs`: hits at
+   *  or after it are left out. A group turn passes where its shown thread
+   *  starts. Absolute, because a duration measured before the embed lands
+   *  later by the embed's latency and lets the first shown line back in. */
+  excludeFromMs?: number;
   /** Optional: drop any hit whose ref is in this set (avoid dupes). */
   excludeRefs?: Set<string>;
   /** Boundary in days for the recent/deep split. Hits within this window
@@ -179,7 +184,8 @@ export async function autoRecall(
   const searchStart = Date.now();
 
   const now = Date.now();
-  const excludeCutoff = opts.excludeRecentMs > 0 ? now - opts.excludeRecentMs : 0;
+  const excludeCutoff =
+    opts.excludeFromMs ?? (opts.excludeRecentMs > 0 ? now - opts.excludeRecentMs : 0);
   const splitMs =
     opts.deepSplitDays && opts.deepSplitDays > 0 ? now - opts.deepSplitDays * 86_400_000 : 0;
   const deepLimit = opts.deepLimit ?? 0;

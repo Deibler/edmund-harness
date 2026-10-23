@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { BgJobStore } from "../src/background/store.ts";
 import { loadConfig } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
+import { checkCooldown, cooldownEndsAtMs } from "../src/ghost/budget.ts";
 import { DEFAULT_ACTIVE_HOURS_DM, GhostPrefsStore } from "../src/ghost/prefs.ts";
 import { ChatDb } from "../src/imessage/db.ts";
 import type { ToolContext } from "../src/mcp/context.ts";
@@ -22,6 +23,7 @@ import { brownNoseTools } from "../src/mcp/tools/brown-nose.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import type { SessionKey } from "../src/sessions/key.ts";
+import { describeEastern } from "../src/util/clock.ts";
 import { emptyChatDb } from "./helpers/chat-db.ts";
 
 const JORDAN: SessionKey = "imessage:dm:+19995550042" as SessionKey;
@@ -267,6 +269,21 @@ describe("ghost_status + query_ghost", () => {
       const after = await status();
       expect(after).not.toContain("no active cooldown");
       expect(after).toMatch(/next eligible: \w{3}, \w{3} \d+ \d{4} at .* E[SD]T/);
+      // The same end the gate enforces, jitter included.
+      const endsAt = cooldownEndsAtMs(
+        prefs.get(JORDAN)!,
+        prefs.recentFires(JORDAN, 20),
+        ctx.config.brown_nose.intensity,
+        Date.now(),
+      )!;
+      expect(after).toContain(`next eligible: ${describeEastern(new Date(endsAt))}`);
+      const gate = checkCooldown(
+        prefs.get(JORDAN)!,
+        prefs.recentFires(JORDAN, 20),
+        ctx.config.brown_nose.intensity,
+        endsAt - 60_000,
+      );
+      expect(gate.ok).toBe(false);
     } finally {
       ctx.chatDb.close();
       db.cleanup();

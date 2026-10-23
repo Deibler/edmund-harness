@@ -11,11 +11,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recallExcludeMs } from "../src/boot/wire-recall.ts";
 import { buildHistoryBundle } from "../src/channels/history.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { ChatDb } from "../src/imessage/db.ts";
 import type { InboundMessage } from "../src/imessage/types.ts";
+import { autoRecall } from "../src/memory/auto-recall.ts";
+import { HashEmbedProvider } from "../src/memory/embed-provider.ts";
+import { VectorStore, normalize } from "../src/memory/vector-store.ts";
 import type { ContactBook } from "../src/sessions/contacts.ts";
 import { StateStore } from "../src/sessions/store.ts";
 import { emptyChatDb } from "./helpers/chat-db.ts";
@@ -103,18 +105,75 @@ describe("the group scope line", () => {
 });
 
 describe("recall around a group's shown thread", () => {
+  test("a trimmed thread reports its first kept line, so the rest stays findable", () => {
+    const trimmedConfig = ConfigSchema.parse({
+      self: { handles: [] },
+      allowlist: {},
+      identity: {},
+      behavior: { history_max_per_segment: 2 },
+    });
+    const b = buildHistoryBundle(
+      inbound,
+      [inbound],
+      false,
+      true,
+      0,
+      { config: trimmedConfig, chatDb, contacts, state } as never,
+      `imessage:group:${GUID}` as never,
+    );
+    // Rows 2 and 3 are kept; row 1 (at -240 s) was trimmed.
+    expect(Math.abs((b.shownSinceMs ?? 0) - (now - 200_000))).toBeLessThanOrEqual(1);
+  });
+
   test("history reports where the thread it shows begins", () => {
     // The active thread is everything in the fixture: it starts at the first row.
     // chat.db stores nanoseconds past 2^53, so the round trip may be 1 ms off.
     expect(Math.abs((bundleFor(0).shownSinceMs ?? 0) - (now - 240_000))).toBeLessThanOrEqual(1);
   });
 
-  test("recall skips only what the envelope shows", () => {
-    const at = 1_800_000_000_000;
-    expect(recallExcludeMs(at - 3 * 3_600_000, 48, at)).toBe(3 * 3_600_000);
-    expect(recallExcludeMs(undefined, 48, at)).toBe(48 * 3_600_000);
-    // Never 0, which autoRecall reads as "exclude nothing".
-    expect(recallExcludeMs(at + 5, 48, at)).toBe(1);
+  test("recall skips exactly what the envelope shows, however long the embed takes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "recall-boundary-"));
+    const store = new VectorStore(join(dir, "v.sqlite"));
+    const hash = new HashEmbedProvider();
+    // A slow embed: a duration measured before it would land late.
+    const provider = {
+      ...hash,
+      model: hash.model,
+      dim: hash.dim,
+      embed: async (texts: string[]) => {
+        await Bun.sleep(80);
+        return hash.embed(texts);
+      },
+    } as unknown as HashEmbedProvider;
+    try {
+      const text = "pickleball courts saturday after noon";
+      const vec = normalize((await hash.embed([text])).vectors[0]!);
+      const boundary = Date.now() - 60_000;
+      const row = (ref: string, ts: number) => ({
+        ref,
+        kind: "message" as const,
+        chatGuid: GUID,
+        sender: A,
+        ts,
+        text,
+        vec,
+        model: hash.model,
+      });
+      store.upsert([row("msg:shown", boundary), row("msg:earlier", boundary - 3_600_000)]);
+      const res = await autoRecall(text, provider, store, {
+        chatGuid: GUID,
+        limit: 10,
+        minScore: -1,
+        excludeRecentMs: 48 * 3_600_000,
+        excludeFromMs: boundary,
+      });
+      const refs = [...res.recent, ...res.deep].map((h) => h.ref);
+      expect(refs).toContain("msg:earlier"); // same day, before the shown thread
+      expect(refs).not.toContain("msg:shown"); // already in the envelope
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("the turn hands recall the history's boundary", () => {
@@ -124,6 +183,6 @@ describe("recall around a group's shown thread", () => {
     );
     expect(turn).toMatch(/autoRecallFn\([^)]*historyBundle\.shownSinceMs,?\s*\)/);
     const wire = readFileSync(join(import.meta.dir, "../src/boot/wire-recall.ts"), "utf8");
-    expect(wire).toMatch(/excludeRecentMs: recallExcludeMs\(\s*shownSinceMs,/);
+    expect(wire).toContain("excludeFromMs: shownSinceMs,");
   });
 });

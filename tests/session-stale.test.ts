@@ -11,18 +11,31 @@ const hours = (h: number) => Date.now() - h * 3_600_000;
 
 describe("isSessionStale", () => {
   test("recent outbound keeps a session warm", () => {
-    expect(isSessionStale({ lastInboundMs: hours(100), lastOutboundMs: hours(0.1) }, 72)).toBe(
-      false,
-    );
+    expect(
+      isSessionStale({ lastInboundMs: hours(100), lastOutboundMs: hours(0.1), lastTurnMs: 0 }, 72),
+    ).toBe(false);
+  });
+
+  test("a recent turn keeps it warm, even one that sent nothing through a tool", () => {
+    expect(
+      isSessionStale(
+        { lastInboundMs: hours(100), lastOutboundMs: hours(90), lastTurnMs: hours(1) },
+        72,
+      ),
+    ).toBe(false);
   });
 
   test("quiet on both sides past the limit is stale", () => {
-    expect(isSessionStale({ lastInboundMs: hours(100), lastOutboundMs: hours(80) }, 72)).toBe(true);
+    expect(
+      isSessionStale({ lastInboundMs: hours(100), lastOutboundMs: hours(80), lastTurnMs: 0 }, 72),
+    ).toBe(true);
   });
 
   test("no session, no record, or no limit is never stale", () => {
     expect(isSessionStale(null, 72)).toBe(false);
-    expect(isSessionStale({ lastInboundMs: 0, lastOutboundMs: 0 }, 72)).toBe(false);
-    expect(isSessionStale({ lastInboundMs: hours(100), lastOutboundMs: 0 }, 0)).toBe(false);
+    expect(isSessionStale({ lastInboundMs: 0, lastOutboundMs: 0, lastTurnMs: 0 }, 72)).toBe(false);
+    expect(isSessionStale({ lastInboundMs: hours(100), lastOutboundMs: 0, lastTurnMs: 0 }, 0)).toBe(
+      false,
+    );
   });
 });

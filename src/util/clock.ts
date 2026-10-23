@@ -52,7 +52,9 @@ export function envelopeStamp(d: Date): string {
 /**
  * Epoch ms for a wall-clock time in the home zone. A time the model writes
  * without an offset means Eastern, whatever zone the process runs in. Exact
- * across DST: the offset is read at the guess, then again at the answer.
+ * across DST: the offset is read at the guess, then again at the answer. An
+ * hour repeated in the fall resolves to its first occurrence; an hour skipped
+ * in the spring moves forward.
  */
 export function homeWallClockMs(
   year: number,
@@ -78,8 +80,13 @@ export function homeWallClockMs(
       Number(part(parts, t)) % (t === "hour" ? 24 : 1e9);
     return Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second")) - ms;
   };
-  const first = wall - offsetAt(wall);
-  return wall - offsetAt(first);
+  const guess = wall - offsetAt(wall);
+  const exact = wall - offsetAt(guess);
+  // A time the spring-forward gap skips (02:30 on that Sunday) does not exist;
+  // `exact` lands an hour early on the far side of it, `guess` an hour late.
+  // Later is what a clock does, so take `guess` when `exact` doesn't read
+  // back as the time asked for.
+  return exact + offsetAt(exact) === wall ? exact : guess;
 }
 
 /**

@@ -22,13 +22,7 @@ import { DEBUG, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import { type IterationUsage, contextTokens, iterationContextTokens } from "./auto-compact.ts";
 import { ISOLATED_SETTINGS_ARGS } from "./direct-env.ts";
 import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
-import {
-  ensureMcpConfig,
-  envelopeNeedsBrowser,
-  hasBrowser,
-  pickMcpConfig,
-  toolEnv,
-} from "./mcp-config.ts";
+import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
 import { personaFingerprint } from "./persona.ts";
 import { WorkerPool } from "./pool.ts";
 import {
@@ -282,19 +276,19 @@ export async function runClaude(
   }
   const existing = store.getSession(input.sessionKey);
   // Persona edits. The system prompt is a spawn argument
-  // (--append-system-prompt) and the CLI rebuilds it every time a process
-  // starts, including on --resume: one session resumed on 2026-09-21 and
-  // 2026-09-23 carries each day's SOUL.md in its prompt_snapshot records. So
-  // an edit reaches a session the next time its worker process starts, and
-  // the conversation carries on. A warm worker keeps the prompt it started
-  // with until the pool recycles it.
+  // (--append-system-prompt). Older CLIs rebuilt it on every process start,
+  // --resume included (a session resumed on 2026-09-21 and 2026-09-23 carried
+  // each day's SOUL.md). CLI 2.1.309 does not: a resume reuses the prompt
+  // snapshot the session started with and ignores the flag (measured
+  // 2026-10-23, a resumed session answered from its first prompt and its
+  // transcript held only that snapshot). So an edit reaches a conversation
+  // only when it starts a new snapshot, not on its next turn.
   //
   // This used to log "cold-spawn this turn" and "fresh session id", and clear
-  // the stored id, on the theory that a resumed session kept its first
-  // prompt. The spawn below still resumed the id it had read before the clear
-  // (all 636 logged events resumed or reused a warm worker), so the log
-  // described a fresh start that never happened; a real one would only have
-  // dropped the thread. Now it records what does happen.
+  // the stored id. The spawn below still resumed the id it had read before
+  // the clear (all 636 logged events resumed or reused a warm worker), so the
+  // log described a fresh start that never happened. It records the edit and
+  // nothing more.
   const currentFingerprint = personaFingerprint();
   if (
     existing?.claudeSessionId &&
@@ -305,7 +299,8 @@ export async function runClaude(
     log.info("claude", "persona edited since this session last ran", {
       session: input.sessionKey,
       resumes: existing.claudeSessionId.slice(0, 8),
-      new_prompt: warm ? "when the warm worker is recycled" : "this turn",
+      new_prompt: "not on resume: the session keeps its prompt snapshot",
+      warm,
       old_hash: existing.systemPromptHash.slice(0, 8),
       new_hash: currentFingerprint.slice(0, 8),
     });
@@ -427,7 +422,7 @@ export async function runClaude(
     ...ISOLATED_SETTINGS_ARGS,
     ...pluginDirArgs(config.claude.plugin_dirs, hostAccess(config), isGuest),
     "--append-system-prompt",
-    buildRunSystemPrompt(input, config, orch, { browser: hasBrowser(mcpConfigs, mcpConfigPath) }),
+    buildRunSystemPrompt(input, config, orch),
   ];
 
   const env = toolEnv(

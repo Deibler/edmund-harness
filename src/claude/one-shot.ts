@@ -99,9 +99,11 @@ export function parseOneShotStream(stdout: string): StreamFacts {
  * the MCP servers the caller names, and no built-in tools unless the caller
  * names them with --tools. A caller that passes --mcp-config (the ghost tick)
  * keeps the default built-ins and chooses its own. Nothing resumes a
- * one-shot, so its transcript is not kept either.
+ * one-shot, so its transcript is not kept either. Effort came from the
+ * operator's settings file (xhigh); it now comes from [claude] effort, which
+ * the daemon exports, unless the caller names one.
  */
-export function oneShotArgv(args: string[]): string[] {
+export function oneShotArgv(args: string[], effort = process.env.EDMUND_EFFORT): string[] {
   const has = (flag: string) => args.includes(flag);
   return [
     "-p",
@@ -112,6 +114,7 @@ export function oneShotArgv(args: string[]): string[] {
     "--no-session-persistence",
     ...(has("--strict-mcp-config") ? [] : ["--strict-mcp-config"]),
     ...(has("--tools") || has("--mcp-config") ? [] : ["--tools", ""]),
+    ...(has("--effort") || !effort ? [] : ["--effort", effort]),
     ...args,
   ];
 }
