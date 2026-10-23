@@ -245,7 +245,7 @@ describe("reading a description off disk", () => {
   });
 });
 
-const BROAD = { people: 2, chats: 2 };
+const BROAD = { people: 2, chats: 2, unrelated: true };
 
 describe("a review verdict of revise", () => {
   const contacts = new ContactBook([{ name: "Morgan", handles: ["+15550004444"] }]);
@@ -293,8 +293,10 @@ describe("a review verdict of revise", () => {
   test("a revision the asks of one person or one room support is refused", () => {
     const rec = setup();
     for (const narrow of [
-      { people: 1, chats: 3 },
-      { people: 3, chats: 1 },
+      { people: 1, chats: 3, unrelated: false },
+      { people: 3, chats: 1, unrelated: false },
+      // A family: two people in two chats who share a room.
+      { people: 2, chats: 2, unrelated: false },
     ]) {
       const ok = reviseCurated("race-week-plan", rec, "Plan their family's race.", "x", narrow, {
         ...deps(),
@@ -307,11 +309,19 @@ describe("a review verdict of revise", () => {
   });
 
   test("the review measures the asks it was shown", async () => {
-    // Three reads of the skill: two in one person's DM, one in another
-    // person's DM. Then the same with all three in one DM.
-    for (const [sessions, expectApplied] of [
-      [["imessage:dm:+15550005551", "imessage:dm:+15550005551", "imessage:dm:+15550005552"], true],
-      [["imessage:dm:+15550005551", "imessage:dm:+15550005551", "imessage:dm:+15550005551"], false],
+    const A = "+15550005551";
+    const B = "+15550005552";
+    const FAM = "any;+;chatFAM";
+    const dm = (h: string) => [`imessage:dm:${h}`, `any;-;${h}`, h] as const;
+    const inGroup = (h: string) => [`imessage:group:${FAM}`, FAM, h] as const;
+    // Each read: [session, chat, who asked just before it].
+    for (const [reads, expectApplied] of [
+      // Two strangers, each in their own DM.
+      [[dm(A), dm(A), dm(B)], true],
+      // One person, one DM.
+      [[dm(A), dm(A), dm(A)], false],
+      // A family: two members ask in their group, one also in a DM.
+      [[inGroup(A), inGroup(B), dm(A)], false],
     ] as const) {
       rmSync(dir, { recursive: true, force: true });
       mkdirSync(skillsRoot, { recursive: true });
@@ -322,26 +332,18 @@ describe("a review verdict of revise", () => {
         `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
                             ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
       );
-      for (const [i, session] of sessions.entries()) {
-        const handle = session.slice("imessage:dm:".length);
+      for (const [i, [session, chat, sender]] of reads.entries()) {
         state.upsertSession({
           sessionKey: session as `imessage:dm:${string}`,
           claudeSessionId: null,
-          chatGuid: `any;-;${handle}`,
-          isGroup: 0,
+          chatGuid: chat,
+          isGroup: chat === FAM ? 1 : 0,
           lastInboundMs: 0,
           lastOutboundMs: 0,
         });
         recall
           .query("INSERT OR IGNORE INTO rows VALUES (?,?,?,?,?,?,x'00','m',1)")
-          .run(
-            `msg:${i}`,
-            "message",
-            `any;-;${handle}`,
-            handle,
-            Date.now() - 60_000,
-            `plan my race week ${i}`,
-          );
+          .run(`msg:${i}`, "message", chat, sender, Date.now() - 60_000, `plan my race week ${i}`);
         recordSkillRead(dir, "race-week-plan", session);
       }
       recall.close();

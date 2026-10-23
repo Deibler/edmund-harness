@@ -304,13 +304,25 @@ export function archivedObservationsSince(
   return out.reverse();
 }
 
+/** Append bullets to a live file's archive; returns how many were new. */
 function appendToArchive(
   livePath: string,
   liveBody: string,
   bySection: Map<string, string[]>,
   verb: string,
-): void {
-  if (bySection.size === 0) return;
+): number {
+  // Never the same line twice: a rewrite whose archive write landed but
+  // whose live write failed is retried, and would archive its drops again,
+  // inflating the observation count the consolidation trigger reads.
+  const already = new Set(archivedBullets(livePath));
+  const fresh = new Map<string, string[]>();
+  let count = 0;
+  for (const [sec, bullets] of bySection) {
+    const left = bullets.filter((b) => !already.has(b));
+    if (left.length > 0) fresh.set(sec, left);
+    count += left.length;
+  }
+  if (fresh.size === 0) return 0;
   const title =
     liveBody.match(/^#\s+(.+?)\s*$/m)?.[1] ?? basename(livePath).replace(/\.md$/, "");
   const archivePath = archivePathFor(livePath);
@@ -324,11 +336,12 @@ function appendToArchive(
       "_Aged out of the live profile by the size gate. Append-only — nothing is ever deleted. Indexed for recall; also readable directly._",
     );
   }
-  for (const [sec, bullets] of bySection) {
+  for (const [sec, bullets] of fresh) {
     parts.push("", `## ${sec} (${verb} ${stamp})`, ...bullets);
   }
   parts.push("");
   appendFileSync(archivePath, `${parts.join("\n")}\n`);
+  return count;
 }
 
 /**
@@ -359,6 +372,8 @@ export function reconcileRewrite(snapshot: string, latest: string, rewrite: stri
 
   const lines = rewrite.split("\n");
   for (const a of appended) {
+    // The rewrite may already carry it (the model wrote the same note).
+    if (lines.includes(a.line)) continue;
     const heading = lines.findIndex((l) => l.match(/^#{2,}\s+(.+?)\s*$/)?.[1] === a.section);
     if (heading === -1) {
       lines.push("", `## ${a.section}`, a.line);
@@ -404,7 +419,7 @@ export function archiveRewriteDrops(livePath: string, oldBody: string, newBody: 
     dropped.set(section, list);
     count++;
   }
-  appendToArchive(livePath, oldBody, dropped, "removed by rewrite");
+  count = appendToArchive(livePath, oldBody, dropped, "removed by rewrite");
   if (count > 0) {
     log.info("persona-archive", `archived bullets a rewrite dropped from ${basename(livePath)}`, {
       moved: count,

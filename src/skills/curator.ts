@@ -48,6 +48,8 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
+import type { ChatDb } from "../imessage/db.ts";
+import { getGroupParticipants } from "../imessage/participants.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { recordSpend } from "../spend/ledger.ts";
@@ -68,6 +70,80 @@ const CURATOR_TIMEOUT_MS = 180_000;
 export const MIN_OCCURRENCES = 3;
 export const MIN_CHATS = 2;
 export const MIN_PEOPLE = 2;
+
+/** One ask reduced to who asked and where. */
+export type Asker = { person: string; chat: string };
+
+/**
+ * Whether the evidence includes two people who, as far as Edmund can see, do
+ * not share a room: neither asked in a chat the other is in. "In" a chat
+ * means asked there, or is a member of it in chat.db (`membersOf`), so a
+ * silent member of the family group counts as present.
+ *
+ * Counting people and chats separately let one family through: a family
+ * group with two members asking, plus one member's own DM, is two people in
+ * two chats. This is the prompt's "people who do not know each other" in the
+ * strongest form the data supports while the bar stays reachable. Stricter,
+ * "no group in common at all", failed 6 of the 12 live curated skills on
+ * 2026-10-23: one person behind them is in 65 groups, so nearly everyone
+ * shares some group with them. This rule fails 2 (the 10-16 family skill,
+ * and one whose two people asked in a room both are in). What it cannot
+ * see: two people who share a group but each asked somewhere the other is
+ * not, and people who know each other outside Edmund's chats.
+ */
+export function hasUnrelatedPair(
+  asks: Asker[],
+  membersOf: (chat: string) => string[] = () => [],
+): boolean {
+  const asked = new Map<string, Set<string>>();
+  for (const a of asks) {
+    const chats = asked.get(a.person) ?? new Set<string>();
+    chats.add(a.chat);
+    asked.set(a.person, chats);
+  }
+  const present = new Map<string, Set<string>>();
+  const presentIn = (chat: string) => {
+    let s = present.get(chat);
+    if (!s) {
+      s = new Set(membersOf(chat));
+      for (const a of asks) if (a.chat === chat) s.add(a.person);
+      present.set(chat, s);
+    }
+    return s;
+  };
+  const people = [...asked.keys()];
+  const meets = (p: string, q: string) => [...asked.get(p)!].some((c) => presentIn(c).has(q));
+  for (let i = 0; i < people.length; i++) {
+    for (let j = i + 1; j < people.length; j++) {
+      if (!meets(people[i]!, people[j]!) && !meets(people[j]!, people[i]!)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The people in a chat according to chat.db, as person keys. Without a
+ * chat.db only the askers themselves are known to be present.
+ */
+export function chatMembers(
+  chatDb: ChatDb | undefined,
+  contacts: Pick<ContactBook, "canon" | "displayName">,
+): (chat: string) => string[] {
+  const cache = new Map<string, string[]>();
+  return (chat) => {
+    if (!chatDb) return [];
+    let members = cache.get(chat);
+    if (!members) {
+      try {
+        members = getGroupParticipants(chatDb, chat).map((h) => personKey(contacts, h));
+      } catch {
+        members = [];
+      }
+      cache.set(chat, members);
+    }
+    return members;
+  };
+}
 
 /**
  * Who sent a message, as one key per person. `canon` merges only the handles
@@ -97,6 +173,10 @@ export type CuratorDeps = {
   skillsRoot: string;
   dbPath: string;
   contacts: ContactBook;
+  /** Group membership for the evidence bar (hasUnrelatedPair). Without it
+   *  only who asked where is known, and a silent member of a shared group
+   *  is not seen. */
+  chatDb?: ChatDb;
   /** Injectable so tests never spawn a model. */
   runModel?: typeof runModelOneShot;
   /** Injectable clock, for testing the interval gate. */
@@ -331,6 +411,8 @@ export function vetProposal(args: {
   contacts: ContactBook;
   /** The assistant's own names — allowed to appear in its own skills. */
   selfNames?: string[];
+  /** Who is in a chat (chat.db); see hasUnrelatedPair. */
+  membersOf?: (chat: string) => string[];
 }): VetOutcome {
   const { proposal, sample, existingNames, contacts } = args;
 
@@ -375,6 +457,17 @@ export function vetProposal(args: {
     return {
       ok: false,
       reason: `evidence spans ${chats.size} chat(s), need ${MIN_CHATS} — this is one room's habit`,
+    };
+  }
+  const askers = proposal.evidence.flatMap((e) => {
+    const ask = sampleRefs.get(e.ref);
+    return ask ? [{ person: ask.sender, chat: ask.chat }] : [];
+  });
+  if (!hasUnrelatedPair(askers, args.membersOf)) {
+    return {
+      ok: false,
+      reason:
+        "everyone behind it asked in a room another of them is in — this is one circle's habit",
     };
   }
 
@@ -431,6 +524,15 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
       ran: false,
       reason: `only ${people.length} person(s) in ${distinctChats} chat(s) in the window — nothing to compare`,
     };
+  }
+  const membersOf = chatMembers(deps.chatDb, deps.contacts);
+  if (
+    !hasUnrelatedPair(
+      sample.map((s) => ({ person: s.sender, chat: s.chat })),
+      membersOf,
+    )
+  ) {
+    return { ran: false, reason: "everyone in the window shares a room — nothing to compare" };
   }
   // Opaque per-run ids, so the model can tell people apart without seeing a
   // handle (the leak scan is the backstop, not the plan).
@@ -497,6 +599,7 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
       retiredNames: Object.keys(db.retired ?? {}),
       contacts: deps.contacts,
       selfNames: deps.config.identity.names,
+      membersOf,
     });
     if (!vet.ok) {
       rejected.push(`${proposal.name}: ${vet.reason}`);

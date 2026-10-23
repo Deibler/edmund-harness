@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config/config.ts";
+import { ChatDb } from "../src/imessage/db.ts";
 import type { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import {
@@ -12,7 +13,9 @@ import {
   MIN_PEOPLE,
   type Proposal,
   type SampledAsk,
+  chatMembers,
   chatTag,
+  hasUnrelatedPair,
   parseProposals,
   personKey,
   runCurator,
@@ -20,6 +23,7 @@ import {
   vetProposal,
 } from "../src/skills/curator.ts";
 import { type InstallRecord, writeDb } from "../src/skills/installer.ts";
+import { emptyChatDb } from "./helpers/chat-db.ts";
 
 /**
  * The curator's bar.
@@ -151,6 +155,67 @@ describe("what the curator is allowed to write", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.reason).toContain("one room's habit");
+  });
+
+  test("one family is one circle, even across a group and a DM", () => {
+    // Two members of a family group ask there, and one of them asks in their
+    // own DM too: two people in two chats, and still one family.
+    const family: SampledAsk[] = [
+      { ref: "msg:g1", chat: "chatFAM", sender: "+15550001111", text: "next video", ts: 1 },
+      { ref: "msg:g2", chat: "chatFAM", sender: "+15550002222", text: "next video", ts: 2 },
+      { ref: "msg:d1", chat: "dmA", sender: "+15550001111", text: "next video", ts: 3 },
+    ];
+    const result = vetProposal({
+      ...base,
+      sample: family,
+      proposal: proposal({
+        evidence: family.map((a) => ({ ref: a.ref, chat: a.chat, reading: "video" })),
+      }),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toContain("one circle's habit");
+  });
+
+  test("a silent member of the group is still in the room", () => {
+    // A asks in the family group and in a DM; B never speaks in the group
+    // but is in it, and asks in their own DM.
+    const asks: SampledAsk[] = [
+      { ref: "msg:s1", chat: "chatFAM", sender: "+15550001111", text: "next video", ts: 1 },
+      { ref: "msg:s2", chat: "dmA", sender: "+15550001111", text: "next video", ts: 2 },
+      { ref: "msg:s3", chat: "dmB", sender: "+15550002222", text: "next video", ts: 3 },
+    ];
+    const args = {
+      ...base,
+      sample: asks,
+      proposal: proposal({
+        evidence: asks.map((a) => ({ ref: a.ref, chat: a.chat, reading: "video" })),
+      }),
+    };
+    const members = (chat: string) => (chat === "chatFAM" ? ["+15550001111", "+15550002222"] : []);
+    expect(vetProposal({ ...args, membersOf: members }).ok).toBe(false);
+    // Without chat.db the silent member cannot be seen: the residual.
+    expect(vetProposal(args).ok).toBe(true);
+  });
+
+  test("two strangers in their own DMs are a pattern", () => {
+    expect(
+      hasUnrelatedPair([
+        { person: "a", chat: "dmA" },
+        { person: "b", chat: "dmB" },
+      ]),
+    ).toBe(true);
+    // Sharing a group neither asked in is not seen (the stated residual).
+    const members = (chat: string) => (chat === "g" ? ["a", "b"] : []);
+    expect(
+      hasUnrelatedPair(
+        [
+          { person: "a", chat: "dmA" },
+          { person: "b", chat: "dmB" },
+        ],
+        members,
+      ),
+    ).toBe(true);
   });
 
   test("too few sightings is rejected", () => {
@@ -597,6 +662,97 @@ describe("who counts as one person", () => {
       if (result.ran) throw new Error("unreachable");
       expect(result.reason).toContain("1 person(s)");
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("group membership comes from chat.db", () => {
+  test("chatMembers lists a group's people as person keys", () => {
+    const db = emptyChatDb();
+    try {
+      const w = new Database(db.path);
+      w.exec(`INSERT INTO chat (ROWID, guid) VALUES (1, 'any;+;chatFAM')`);
+      w.exec(`INSERT INTO handle (ROWID, id) VALUES (1, '+15550001111'), (2, '+15550002222')`);
+      w.exec("INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (1, 1), (1, 2)");
+      w.close();
+      const chatDb = new ChatDb(db.path);
+      try {
+        const members = chatMembers(chatDb, contacts);
+        // As person keys: both handles are saved contacts (Sam, Jordan).
+        expect(members("any;+;chatFAM").sort()).toEqual(["name:jordan", "name:sam"]);
+        expect(members("any;+;nobody")).toEqual([]);
+        expect(chatMembers(undefined, contacts)("any;+;chatFAM")).toEqual([]);
+      } finally {
+        chatDb.close();
+      }
+    } finally {
+      db.cleanup();
+    }
+  });
+
+  test("the daemon hands the curator its chat.db", () => {
+    const main = readFileSync(join(import.meta.dir, "..", "src/main.ts"), "utf8");
+    const start = main.indexOf("new SkillCurator({");
+    expect(main.slice(start, main.indexOf("});", start))).toContain("chatDb,");
+  });
+
+  test("the curator reads it, so one circle's window costs no model call", async () => {
+    const db = emptyChatDb();
+    const root = mkdtempSync(join(tmpdir(), "curator-circle-"));
+    try {
+      const w = new Database(db.path);
+      w.exec(`INSERT INTO chat (ROWID, guid) VALUES (1, 'any;+;chatFAM')`);
+      w.exec(`INSERT INTO handle (ROWID, id) VALUES (1, '+15550001111'), (2, '+15550002222')`);
+      w.exec("INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (1, 1), (1, 2)");
+      w.close();
+      const recall = new Database(join(root, "recall.sqlite"));
+      recall.exec(
+        `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
+                            ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
+      );
+      const insert = recall.query(
+        "INSERT INTO rows (ref, kind, chat_guid, sender, ts, text, vec, model, dim) VALUES (?,?,?,?,?,?,x'00','m',1)",
+      );
+      insert.run(
+        "msg:c1",
+        "message",
+        "any;+;chatFAM",
+        "+15550001111",
+        1000,
+        "make the next family video",
+      );
+      insert.run(
+        "msg:c2",
+        "message",
+        "any;-;+15550002222",
+        "+15550002222",
+        1001,
+        "make the next family video",
+      );
+      recall.close();
+      const chatDb = new ChatDb(db.path);
+      try {
+        const result = await runCurator({
+          config: loadConfig(join(import.meta.dir, "..", "config.example.toml")),
+          dataDir: root,
+          skillsRoot: root,
+          dbPath: join(root, "installed-skills.json"),
+          contacts,
+          chatDb,
+          now: () => 10_000,
+          runModel: async () => {
+            throw new Error("one circle is nothing to compare");
+          },
+        });
+        expect(result).toMatchObject({ ran: false });
+        if (result.ran) throw new Error("unreachable");
+        expect(result.reason).toContain("shares a room");
+      } finally {
+        chatDb.close();
+      }
+    } finally {
+      db.cleanup();
       rmSync(root, { recursive: true, force: true });
     }
   });

@@ -183,8 +183,18 @@ async function runDmMaintenance(args: {
   const parsed = parseOutput(raw, DM_SECTIONS);
   if (!parsed) return { ok: false, reason: "parse failed" };
 
-  if (cfg.dry_run) {
-    deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
+  const settled = settleMaintenance(parsed, cfg.dry_run, {
+    rewrite: (rewrite) =>
+      applyFullRewrite(
+        current,
+        () => readPersonFile(handle),
+        rewrite,
+        (body) => writePersonFile({ handle, displayName, body }),
+        `dm:${shortHandle(handle)}`,
+      ),
+    stamp: () => deps.state.setLastMaintainedAtMs(sessionKey, Date.now()),
+  });
+  if (settled.kind === "dry-run") {
     log.info("maintainer", `dm:${shortHandle(handle)} → dry-run`, {
       proposed_notes: parsed.notes.length,
       rewrite: parsed.fullRewrite ? "yes" : "no",
@@ -192,20 +202,10 @@ async function runDmMaintenance(args: {
     });
     return { ok: true, subject: handle, appliedNotes: 0, rewrote: false, reason: parsed.reason };
   }
-
-  if (parsed.fullRewrite) {
-    const written = applyFullRewrite(
-      current,
-      () => readPersonFile(handle),
-      parsed.fullRewrite,
-      (body) => writePersonFile({ handle, displayName, body }),
-      `dm:${shortHandle(handle)}`,
-    );
-    if (!written) return { ok: false, reason: "rewrite not applied" };
-    // Stamped only once it landed, so a rewrite that did not is retried.
-    deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
+  if (settled.kind === "not-applied") return { ok: false, reason: "rewrite not applied" };
+  if (settled.kind === "rewrote") {
     log.info("maintainer", `dm:${shortHandle(handle)} → full rewrite`, {
-      chars: written.length,
+      chars: settled.written.length,
       reason: parsed.reason,
     });
     return {
@@ -217,7 +217,6 @@ async function runDmMaintenance(args: {
     };
   }
 
-  deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
   let applied = 0;
   for (const n of parsed.notes) {
     try {
@@ -313,8 +312,18 @@ async function runGroupMaintenance(args: {
   const parsed = parseOutput(raw, GROUP_SECTIONS);
   if (!parsed) return { ok: false, reason: "parse failed" };
 
-  if (cfg.dry_run) {
-    deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
+  const settled = settleMaintenance(parsed, cfg.dry_run, {
+    rewrite: (rewrite) =>
+      applyFullRewrite(
+        current,
+        () => readGroupFile(chatGuid),
+        rewrite,
+        (body) => writeGroupFile({ chatGuid, displayName, body }),
+        `group:${shortGuid(chatGuid)}`,
+      ),
+    stamp: () => deps.state.setLastMaintainedAtMs(sessionKey, Date.now()),
+  });
+  if (settled.kind === "dry-run") {
     log.info("maintainer", `group:${shortGuid(chatGuid)} → dry-run`, {
       proposed_notes: parsed.notes.length,
       rewrite: parsed.fullRewrite ? "yes" : "no",
@@ -322,19 +331,10 @@ async function runGroupMaintenance(args: {
     });
     return { ok: true, subject: chatGuid, appliedNotes: 0, rewrote: false, reason: parsed.reason };
   }
-
-  if (parsed.fullRewrite) {
-    const written = applyFullRewrite(
-      current,
-      () => readGroupFile(chatGuid),
-      parsed.fullRewrite,
-      (body) => writeGroupFile({ chatGuid, displayName, body }),
-      `group:${shortGuid(chatGuid)}`,
-    );
-    if (!written) return { ok: false, reason: "rewrite not applied" };
-    deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
+  if (settled.kind === "not-applied") return { ok: false, reason: "rewrite not applied" };
+  if (settled.kind === "rewrote") {
     log.info("maintainer", `group:${shortGuid(chatGuid)} → full rewrite`, {
-      chars: written.length,
+      chars: settled.written.length,
       reason: parsed.reason,
     });
     return {
@@ -346,7 +346,6 @@ async function runGroupMaintenance(args: {
     };
   }
 
-  deps.state.setLastMaintainedAtMs(sessionKey, Date.now());
   let applied = 0;
   for (const n of parsed.notes) {
     try {
@@ -490,6 +489,37 @@ function parseOutput(
 }
 
 /**
+ * What a pass does with a parsed answer before any notes are appended, and
+ * when it records the exchange as maintained (`stamp`). A dry run records it
+ * and writes nothing. A rewrite is recorded only once it landed: one that
+ * was skipped or failed leaves the exchange unmaintained, so the next pass
+ * tries again. Otherwise the exchange is recorded and the caller appends
+ * the notes (`append`).
+ */
+export function settleMaintenance(
+  parsed: { fullRewrite: string | null },
+  dryRun: boolean,
+  io: { rewrite: (body: string) => string | null; stamp: () => void },
+):
+  | { kind: "dry-run" }
+  | { kind: "rewrote"; written: string }
+  | { kind: "not-applied" }
+  | { kind: "append" } {
+  if (dryRun) {
+    io.stamp();
+    return { kind: "dry-run" };
+  }
+  if (parsed.fullRewrite) {
+    const written = io.rewrite(parsed.fullRewrite);
+    if (written === null) return { kind: "not-applied" };
+    io.stamp();
+    return { kind: "rewrote", written };
+  }
+  io.stamp();
+  return { kind: "append" };
+}
+
+/**
  * Write a full rewrite without losing anything. The file is re-read right
  * before writing, notes the live turn appended during the model call are
  * merged in (reconcileRewrite), and whatever the rewrite drops from THAT
@@ -506,6 +536,11 @@ export function applyFullRewrite(
 ): string | null {
   try {
     const latest = reread();
+    if (snapshot && !latest) {
+      // Deleted during the model call. A deliberate delete wins.
+      log.info("maintainer", `${label} → rewrite skipped, the file was deleted during the pass`);
+      return null;
+    }
     let body = rewrite;
     if (latest) {
       const merged = reconcileRewrite(snapshot?.body ?? "", latest.body, rewrite);

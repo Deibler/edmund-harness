@@ -275,6 +275,7 @@ async function main() {
     dbPath: resolve(config.paths.data_dir, config.skills_marketplace.installed_db),
     consentDbPath: resolve(config.paths.data_dir, config.public_skills.consent_db),
     contacts,
+    chatDb,
   });
   skillCurator.start();
   const alertStore = new AlertStore(config.paths.data_dir);

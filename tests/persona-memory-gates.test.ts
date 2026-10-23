@@ -25,7 +25,7 @@ import {
   countObservations,
   shouldConsolidate,
 } from "../src/persona/consolidate.ts";
-import { applyFullRewrite, judgmentModel } from "../src/persona/maintainer.ts";
+import { applyFullRewrite, judgmentModel, settleMaintenance } from "../src/persona/maintainer.ts";
 import {
   principlesDerivedAt,
   readPrinciples,
@@ -443,24 +443,94 @@ describe("a full rewrite loses nothing", () => {
     expect(threw).toBeNull();
   });
 
-  test("the maintainer stamps a rewrite only once it landed", () => {
+  test("a file deleted during the model call stays deleted", () => {
+    const path = join(dir, "15550100011.md");
+    let wrote = false;
+    const r = applyFullRewrite(
+      { path, body: personFile([note(1)], []) },
+      () => null,
+      personFile([], []),
+      () => {
+        wrote = true;
+      },
+      "test",
+    );
+    expect(r).toBeNull();
+    expect(wrote).toBeFalse();
+  });
+
+  test("a retried rewrite does not archive the same drops twice", () => {
+    const path = join(dir, "15550100012.md");
+    const old = personFile([note(1), note(2)], []);
+    writeFileSync(path, old);
+    const fail = () => {
+      throw new Error("disk full");
+    };
+    const attempt = (write: (b: string) => void) =>
+      applyFullRewrite(
+        { path, body: old },
+        () => ({ path, body: readFileSync(path, "utf8") }),
+        personFile([note(2)], []),
+        write,
+        "test",
+      );
+    expect(attempt(fail)).toBeNull();
+    expect(archivedObservationCount(path)).toBe(1);
+    expect(attempt((b) => writeFileSync(path, b))).not.toBeNull();
+    expect(archivedObservationCount(path)).toBe(1);
+  });
+
+  test("a note the rewrite already carries is not merged in twice", () => {
+    const snapshot = personFile([note(1)], []);
+    const appended = note(9, "added meanwhile");
+    const latest = snapshot.replace(note(1), `${note(1)}\n${appended}`);
+    const merged = reconcileRewrite(snapshot, latest, personFile([note(1), appended], []));
+    expect(merged!.split("\n").filter((l) => l === appended)).toHaveLength(1);
+  });
+});
+
+describe("when an exchange counts as maintained", () => {
+  const run = (parsed: { fullRewrite: string | null }, dryRun: boolean, written: string | null) => {
+    const calls: string[] = [];
+    const settled = settleMaintenance(parsed, dryRun, {
+      rewrite: () => {
+        calls.push("rewrite");
+        return written;
+      },
+      stamp: () => calls.push("stamp"),
+    });
+    return { settled, calls };
+  };
+
+  test("a rewrite that did not land leaves it unmaintained, to be retried", () => {
+    const { settled, calls } = run({ fullRewrite: "body" }, false, null);
+    expect(settled.kind).toBe("not-applied");
+    expect(calls).toEqual(["rewrite"]);
+  });
+
+  test("a rewrite that landed is stamped after it, never before", () => {
+    const { settled, calls } = run({ fullRewrite: "body" }, false, "body");
+    expect(settled).toEqual({ kind: "rewrote", written: "body" });
+    expect(calls).toEqual(["rewrite", "stamp"]);
+  });
+
+  test("a dry run is stamped and writes nothing; notes are stamped then appended", () => {
+    expect(run({ fullRewrite: "body" }, true, "body").calls).toEqual(["stamp"]);
+    const appending = run({ fullRewrite: null }, false, null);
+    expect(appending.settled.kind).toBe("append");
+    expect(appending.calls).toEqual(["stamp"]);
+  });
+
+  test("both maintainer paths stamp only through it", () => {
     const src = readFileSync(join(import.meta.dir, "..", "src/persona/maintainer.ts"), "utf8");
-    const parsedAt = [...src.matchAll(/const parsed = parseOutput\(raw, (DM|GROUP)_SECTIONS\);/g)];
-    expect(parsedAt.length).toBe(2);
-    for (const m of parsedAt) {
-      const start = src.indexOf("if (parsed.fullRewrite)", m.index!);
-      const branch = src.slice(m.index!, src.indexOf('log.info("maintainer"', start + 1));
-      const rewrite = branch.slice(branch.indexOf("if (parsed.fullRewrite)"));
-      // Not stamped between the parse and the rewrite...
-      expect(branch.slice(0, branch.indexOf("if (cfg.dry_run)"))).not.toContain(
-        "setLastMaintainedAtMs",
-      );
-      // ...and in the rewrite branch only after applyFullRewrite returned.
-      expect(rewrite.indexOf("applyFullRewrite(")).toBeGreaterThan(-1);
-      expect(rewrite.indexOf("setLastMaintainedAtMs")).toBeGreaterThan(
-        rewrite.indexOf("if (!written)"),
-      );
-    }
+    expect(src.match(/setLastMaintainedAtMs/g)?.length).toBe(2);
+    expect(
+      src.match(/stamp: \(\) => deps\.state\.setLastMaintainedAtMs\(sessionKey, Date\.now\(\)\)/g)
+        ?.length,
+    ).toBe(2);
+    expect(src.match(/const settled = settleMaintenance\(parsed, cfg\.dry_run, \{/g)?.length).toBe(
+      2,
+    );
   });
 });
 

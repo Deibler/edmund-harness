@@ -33,12 +33,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
+import type { ChatDb } from "../imessage/db.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { log } from "../util/log.ts";
 import { updateAuthoredSkill } from "./author.ts";
 import { revokeConsentFor } from "./consent.ts";
-import { MIN_CHATS, MIN_PEOPLE, personKey } from "./curator.ts";
+import { MIN_CHATS, MIN_PEOPLE, chatMembers, hasUnrelatedPair, personKey } from "./curator.ts";
 import { type InstallRecord, categoryOf, readDb, uninstallSkill, writeDb } from "./installer.ts";
 import { existingSkillRoot, skillDirectoryForRecord } from "./paths.ts";
 import { describeLeaks, findLeaks } from "./privacy.ts";
@@ -56,6 +57,8 @@ export type LifecycleDeps = {
    *  applied: the reviewer reads real messages, and a rewrite it supplies
    *  becomes a globally readable skill. */
   contacts?: ContactBook;
+  /** Group membership, for the same evidence bar the curator applies. */
+  chatDb?: ChatDb;
   runModel?: typeof runModelOneShot;
   now?: () => number;
 };
@@ -334,7 +337,7 @@ export function reviseCurated(
   record: InstallRecord,
   instructions: string,
   reason: string,
-  evidence: { people: number; chats: number },
+  evidence: { people: number; chats: number; unrelated: boolean },
   deps: LifecycleDeps,
 ): boolean {
   if (!deps.contacts) {
@@ -345,11 +348,12 @@ export function reviseCurated(
   // around the skill's recent reads, and those can all come from one person
   // in one chat: without this, a review could re-aim a global skill at that
   // person's own project, the incident the curator's bar exists to prevent.
-  if (evidence.people < MIN_PEOPLE || evidence.chats < MIN_CHATS) {
+  if (evidence.people < MIN_PEOPLE || evidence.chats < MIN_CHATS || !evidence.unrelated) {
     log.info("skill-curator", "revision not applied — the asks behind it are too narrow", {
       name,
       people: evidence.people,
       chats: evidence.chats,
+      unrelated: evidence.unrelated,
     });
     return false;
   }
@@ -423,12 +427,20 @@ export function parseVerdict(
  */
 type Ask = { text: string; chat: string; sender: string };
 
-/** How many people, in how many chats, the asks behind a verdict came from. */
-function support(asks: Ask[], deps: LifecycleDeps): { people: number; chats: number } {
+/** How many people, in how many chats, the asks behind a verdict came from,
+ *  and whether two of them share no room (hasUnrelatedPair). */
+function support(
+  asks: Ask[],
+  deps: LifecycleDeps,
+): { people: number; chats: number; unrelated: boolean } {
   const person = (h: string) => (deps.contacts ? personKey(deps.contacts, h) : h);
+  const askers = asks.map((a) => ({ person: person(a.sender), chat: a.chat }));
   return {
-    people: new Set(asks.map((a) => person(a.sender))).size,
-    chats: new Set(asks.map((a) => a.chat)).size,
+    people: new Set(askers.map((a) => a.person)).size,
+    chats: new Set(askers.map((a) => a.chat)).size,
+    unrelated: deps.contacts
+      ? hasUnrelatedPair(askers, chatMembers(deps.chatDb, deps.contacts))
+      : hasUnrelatedPair(askers),
   };
 }
 
