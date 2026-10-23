@@ -20,6 +20,7 @@ import { isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { DEBUG, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import { type IterationUsage, contextTokens, iterationContextTokens } from "./auto-compact.ts";
+import { ISOLATED_SETTINGS_ARGS } from "./direct-env.ts";
 import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
 import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
 import { personaFingerprint } from "./persona.ts";
@@ -416,6 +417,8 @@ export async function runClaude(
     // Robinhood server) and scoped to trading sessions only (mcp-trading.json
     // adds it explicitly). Deterministic regardless of cwd / registration scope.
     "--strict-mcp-config",
+    // The operator's CLAUDE.md files, auto-memory and plugins stay out.
+    ...ISOLATED_SETTINGS_ARGS,
     ...pluginDirArgs(config.claude.plugin_dirs, hostAccess(config), isGuest),
     "--append-system-prompt",
     buildRunSystemPrompt(input, config, orch),

@@ -15,6 +15,25 @@ import { envAllowedWhenSandboxed } from "../security/policy.ts";
 
 const ALWAYS_STRIPPED = new Set(["ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"]);
 
+/**
+ * Settings flags for every Claude Code subprocess the harness spawns. Without
+ * them a spawn reads the operator's own Claude Code setup: CLAUDE.md files
+ * found walking up from the cwd (the sandboxes sit inside this checkout, so
+ * the repo's developer notes and CLAUDE.local.md), ~/.claude/CLAUDE.md, the
+ * auto-memory index and the user-scope plugins and MCP servers. Measured
+ * 2026-10-23: about 25k tokens of that reached every cold Edmund turn, groups
+ * included. No setting source is read; what the harness relies on is stated
+ * here instead. Thinking was on through the operator's user settings and
+ * stays on. Project settings were never read in a sandbox (the CLI looks in
+ * the cwd only, not the repo root), so dropping them changes nothing.
+ */
+export const ISOLATED_SETTINGS_ARGS: readonly string[] = [
+  "--setting-sources",
+  "",
+  "--settings",
+  JSON.stringify({ autoMemoryEnabled: false, alwaysThinkingEnabled: true }),
+];
+
 export function directClaudeEnv(
   overrides: Record<string, string> = {},
   access: HostAccess = "full",

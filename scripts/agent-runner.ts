@@ -26,7 +26,7 @@ import { consumeFollowOnMarker, teamSharedDirFor } from "../src/agents/follow-on
 import { agentCompletionMessage, teamCompletionMessage } from "../src/agents/messages.ts";
 import { spawnAgent } from "../src/agents/spawn.ts";
 import { AgentStore } from "../src/agents/store.ts";
-import { directClaudeEnv } from "../src/claude/direct-env.ts";
+import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "../src/claude/direct-env.ts";
 import { buildCodexExecArgs, codexExecutable, parseCodexJsonLine } from "../src/codex/runner.ts";
 import { CronStore } from "../src/cron/store.ts";
 import { backendForModel } from "../src/model/backend.ts";
@@ -157,6 +157,7 @@ const args =
         mcpConfig,
         // Only the file's servers — don't inherit user/project MCP servers.
         "--strict-mcp-config",
+        ...ISOLATED_SETTINGS_ARGS,
         ...pluginDirArgs(
           pluginDirsFromEnv(process.env.EDMUND_PLUGIN_DIRS),
           hostAccessFromEnv,

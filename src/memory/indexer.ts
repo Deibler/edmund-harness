@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { extractAppleTranscript } from "../imessage/apple-transcript.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { decodeMessageText } from "../imessage/decode.ts";
+import { dmChatGuid } from "../imessage/participants.ts";
 import { DEPENDENCY_DIRS, underDependencyDir } from "../persona/sandbox.ts";
 import { log } from "../util/log.ts";
 import { chunkMarkdownDoc, chunkPlainText } from "./chunker.ts";
@@ -626,7 +627,7 @@ export class Indexer {
       const title = docTitle(body, f.name);
       const chunks = chunkMarkdownDoc(title, body);
       const handle = handleFromPersonFileName(f.name);
-      const chatGuid = handle ? this.dmChatGuidForHandle(handle) : null;
+      const chatGuid = handle ? dmChatGuid(this.chatDb, handle) : null;
       const refPrefix = `person:${f.name}#`;
       try {
         for (let i = 0; i < chunks.length; i += this.cfg.batchSize) {
@@ -674,30 +675,6 @@ export class Indexer {
    *  moved out of the live files by the maintainer's size gate). */
   private listPersonFiles(): Array<{ path: string; name: string; mtime: number }> {
     return listProfileDir(this.personFilesDir!);
-  }
-
-  /**
-   * Real chat.db guid for a DM handle. Person-file chunks must scope to
-   * the SAME guid the chat's message rows carry — on this bridge that is
-   * `any;-;+…`, and a fabricated `iMessage;-;…` guid matches no session
-   * (verified live 2026-07-28: all 27k message rows were `any;…` while
-   * person chunks sat unreachable under `iMessage;…`). When variants
-   * exist (named-chat dupes), prefer the chat with the most messages.
-   */
-  private dmChatGuidForHandle(handle: string): string {
-    try {
-      const row = this.chatDb
-        .query<{ guid: string }>(
-          `SELECT c.guid AS guid FROM chat c WHERE c.guid LIKE '%;-;' || ?
-           ORDER BY (SELECT COUNT(*) FROM chat_message_join j WHERE j.chat_id = c.ROWID) DESC
-           LIMIT 1`,
-        )
-        .get(handle);
-      if (row?.guid) return row.guid;
-    } catch {
-      // chat.db unavailable mid-tick — fall through to the convention.
-    }
-    return `any;-;${handle}`;
   }
 
   /**

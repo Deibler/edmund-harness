@@ -56,7 +56,7 @@ import {
 } from "./imessage/bridge/index.ts";
 import { ChatDb } from "./imessage/db.ts";
 import { decodeMessageText } from "./imessage/decode.ts";
-import { getGroupParticipants } from "./imessage/participants.ts";
+import { dmChatGuid, getGroupParticipants } from "./imessage/participants.ts";
 import { configureSendVerification } from "./imessage/send.ts";
 import type { InboundMessage } from "./imessage/types.ts";
 import { startWatcher } from "./imessage/watcher.ts";
@@ -163,6 +163,8 @@ async function main() {
   // Keep the per-message routing record bounded — 30 days is well beyond the
   // recovery look-back window, so older rows can never affect a recovery decision.
   state.pruneRouting(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const repairedGuids = state.repairDmChatGuids((handle) => dmChatGuid(chatDb, handle));
+  if (repairedGuids > 0) console.log(`[boot] repaired ${repairedGuids} DM chat guid(s)`);
   const crons = new CronStore(config.paths.data_dir);
   const addressBook = new AddressBook();
   const contacts = new ContactBook(

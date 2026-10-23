@@ -489,6 +489,9 @@ export class StateStore {
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_key) DO UPDATE SET
            claude_session_id = excluded.claude_session_id,
+           chat_guid = CASE
+             WHEN instr(sessions.chat_guid, ';') = 0 AND instr(excluded.chat_guid, ';') > 0
+             THEN excluded.chat_guid ELSE sessions.chat_guid END,
            last_inbound_ms = excluded.last_inbound_ms,
            last_outbound_ms = excluded.last_outbound_ms`,
     ).run(
@@ -599,6 +602,24 @@ export class StateStore {
       "UPDATE sessions SET last_outbound_ms = MAX(last_outbound_ms, ?) WHERE session_key = ?",
     ).run(atMs, sessionKey);
     return Number(res.changes) > 0;
+  }
+
+  /**
+   * iMessage DMs whose stored chat guid is a bare handle. The relay wrote
+   * those until 2026-10-23 and nothing corrected them: the person-file
+   * maintainer never ran for those chats, the ghost scored real replies as
+   * ignored, and recovery could not see their unanswered messages (7 rows,
+   * 6 of them active). Fixed with the guid chat.db holds; the upsert above
+   * repairs any that arrive later.
+   */
+  repairDmChatGuids(guidFor: (handle: string) => string): number {
+    const rows = this.q(
+      `SELECT session_key AS sessionKey, chat_guid AS chatGuid FROM sessions
+       WHERE session_key LIKE 'imessage:dm:%' AND instr(chat_guid, ';') = 0`,
+    ).all() as { sessionKey: string; chatGuid: string }[];
+    const set = this.q("UPDATE sessions SET chat_guid = ? WHERE session_key = ?");
+    for (const r of rows) set.run(guidFor(r.sessionKey.slice("imessage:dm:".length)), r.sessionKey);
+    return rows.length;
   }
 
   listSessions(): SessionRecord[] {

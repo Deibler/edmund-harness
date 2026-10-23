@@ -1,7 +1,7 @@
 import type { Config } from "../config/config.ts";
 import type { CronStore } from "../cron/store.ts";
 import type { ChatDb } from "../imessage/db.ts";
-import { getGroupParticipants, handleExists } from "../imessage/participants.ts";
+import { dmChatGuid, getGroupParticipants, handleExists } from "../imessage/participants.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { type SessionKey, isGroupSession, normalizeHandle } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
@@ -224,12 +224,14 @@ function resolveDmTarget(
 
   // Pre-warm a session record if the recipient was only ever observed in a
   // group with the originator and never DM'd Edmund directly. The Claude
-  // session UUID stays null — the receiving turn will cold-start.
+  // session UUID stays null — the receiving turn will cold-start. The chat
+  // guid must be the real one: a bare handle here was never corrected and
+  // hid the DM from everything that queries chat.db by guid.
   if (!deps.state.getSession(sessionKey)) {
     deps.state.upsertSession({
       sessionKey,
       claudeSessionId: null,
-      chatGuid: canon,
+      chatGuid: dmChatGuid(deps.chatDb, canon),
       isGroup: 0,
       lastInboundMs: 0,
       lastOutboundMs: 0,
