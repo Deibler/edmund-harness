@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { withAgentHeartbeat } from "../agents/keep-alive.ts";
 import type { ToolContext } from "../mcp/context.ts";
 import { isSubagentSession } from "../sessions/key.ts";
 import { BG_EXECUTORS } from "./registry.ts";
@@ -77,12 +78,15 @@ export async function dispatchOrRun(
     };
   }
   try {
-    const result = await executor(args, {
-      config: ctx.config,
-      sandboxPath: ctx.sandboxPath,
-      sessionKey: ctx.sessionKey,
-      dataDir: ctx.dataDir,
-    });
+    // A sub-agent prints nothing while this runs; keep its reaper heartbeat.
+    const result = await withAgentHeartbeat(ctx.sessionKey, ctx.dataDir, () =>
+      executor(args, {
+        config: ctx.config,
+        sandboxPath: ctx.sandboxPath,
+        sessionKey: ctx.sessionKey,
+        dataDir: ctx.dataDir,
+      }),
+    );
     const note =
       args.async === true
         ? "(Ran inline: a sub-agent has no session to wake, so async does not apply here.)\n\n"

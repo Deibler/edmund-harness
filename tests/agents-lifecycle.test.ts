@@ -8,11 +8,23 @@
  * background job woke a session that does not exist (262 times), and a
  * fan-out woke the parent once per agent (up to 19 in a row).
  */
+import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { agentsRoutes } from "../dashboard/server/routes/agents.ts";
+import { writeFollowOnMarker } from "../src/agents/follow-on.ts";
+import { withAgentHeartbeat } from "../src/agents/keep-alive.ts";
 import {
   COMPLETION_DEBOUNCE_MS,
   COMPLETION_MAX_WAIT_MS,
@@ -23,7 +35,9 @@ import {
 } from "../src/agents/messages.ts";
 import { AGENT_LIMITS, reapStuckAgents } from "../src/agents/reaper.ts";
 import {
+  type LaunchEnvFor,
   agentModelProblem,
+  cancelAgent,
   killAgentProcess,
   notifyParent,
   spawnAgent,
@@ -47,6 +61,7 @@ const tmp = (p: string) => {
 const groups: number[] = [];
 afterAll(() => {
   for (const pid of groups) {
+    if (!(pid > 0)) continue; // kill(-0) would signal this test's own group
     try {
       process.kill(-pid, "SIGKILL");
     } catch {}
@@ -56,6 +71,54 @@ afterAll(() => {
 
 const PARENT = "imessage:dm:+15550100021";
 const MIN = 60_000;
+
+// A fake `claude` the real runner starts (tests/fixtures/fake-claude-agent.ts).
+const fakeBin = tmp("fake-agent-bin-");
+writeFileSync(
+  join(fakeBin, "claude"),
+  `#!/bin/sh\nexec "${process.execPath}" "${join(import.meta.dir, "fixtures/fake-claude-agent.ts")}" "$@"\n`,
+);
+chmodSync(join(fakeBin, "claude"), 0o755);
+// No test here may start the real CLI, even through a path that falls back
+// to this process's own env (a follow-on launched without a launch env).
+const realPath = process.env.PATH;
+process.env.PATH = `${fakeBin}:${realPath}`;
+afterAll(() => {
+  process.env.PATH = realPath;
+});
+const fakeEnv =
+  (extra: Record<string, string>): LaunchEnvFor =>
+  () => ({
+    ...(process.env as Record<string, string>),
+    PATH: `${fakeBin}:${process.env.PATH}`,
+    EDMUND_AGENT_MODEL: "claude-test-9",
+    ...extra,
+  });
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+/** A detached process group (`sh` leading a `sleep`): returns both pids. */
+async function processGroup(): Promise<{ leader: number; child: number }> {
+  const leader = spawn("sh", ["-c", "sleep 30 & echo $!; wait"], {
+    detached: true,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  groups.push(leader.pid!);
+  const child = Number(
+    await new Promise<string>((r) => leader.stdout!.once("data", (b) => r(String(b)))),
+  );
+  return { leader: leader.pid!, child };
+}
+const waitFor = async (cond: () => boolean, tries = 300) => {
+  for (let i = 0; i < tries && !cond(); i++) await Bun.sleep(20);
+  return cond();
+};
 
 function fixture() {
   const dataDir = tmp("agents-data-");
@@ -119,15 +182,55 @@ describe("the reaper judges an agent by its output, not its age", () => {
   test("whoever settles first wins; the runner cannot revive a settled row", () => {
     const f = fixture();
     const a = f.add();
-    expect(f.store.finishIfActive(a.id, "canceled", null, "canceled by its parent")).toBe(true);
+    expect(f.store.finishIfActive(a.id, "canceled", null, "canceled by its parent")).toEqual({
+      pid: null,
+      from: "pending",
+    });
     expect(f.store.claimRunning(a.id, 1)).toBe(false);
-    expect(f.store.finishIfActive(a.id, "done", 0)).toBe(false);
+    expect(f.store.finishIfActive(a.id, "done", 0)).toBeNull();
     expect(f.store.get(a.id)!.status).toBe("canceled");
+  });
+
+  test("a settle reports the pid it took, and can require the status that was judged", () => {
+    const f = fixture();
+    const a = f.add();
+    f.store.claimRunning(a.id, 4242);
+    expect(f.store.finishIfActive(a.id, "failed", null, "never started", "pending")).toBeNull();
+    expect(f.store.get(a.id)!.status).toBe("running");
+    expect(f.store.finishIfActive(a.id, "failed", null, "x", "running")).toEqual({
+      pid: 4242,
+      from: "running",
+    });
+  });
+
+  test("the reaper stops the process the settle found, not the one it read", async () => {
+    const f = fixture();
+    const a = f.add();
+    const g = await processGroup();
+    f.store.claimRunning(a.id, g.leader);
+    f.age(a.id, 30 * MIN, 20 * MIN);
+    // The sweep's read was taken before the runner stored its pid.
+    const stale = { ...f.store.get(a.id)!, pid: null };
+    f.store.listStuck = () => [stale];
+    expect(reapStuckAgents(f.store, f.crons, f.dataDir)).toEqual([a.id]);
+    expect(await waitFor(() => !alive(g.child))).toBe(true);
+  });
+
+  test("a pending row its runner claims during the sweep is left for the next one", () => {
+    const f = fixture();
+    const a = f.add();
+    f.age(a.id, 2 * MIN, null);
+    const judgedPending = f.store.get(a.id)!;
+    f.store.claimRunning(a.id, 0);
+    f.store.listStuck = () => [judgedPending];
+    expect(reapStuckAgents(f.store, f.crons, f.dataDir)).toEqual([]);
+    expect(f.store.get(a.id)!.status).toBe("running");
+    expect(f.completions()).toHaveLength(0);
   });
 });
 
 describe("a team reports once", () => {
-  test("two members settling at the same moment send one team-done", () => {
+  test("two members that both see the team settled send one team-done", () => {
     const f = fixture();
     const team = "team_test_1";
     const m1 = f.add({ teamId: team, role: "a" });
@@ -145,6 +248,115 @@ describe("a team reports once", () => {
     const wake = f.completions();
     expect(wake).toHaveLength(1);
     expect(wake[0]!.systemEvent).toStartWith("An agent team has finished (1 done, 1 failed)");
+  });
+
+  test("the team decision holds the write lock against other processes", () => {
+    const f = fixture();
+    const team = "team_test_lock";
+    const m = f.add({ teamId: team });
+    f.store.finishIfActive(m.id, "done", 0);
+    // Another runner's connection, unwilling to wait.
+    const other = new Database(join(f.dataDir, "agents.db"));
+    other.exec("PRAGMA busy_timeout = 0");
+    let otherWrote: boolean | null = null;
+    notifyParent({
+      store: f.store,
+      crons: f.crons,
+      dataDir: f.dataDir,
+      agent: f.store.get(m.id)!,
+      duringTeamDecision: () => {
+        try {
+          other.query("INSERT OR IGNORE INTO team_done(team_id, fired_at) VALUES ('x', 1)").run();
+          otherWrote = true;
+        } catch {
+          otherWrote = false;
+        }
+      },
+    });
+    other.close();
+    expect(otherWrote).toBe(false);
+    expect(f.completions()).toHaveLength(1);
+  });
+
+  test("a synthesizer one member spawned holds the team open, then reports itself", async () => {
+    const f = fixture();
+    const team = "team_test_follow";
+    const m1 = f.add({ teamId: team, role: "scout" });
+    const m2 = f.add({ teamId: team, role: "scout" });
+    const shared = join(f.dataDir, "sb", "teams", team, "shared");
+    mkdirSync(shared, { recursive: true });
+    writeFollowOnMarker(shared, {
+      role: "synthesizer",
+      task: "merge what the scouts found",
+      parentSessionKey: PARENT,
+      parentSandbox: join(f.dataDir, "sb"),
+    });
+    // Both settle before either reports: each will see the team settled.
+    f.store.finishIfActive(m1.id, "done", 0);
+    f.store.finishIfActive(m2.id, "done", 0);
+    const launchEnv = fakeEnv({ FAKE_AGENT_MODE: "finish" });
+    for (const m of [m1, m2]) {
+      notifyParent({
+        store: f.store,
+        crons: f.crons,
+        dataDir: f.dataDir,
+        agent: f.store.get(m.id)!,
+        launchEnv,
+      });
+    }
+    const synth = f.store.listTeam(team).find((a) => a.role === "synthesizer")!;
+    expect(synth).toBeDefined();
+    // The second member saw the synthesizer in flight: nothing went out yet.
+    expect(f.completions()).toHaveLength(0);
+    // The synthesizer's own runner settles the team and reports it.
+    expect(await waitFor(() => f.completions().length > 0, 500)).toBe(true);
+    const wake = f.completions();
+    expect(wake).toHaveLength(1);
+    expect(wake[0]!.systemEvent).toContain(`synthesizer (${synth.id}): done`);
+  }, 20_000);
+
+  test("a follow-on the reaper spawns runs with the configured agent settings", async () => {
+    const f = fixture();
+    const team = "team_test_daemon";
+    const m = f.add({ teamId: team, role: "scout" });
+    const shared = join(f.dataDir, "sb", "teams", team, "shared");
+    mkdirSync(shared, { recursive: true });
+    writeFollowOnMarker(shared, {
+      role: "synthesizer",
+      task: "merge what the scouts found",
+      parentSessionKey: PARENT,
+      parentSandbox: join(f.dataDir, "sb"),
+    });
+    f.store.claimRunning(m.id, 0);
+    f.age(m.id, 30 * MIN, 20 * MIN);
+    const plugin = tmp("plugin-");
+    const seen: string[] = [];
+    reapStuckAgents(f.store, f.crons, f.dataDir, {
+      launchEnv: (parent, sandbox) => {
+        seen.push(`${parent} ${sandbox}`);
+        return fakeEnv({
+          FAKE_AGENT_MODE: "argv",
+          EDMUND_AGENT_MODEL: "claude-configured-7",
+          EDMUND_HOST_ACCESS: "full",
+          EDMUND_PLUGIN_DIRS: JSON.stringify([plugin]),
+        })(parent, sandbox);
+      },
+    });
+    expect(seen).toEqual([`${PARENT} ${join(f.dataDir, "sb")}`]);
+    const synth = f.store.listTeam(team).find((a) => a.role === "synthesizer")!;
+    expect(await waitFor(() => existsSync(synth.resultPath), 500)).toBe(true);
+    expect(await waitFor(() => readFileSync(synth.resultPath, "utf8").startsWith("["))).toBe(true);
+    const argv = JSON.parse(readFileSync(synth.resultPath, "utf8")) as string[];
+    expect(argv[argv.indexOf("--model") + 1]).toBe("claude-configured-7");
+    expect(argv[argv.indexOf("--plugin-dir") + 1]).toBe(plugin);
+    expect(argv[argv.indexOf("--disallowedTools") + 1]).toBe("Task");
+  }, 20_000);
+
+  test("the daemon's reaper hands follow-ons the env an MCP child would get", () => {
+    const src = readFileSync(join(root, "src/boot/wire-recovery.ts"), "utf8");
+    expect(src).toMatch(
+      /reapStuckAgents\(agentStore, crons, config\.paths\.data_dir, \{\s*launchEnv: \(parentKey, parentSandbox\) => toolEnv\(config, parentKey, parentSandbox\),/,
+    );
   });
 
   test("a running teammate is not failed by a sibling's settle", () => {
@@ -246,6 +458,53 @@ describe("a sub-agent's background job", () => {
     }
   });
 
+  test("keeps the agent's heartbeat fresh while the tool runs", async () => {
+    const f = fixture();
+    const a = f.add();
+    f.store.claimRunning(a.id, 0);
+    f.age(a.id, 30 * MIN, 20 * MIN);
+    const executors = BG_EXECUTORS as Record<string, unknown>;
+    let quietDuringCall = Number.POSITIVE_INFINITY;
+    executors.test_slow_tool = async () => {
+      await Bun.sleep(50);
+      quietDuringCall = Date.now() - (f.store.get(a.id)!.heartbeatAt ?? 0);
+      return { summary: "rendered", resultPath: null };
+    };
+    try {
+      const ctx = {
+        sessionKey: `agent:${a.id}`,
+        sandboxPath: tmp("bg-sb-"),
+        dataDir: f.dataDir,
+      } as unknown as ToolContext;
+      await dispatchOrRun("test_slow_tool", { async: true }, ctx);
+    } finally {
+      Reflect.deleteProperty(executors, "test_slow_tool");
+    }
+    expect(quietDuringCall).toBeLessThan(MIN);
+    expect(f.store.listStuck(AGENT_LIMITS)).toEqual([]);
+  });
+
+  test("a long tool call goes on stamping it", async () => {
+    const f = fixture();
+    const a = f.add();
+    f.store.claimRunning(a.id, 0);
+    const stamps: number[] = [];
+    await withAgentHeartbeat(
+      `agent:${a.id}`,
+      f.dataDir,
+      async () => {
+        for (let i = 0; i < 4; i++) {
+          await Bun.sleep(40);
+          stamps.push(f.store.get(a.id)!.heartbeatAt ?? 0);
+        }
+      },
+      15,
+    );
+    expect(new Set(stamps).size).toBeGreaterThan(1);
+    // A session that is not a sub-agent's writes nothing.
+    expect(await withAgentHeartbeat(PARENT, "/nonexistent", async () => 7)).toBe(7);
+  });
+
   test("cannot be spawned for an agent: session", () => {
     expect(() =>
       spawnBgJob({
@@ -289,37 +548,34 @@ describe("the sub-agent model", () => {
 
 describe("stopping an agent stops its CLI too", () => {
   test("the process group, not just the runner", async () => {
-    const leader = spawn("sh", ["-c", "sleep 30 & echo $!; wait"], {
-      detached: true,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const childPid = Number(
-      await new Promise<string>((r) => leader.stdout.once("data", (b) => r(String(b)))),
-    );
-    const alive = (pid: number) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    expect(alive(childPid)).toBe(true);
-    killAgentProcess(leader.pid!);
-    for (let i = 0; i < 50 && alive(childPid); i++) await Bun.sleep(20);
-    expect(alive(childPid)).toBe(false);
+    const g = await processGroup();
+    expect(alive(g.child)).toBe(true);
+    killAgentProcess(g.leader);
+    expect(await waitFor(() => !alive(g.child))).toBe(true);
+  });
+
+  test("the dashboard's cancel takes the same path as cancel_agent", async () => {
+    const f = fixture();
+    const app = agentsRoutes({ agents: f.store, contacts: {} as never, chatDb: {} as never });
+    const pending = f.add();
+    const running = f.add();
+    const g = await processGroup();
+    f.store.claimRunning(running.id, g.leader);
+    for (const a of [pending, running]) {
+      const res = await app.request(`/${a.id}/cancel`, { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(f.store.get(a.id)!.status).toBe("canceled");
+      expect(f.store.get(a.id)!.stopReason).toBe("canceled from the dashboard");
+    }
+    expect(await waitFor(() => !alive(g.child))).toBe(true);
+    // A finished agent stays as it was.
+    expect((await app.request(`/${running.id}/cancel`, { method: "POST" })).status).toBe(200);
+    expect(cancelAgent(f.store, running.id, "again")).toBe(false);
   });
 });
 
 describe("agent-runner, end to end with a fake CLI", () => {
-  const bin = tmp("fake-agent-bin-");
-  writeFileSync(
-    join(bin, "claude"),
-    `#!/bin/sh\nexec "${process.execPath}" "${join(import.meta.dir, "fixtures/fake-claude-agent.ts")}" "$@"\n`,
-  );
-  chmodSync(join(bin, "claude"), 0o755);
-
-  function run(mode: string) {
+  function run(mode: string, extra: Record<string, string> = {}) {
     const f = fixture();
     const a = f.add();
     const child = spawn("bun", [join(root, "scripts/agent-runner.ts")], {
@@ -327,8 +583,9 @@ describe("agent-runner, end to end with a fake CLI", () => {
       stdio: "ignore",
       env: {
         ...(process.env as Record<string, string>),
-        PATH: `${bin}:${process.env.PATH}`,
+        PATH: `${fakeBin}:${process.env.PATH}`,
         FAKE_AGENT_MODE: mode,
+        ...extra,
         AGENT_ID: a.id,
         AGENT_TASK: a.task,
         AGENT_SANDBOX: a.sandboxPath,
@@ -342,10 +599,12 @@ describe("agent-runner, end to end with a fake CLI", () => {
     const exited = new Promise<number | null>((r) => child.on("exit", (code) => r(code)));
     return { ...f, a, child, exited };
   }
-  const waitFor = async (cond: () => boolean) => {
-    for (let i = 0; i < 300 && !cond(); i++) await Bun.sleep(20);
-    return cond();
+  const started = async (r: ReturnType<typeof run>) => {
+    // Running, and the CLI's first message has reached the runner.
+    expect(await waitFor(() => r.store.get(r.a.id)?.heartbeatAt != null)).toBe(true);
+    expect(readFileSync(r.a.logPath, "utf8")).toContain("three sources");
   };
+  const REASON = "stopped after 20 minutes without any output";
 
   test("a finished agent writes its result and wakes the parent once", async () => {
     const r = run("finish");
@@ -357,20 +616,44 @@ describe("agent-runner, end to end with a fake CLI", () => {
 
   test("a reaped agent keeps what it found, and only the reaper reports it", async () => {
     const r = run("hang");
-    expect(await waitFor(() => r.store.get(r.a.id)?.status === "running")).toBe(true);
-    // The CLI's first message reaches the runner, which stamps the heartbeat.
-    expect(await waitFor(() => r.store.get(r.a.id)?.heartbeatAt != null)).toBe(true);
-    expect(readFileSync(r.a.logPath, "utf8")).toContain("three sources");
+    await started(r);
     r.age(r.a.id, 30 * MIN, 20 * MIN);
     expect(reapStuckAgents(r.store, r.crons, r.dataDir)).toEqual([r.a.id]);
-    expect(await r.exited).toBe(143);
+    // The group's SIGTERM reaches runner and CLI together; either may be
+    // seen first, and both ways must leave the same result.
+    await r.exited;
     const result = readFileSync(r.a.resultPath, "utf8");
     expect(result).toContain("found three sources so far: a, b, c");
-    expect(result).toContain("stopped after 20 minutes without any output");
+    expect(result).toContain(REASON);
     // The reaper's report only: a second one from the runner would have been
     // merged into this same wake-up.
     expect(r.completions()).toHaveLength(1);
     expect(r.completions()[0]!.systemEvent).toStartWith("A sub-agent you spawned has finished");
+  }, 20_000);
+
+  test("SIGTERM seen first: the handler writes the partial result", async () => {
+    const r = run("hang");
+    await started(r);
+    r.store.finishIfActive(r.a.id, "failed", null, REASON);
+    process.kill(r.child.pid!, "SIGTERM"); // the runner alone; it stops its CLI
+    expect(await r.exited).toBe(143);
+    const result = readFileSync(r.a.resultPath, "utf8");
+    expect(result).toContain("found three sources so far: a, b, c");
+    expect(result).toContain(`(The agent was ${REASON}.`);
+    expect(r.completions()).toHaveLength(0); // whoever settled it reports it
+  }, 20_000);
+
+  test("the CLI's exit seen first: the exit path writes the same note", async () => {
+    const exitFile = join(tmp("exit-file-"), "go");
+    const r = run("wait-file", { FAKE_EXIT_FILE: exitFile });
+    await started(r);
+    r.store.finishIfActive(r.a.id, "failed", null, REASON);
+    writeFileSync(exitFile, ""); // the CLI exits on its own; the runner gets no signal
+    expect(await r.exited).toBe(143);
+    const result = readFileSync(r.a.resultPath, "utf8");
+    expect(result).toContain("found three sources so far: a, b, c");
+    expect(result).toContain(`(The agent was ${REASON}.`);
+    expect(r.completions()).toHaveLength(0);
   }, 20_000);
 
   test("an unavailable model is named as such, not as a failed task", async () => {
@@ -390,6 +673,8 @@ describe("every path goes through the shared settle and kill", () => {
     "src/agents/spawn.ts",
     "src/mcp/tools/agents.ts",
     "cli/commands/agents.ts",
+    "dashboard/server/routes/agents.ts",
+    "dashboard/server/routes/activity.ts",
   ];
   test("no completion is scheduled around queueCompletionWakeUp, no pid killed around killAgentProcess", () => {
     for (const f of files) {
@@ -399,5 +684,61 @@ describe("every path goes through the shared settle and kill", () => {
       expect(`${f}: ${kills}`).toBe(`${f}: ${f === "src/agents/spawn.ts" ? 2 : 0}`);
       expect(`${f}: ${/\.finish\(/.test(src)}`).toBe(`${f}: false`);
     }
+  });
+});
+
+describe("callers of the agent store", () => {
+  // The dashboard is outside the root tsconfig, and its own no longer
+  // compiles under the installed tsc: a call to a removed method reached a
+  // 500 at runtime. Every file that uses AgentStore, anywhere, is read here.
+  const users: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of require("node:fs").readdirSync(join(root, dir), { withFileTypes: true })) {
+      const p = `${dir}/${name.name}`;
+      if (name.isDirectory()) {
+        if (name.name !== "node_modules" && name.name !== "web" && name.name !== "user-web")
+          walk(p);
+      } else if (/\.tsx?$/.test(name.name)) {
+        const src = readFileSync(join(root, p), "utf8");
+        if (/agents\/store\.ts"/.test(src) && p !== "src/agents/store.ts") users.push(p);
+      }
+    }
+  };
+  for (const d of ["src", "scripts", "cli", "dashboard"]) walk(d);
+
+  test("they are found", () => {
+    expect(users).toContain("dashboard/server/routes/agents.ts");
+    expect(users).toContain("dashboard/server/routes/activity.ts");
+  });
+
+  test("none calls a method the store no longer has, or judges stuck by other limits", () => {
+    const methods = new Set(
+      [
+        ...readFileSync(join(root, "src/agents/store.ts"), "utf8").matchAll(
+          /^ {2}(\w+)(?:<\w+>)?\(/gm,
+        ),
+      ].map((m) => m[1]),
+    );
+    let calls = 0;
+    for (const p of users) {
+      const src = readFileSync(join(root, p), "utf8");
+      // The names this file gives an AgentStore: `x: AgentStore`,
+      // `x = new AgentStore(`, and getStore() where it returns one.
+      const names = new Set(
+        [...src.matchAll(/(\w+)\??\s*[:=]\s*(?:new\s+)?AgentStore\b/g)].map((m) => m[1]!),
+      );
+      if (/getStore = \(\) =>/.test(src)) names.add("getStore()");
+      for (const name of names) {
+        const esc = name.replace(/[()]/g, "\\$&");
+        for (const m of src.matchAll(new RegExp(`(?:^|[^\\w])${esc}\\.(\\w+)\\(`, "g"))) {
+          calls++;
+          expect(`${p}: ${m[1]} ${methods.has(m[1]!)}`).toBe(`${p}: ${m[1]} true`);
+        }
+      }
+      for (const m of src.matchAll(/listStuck\(([^)]*)\)/g)) {
+        expect(`${p}: ${m[1]}`).toMatch(/: (AGENT_LIMITS|limits, now)$/);
+      }
+    }
+    expect(calls).toBeGreaterThan(20); // the scan saw the callers
   });
 });

@@ -161,24 +161,52 @@ export class AgentStore {
 
   /**
    * Settle an agent that is still pending or running. The runner's exit, its
-   * SIGTERM handler, the reaper, a spawn failure and the cancel tools can all
-   * reach the same row at the same moment; only the caller that gets `true`
-   * notifies the parent, so one agent never wakes it twice.
+   * SIGTERM handler, the reaper, a spawn failure and the cancel paths can all
+   * reach the same row at the same moment; only the caller that gets a
+   * result notifies the parent, so one agent never wakes it twice.
+   *
+   * Returns the pid the row held when it was settled: the process to stop. A
+   * pid read before this call can be stale (a pending row claimed by its
+   * runner in between has no pid in the earlier read). `onlyFrom` settles
+   * only from the status the caller judged: the reaper's "never started"
+   * must not land on a runner that has just started.
    */
   finishIfActive(
     id: string,
     status: AgentStatus,
     exitCode: number | null,
     stopReason: string | null = null,
-  ): boolean {
-    const res = this.db
-      .query(
-        `UPDATE agents SET status=?, finished_at=?, exit_code=?, pid=NULL,
-           stop_reason=COALESCE(?, stop_reason)
-         WHERE id=? AND status IN ('pending','running')`,
-      )
-      .run(status, Date.now(), exitCode, stopReason, id);
-    return Number(res.changes ?? 0) > 0;
+    onlyFrom?: AgentStatus,
+  ): { pid: number | null; from: AgentStatus } | null {
+    return this.immediate(() => {
+      const row = this.db.query("SELECT status, pid FROM agents WHERE id=?").get(id) as {
+        status: AgentStatus;
+        pid: number | null;
+      } | null;
+      if (!row || (row.status !== "pending" && row.status !== "running")) return null;
+      if (onlyFrom && row.status !== onlyFrom) return null;
+      this.db
+        .query(
+          `UPDATE agents SET status=?, finished_at=?, exit_code=?, pid=NULL,
+             stop_reason=COALESCE(?, stop_reason)
+           WHERE id=?`,
+        )
+        .run(status, Date.now(), exitCode, stopReason, id);
+      return { pid: row.pid, from: row.status };
+    });
+  }
+
+  /**
+   * Run `fn` in one IMMEDIATE transaction: the write lock is taken up front,
+   * so a decision read inside it holds until it commits, against runners in
+   * other processes too.
+   */
+  immediate<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
+  }
+
+  close(): void {
+    this.db.close();
   }
 
   /** CLI-reported spend for this agent's run (from its result event). */

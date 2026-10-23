@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { z } from "zod";
-import { killAgentProcess, spawnAgent, spawnTeam } from "../../agents/spawn.ts";
+import { cancelAgent, spawnAgent, spawnTeam } from "../../agents/spawn.ts";
 import { AgentStore } from "../../agents/store.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
@@ -253,10 +253,9 @@ export function agentTools(ctx: ToolContext): ToolDef[] {
         }
         // Settle first: the runner's SIGTERM handler then keeps the partial
         // result without reporting the agent as finished.
-        if (!getStore().finishIfActive(agent.id, "canceled", null, "canceled by its parent")) {
+        if (!cancelAgent(getStore(), agent.id, "canceled by its parent")) {
           return text(`agent ${args.id} is ${getStore().get(agent.id)?.status}; nothing to cancel`);
         }
-        if (agent.pid) killAgentProcess(agent.pid);
         return text(`canceled ${args.id}`);
       },
     },
@@ -343,10 +342,7 @@ export function agentTools(ctx: ToolContext): ToolDef[] {
         }
         let killed = 0;
         for (const m of members) {
-          if (!getStore().finishIfActive(m.id, "canceled", null, "canceled by its parent"))
-            continue;
-          if (m.pid) killAgentProcess(m.pid);
-          killed++;
+          if (cancelAgent(getStore(), m.id, "canceled by its parent")) killed++;
         }
         return text(`canceled ${killed} member(s) of team ${args.team_id}`);
       },

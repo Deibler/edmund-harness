@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { Hono } from "hono";
+import { cancelAgent } from "../../../src/agents/spawn.ts";
 import type { AgentStore } from "../../../src/agents/store.ts";
 import type { Agent } from "../../../src/agents/types.ts";
 import type { ChatDb } from "../../../src/imessage/db.ts";
@@ -47,14 +48,9 @@ export function agentsRoutes(deps: Deps): Hono {
   app.post("/:id/cancel", (c) => {
     const row = deps.agents.get(c.req.param("id"));
     if (!row) return c.json({ error: "not found" }, 404);
-    if (row.pid !== null) {
-      try {
-        process.kill(row.pid, "SIGTERM");
-      } catch {}
-    }
-    if (row.status === "pending" || row.status === "running") {
-      deps.agents.finish(row.id, "canceled", -1);
-    }
+    // The same path as cancel_agent: settle, then stop the process group the
+    // settle found. A finished agent has nothing to cancel.
+    cancelAgent(deps.agents, row.id, "canceled from the dashboard");
     return c.json({ ok: true });
   });
 

@@ -289,6 +289,7 @@ function classifyEvent(systemEvent: string): string {
   if (systemEvent.startsWith("[Retry")) return "retry";
   if (systemEvent.startsWith("A sub-agent you spawned")) return "agent-done";
   if (systemEvent.startsWith("An agent team has finished")) return "team-done";
+  if (systemEvent.startsWith("Several sub-agent results arrived together")) return "agent-done";
   if (systemEvent.startsWith("Background tool job")) return "bg-job-done";
   if (systemEvent.startsWith("[System recovery check")) return "recovery";
   return "scheduled";

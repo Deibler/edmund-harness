@@ -1,5 +1,5 @@
 import type { CronStore } from "../cron/store.ts";
-import { PENDING_STALE_MS, killAgentProcess, notifyParent } from "./spawn.ts";
+import { type LaunchEnvFor, PENDING_STALE_MS, killAgentProcess, notifyParent } from "./spawn.ts";
 import type { AgentStore } from "./store.ts";
 import type { Agent, AgentLimits } from "./types.ts";
 
@@ -31,26 +31,32 @@ export function stuckReason(agent: Agent, limits: AgentLimits, now = Date.now())
  * Daemon-level reaper, run every minute from wire-recovery. Catches agents
  * nothing else will settle: a runner that never started, one that crashed
  * before its exit hook, a CLI that hangs. Each agent it stops is settled
- * first (so its runner's SIGTERM handler, which writes the partial result,
- * does not report it a second time), then its process group is stopped and
- * the parent is told why.
+ * first, from the status it was judged in (a pending row its runner claims
+ * meanwhile is left for the next sweep), and the process stopped is the one
+ * the settle found on the row. The runner's SIGTERM handler writes the
+ * partial result without reporting the agent again, and the parent is told
+ * why it stopped.
  */
 export function reapStuckAgents(
   store: AgentStore,
   crons: Pick<CronStore, "coalesceOnce" | "cancelPokes">,
   dataDir: string,
-  limits: AgentLimits = AGENT_LIMITS,
-  now = Date.now(),
+  opts: { launchEnv?: LaunchEnvFor; limits?: AgentLimits; now?: number } = {},
 ): string[] {
+  const limits = opts.limits ?? AGENT_LIMITS;
+  const now = opts.now ?? Date.now();
   const reaped: string[] = [];
   for (const a of store.listStuck(limits, now)) {
     const reason = stuckReason(a, limits, now);
-    if (!store.finishIfActive(a.id, "failed", null, reason)) continue;
-    if (a.pid) killAgentProcess(a.pid);
-    console.warn(`[agents] reaper: ${a.id} ${reason}; killed pid=${a.pid ?? "?"}`);
+    const settled = store.finishIfActive(a.id, "failed", null, reason, a.status);
+    if (!settled) continue;
+    if (settled.pid) killAgentProcess(settled.pid);
+    console.warn(`[agents] reaper: ${a.id} ${reason}; killed pid=${settled.pid ?? "-"}`);
     reaped.push(a.id);
-    const settled = store.get(a.id);
-    if (settled) notifyParent({ store, crons, dataDir, agent: settled, note: reason });
+    const row = store.get(a.id);
+    if (row) {
+      notifyParent({ store, crons, dataDir, agent: row, note: reason, launchEnv: opts.launchEnv });
+    }
   }
   return reaped;
 }

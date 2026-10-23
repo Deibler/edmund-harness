@@ -255,12 +255,8 @@ process.on("SIGTERM", () => {
   stopping = true;
   const row = store.get(id);
   const why = row?.stopReason ?? "stopped by a signal before it finished";
-  const partial = lastAssistantText.trim();
-  writeFileSync(
-    resultPath,
-    `${partial ? `${partial}\n\n` : ""}(The agent was ${why}. ${partial ? "What is above is its last output, and may be partial." : "It produced no text before it stopped."})`,
-  );
-  appendLog(`[agent-runner] SIGTERM: ${why}; wrote partial result (${partial.length} chars)`);
+  writeFileSync(resultPath, stoppedResult(why));
+  appendLog(`[agent-runner] SIGTERM: ${why}; wrote partial result`);
   try {
     proc.kill("SIGTERM");
   } catch {}
@@ -283,12 +279,19 @@ proc.on("exit", (code) => {
     : raw || "(agent produced no final text)";
   writeFileSync(resultPath, text);
   const status = code === 0 ? "done" : "failed";
-  const settledHere = store.finishIfActive(
-    id,
-    status,
-    code,
-    modelUnavailable ? `agent model ${model} is unavailable` : null,
-  );
+  const settledHere =
+    store.finishIfActive(
+      id,
+      status,
+      code,
+      modelUnavailable ? `agent model ${model} is unavailable` : null,
+    ) !== null;
+  // The reaper or a cancel settled the row and signalled the whole group,
+  // and the CLI's exit reached this runner before its own SIGTERM did: the
+  // handler above never runs. Without its note the parent hears "stopped"
+  // and reads a result that looks complete.
+  const stoppedBy = settledHere ? null : (store.get(id)?.stopReason ?? null);
+  if (stoppedBy) writeFileSync(resultPath, stoppedResult(stoppedBy));
   appendLog(
     `[agent-runner] exit code=${code} status=${status} result_chars=${text.length}${reportedCostUsd !== null ? ` cost_usd=${reportedCostUsd.toFixed(4)}` : ""}${settledHere ? "" : " (already settled elsewhere)"}`,
   );
@@ -329,8 +332,14 @@ proc.on("exit", (code) => {
   }
 
   logStream.end();
-  process.exit(code ?? 1);
+  process.exit(stoppedBy ? 143 : (code ?? 1));
 });
+
+/** The result file of an agent stopped before it finished. */
+function stoppedResult(why: string): string {
+  const partial = lastAssistantText.trim();
+  return `${partial ? `${partial}\n\n` : ""}(The agent was ${why}. ${partial ? "What is above is its last output, and may be partial." : "It produced no text before it stopped."})`;
+}
 
 /** What the CLI prints when the model it was given does not exist or is not
  *  available to this account. Ten agents failed this way. */

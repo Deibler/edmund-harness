@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { AGENT_LIMITS } from "../../../src/agents/reaper.ts";
 import type { AgentStore } from "../../../src/agents/store.ts";
 import type { CronStore } from "../../../src/cron/store.ts";
 import type { ChatDb } from "../../../src/imessage/db.ts";
@@ -27,10 +28,8 @@ export function activityRoutes(deps: Deps): Hono {
     const activeAgents = deps.agents
       .list()
       .filter((a) => a.status === "running" || a.status === "pending");
-    const stuckAgents = deps.agents.listStuck({
-      pendingStaleMs: 60_000,
-      runningStaleMs: 15 * 60 * 1000,
-    });
+    // The reaper's own limits, so "stuck" here means what it will stop.
+    const stuckAgents = deps.agents.listStuck(AGENT_LIMITS);
     const since24h = Date.now() - 24 * 3600 * 1000;
     const agents24h = deps.agents.list().filter((a) => a.spawnedAt >= since24h);
     const activeCrons = deps.crons.listActive();
