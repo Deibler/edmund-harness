@@ -8,7 +8,7 @@ import type { RecentThread } from "../cron/wake-thread.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
-import { type SessionKey, isTradingSession } from "../sessions/key.ts";
+import { type SessionKey, isGroupSession, isTradingSession } from "../sessions/key.ts";
 import type { SessionLocks } from "../sessions/locks.ts";
 import { type SessionRecord, StateStore } from "../sessions/store.ts";
 import { log } from "../util/log.ts";
@@ -43,13 +43,20 @@ import { loadUnansweredInbound, runRecoveryTurn } from "./turn.ts";
  * scoped) can return the other persona's messages. We gate on the recorded
  * live routing decision:
  *   - recorded owner present → only that session may recover the row.
- *   - no record (pre-feature / very old) → belongs to the normal (edmund) path,
- *     never to a trading session. This guarantees a Wolf message is never
- *     recovered into edmund, and edmund's messages are never recovered into Wolf.
+ *   - no record, group session → nobody owes it. Every accepted group row is
+ *     recorded (live path, catch-up, and the address check through the live
+ *     path), so an unrecorded one is the group talking among themselves that
+ *     the addressing gate dropped. Counting it ran recovery turns over
+ *     chatter and sent "hit a snag" into a group nobody had asked anything
+ *     (2026-10-23).
+ *   - no record, DM → belongs to the normal (edmund) path, never to a trading
+ *     session. This guarantees a Wolf message is never recovered into edmund,
+ *     and edmund's messages are never recovered into Wolf.
  */
 export function ownsRow(state: StateStore, sessionKey: SessionKey, rowId: number): boolean {
   const owner = state.getRoutedSession(rowId);
   if (owner !== null) return owner === sessionKey;
+  if (isGroupSession(sessionKey)) return false;
   return !isTradingSession(sessionKey);
 }
 

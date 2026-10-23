@@ -71,6 +71,42 @@ function fakeAttachmentBody(caption = "", trailerBytes = 4): Uint8Array {
   ]);
 }
 
+/**
+ * Build an attributedBody with the exact framing macOS 26 writes, taken from
+ * real chat.db rows: `NSString` then the class trailer `01 94 84 01`, then the
+ * `+` (0x2B) type tag, then the length prefix, the UTF-8 bytes, and the
+ * attribute-run tail. The tag byte is what makes 42- and 43-byte strings
+ * dangerous: read as a length it says 43, which is exactly long enough to
+ * swallow the real length byte plus the text.
+ */
+function hex(bytes: string): number[] {
+  return bytes.split(" ").map((b) => Number.parseInt(b, 16));
+}
+
+function realAttributedBody(text: string): Uint8Array {
+  const enc = new TextEncoder();
+  const head = enc.encode("\x04\x0bstreamtyped");
+  const cls = enc.encode("NSAttributedString\x00NSObject\x00NSString");
+  const trailerAndTag = new Uint8Array([0x01, 0x94, 0x84, 0x01, 0x2b]);
+  const utf8 = enc.encode(text);
+  const prefix =
+    utf8.length <= 0x80
+      ? new Uint8Array([utf8.length])
+      : new Uint8Array([0x81, utf8.length & 0xff, (utf8.length >> 8) & 0xff]);
+  const tail = new Uint8Array([
+    ...hex("86 84 02 69 49 01 2b 92 84 84 84 0c"),
+    ...enc.encode("NSDictionary"),
+    ...hex("00 94 84 01 69 01 92 84 96 96 1d"),
+    ...enc.encode("__kIMMessagePartAttributeName"),
+    ...hex("86 92 84 84 84 08"),
+    ...enc.encode("NSNumber"),
+    ...hex("00 84 84 07"),
+    ...enc.encode("NSValue"),
+    ...hex("00 94 84 01 2a 84 99 99 00 86 86 86"),
+  ]);
+  return new Uint8Array([...head, ...cls, ...trailerAndTag, ...prefix, ...utf8, ...tail]);
+}
+
 describe("decodeMessageText", () => {
   test("returns plain text when present", () => {
     expect(decodeMessageText("hello world", null)).toBe("hello world");
@@ -132,5 +168,38 @@ describe("decodeMessageText", () => {
   test("attachment WITH a caption keeps the caption", () => {
     expect(decodeMessageText(null, fakeAttachmentBody("Punishment"))).toBe("Punishment");
     expect(decodeMessageText(null, fakeAttachmentBody("look at this 🎣"))).toBe("look at this 🎣");
+  });
+
+  test("a 43-byte message decodes exactly, not as '+' plus 42 bytes", () => {
+    // Regression 2026-10-23: the fallback notice (43 bytes after the em-dash
+    // was normalised) read back as "+hit a snag ... still on i". The '+' type
+    // tag was taken as a length of 43, tying the real 43-byte string, and the
+    // misaligned slice was collected first.
+    const text = "hit a snag getting back to you, still on it";
+    expect(new TextEncoder().encode(text).length).toBe(43);
+    expect(decodeMessageText(null, realAttributedBody(text))).toBe(text);
+  });
+
+  test("a 42-byte message decodes exactly, not as '*' plus the text", () => {
+    // The tag-as-length slice is one byte LONGER than a 42-byte string, so
+    // "pick the longest" chose it outright.
+    const text = "see you at the field around six, bring ice";
+    expect(new TextEncoder().encode(text).length).toBe(42);
+    expect(decodeMessageText(null, realAttributedBody(text))).toBe(text);
+  });
+
+  test("real framing round-trips every length from 2 to 300 bytes", () => {
+    for (let n = 2; n <= 300; n++) {
+      // No whitespace at either end: the decoder trims, by design.
+      const text = "the,quick.brown-fox;jumps_over/lazy:dogs!".repeat(8).slice(0, n);
+      expect(decodeMessageText(null, realAttributedBody(text))).toBe(text);
+    }
+  });
+
+  test("a two-byte message is not replaced by the 'iI' attribute token", () => {
+    // 40 real chat.db rows ("? ", "8 ", ...) decoded as "iI": trimmed to one
+    // character, the real text lost on length to the `02 69 49` token in the
+    // attribute run that follows it.
+    expect(decodeMessageText(null, realAttributedBody("? "))).toBe("?");
   });
 });

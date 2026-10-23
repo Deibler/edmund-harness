@@ -30,10 +30,14 @@
  *   1. For each `NSString` marker, try every reasonable skip 1..32 past it.
  *      At each offset, attempt to parse a typedstream length prefix AND
  *      decode the slice as valid UTF-8. Collect every successful parse.
- *   2. Pick the longest candidate. Length-prefixed correctness virtually
- *      always wins because a wrong offset produces either an invalid UTF-8
- *      slice OR a tiny string of garbage (the 0x01 class-trailer byte
- *      interpreted as length).
+ *   2. Prefer candidates whose length prefix sits right after the `+`
+ *      (0x2B) type tag, which is how macOS writes the visible string:
+ *      `NSString 01 94 84 01 2B <len> <utf8>`. Then pick the longest. The
+ *      tag matters because 0x2B is itself a valid one-byte length (43):
+ *      read as a prefix it yields "<len byte><first 42 bytes>", which ties
+ *      a 43-byte message and beats a 42-byte one on length alone. Before
+ *      2026-10-23 that is exactly what happened ("+hit a snag ... still on
+ *      i"). Payloads without the tag keep the plain longest-wins rule.
  *   3. If no length prefix anywhere yields a real string (degenerate /
  *      novel typedstream framing), fall back to the longest contiguous
  *      run of valid UTF-8 in the blob, starting from a printable byte.
@@ -49,14 +53,17 @@ export function decodeMessageText(text: string | null, attributed: Uint8Array | 
   const bytes = attributed;
   const decoder = new TextDecoder("utf-8", { fatal: true });
 
-  const candidates: string[] = [];
+  const found: { text: string; tagged: boolean }[] = [];
   for (let i = 0; i < bytes.length - marker.length; i++) {
     if (!matchesAt(bytes, i, marker)) continue;
     for (let skip = 1; skip <= 32; skip++) {
-      const got = readPrefixedString(bytes, i + marker.length + skip, decoder);
-      if (got !== null) candidates.push(got);
+      const at = i + marker.length + skip;
+      const got = readPrefixedString(bytes, at, decoder);
+      if (got !== null) found.push({ text: got, tagged: bytes[at - 1] === STRING_TYPE_TAG });
     }
   }
+  const tagged = found.filter((c) => c.tagged);
+  const candidates = (tagged.length > 0 ? tagged : found).map((c) => c.text);
   // Pick the longest candidate. With multiple NSString markers (visible
   // text + attribute keys like "__kIMMessagePartAttributeName"), the
   // visible text is almost always longest — attribute keys are short and
@@ -89,6 +96,9 @@ export function decodeMessageText(text: string | null, attributed: Uint8Array | 
   // better than returning "" when the framing is non-standard.
   return longestValidUtf8(bytes, decoder).trim();
 }
+
+/** Typedstream type tag that precedes the visible string's length prefix. */
+const STRING_TYPE_TAG = 0x2b;
 
 /**
  * Try to read a typedstream length-prefixed UTF-8 string at `at`. Returns

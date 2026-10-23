@@ -74,18 +74,21 @@ function chatDbStub(rowIds: number[]): ChatDb {
 
 /** Session that has owed a reply since past the deadline, with the recovery
  *  sweeper having already attempted it once (the normal precondition). */
-function putOwedSession(opts: { recoveryAttempted?: boolean; lastInboundMs?: number } = {}): void {
+function putOwedSession(
+  opts: { recoveryAttempted?: boolean; lastInboundMs?: number; key?: SessionKey } = {},
+): void {
+  const key = opts.key ?? KEY;
   const lastInboundMs = opts.lastInboundMs ?? NOW - DEADLINE_MS - 60_000;
   state.upsertSession({
-    sessionKey: KEY,
+    sessionKey: key,
     claudeSessionId: null,
     chatGuid: "chat-1",
-    isGroup: 0,
+    isGroup: key === KEY ? 0 : 1,
     lastInboundMs,
     lastOutboundMs: NOW - 3_600_000,
   });
   if (opts.recoveryAttempted !== false) {
-    state.markRecoveryAttempted(KEY, lastInboundMs + 120_000);
+    state.markRecoveryAttempted(key, lastInboundMs + 120_000);
   }
 }
 
@@ -238,6 +241,29 @@ describe("sweepFallbackNotices", () => {
     const { calls, deliver } = makeDeliver({ sent: 1, errors: [] });
     await sweepFallbackNotices(depsFor([100], deliver), NOW);
     expect(calls.length).toBe(0);
+  });
+
+  test("group: chatter the gate never routed here is not owed", async () => {
+    // Live 2026-10-23: the model saw the one addressed row and chose silence
+    // (replayed), then five rows of the group talking among themselves
+    // arrived. None passed the addressing gate, so none has a routing
+    // record, yet each counted as owed and the notice went out in the group.
+    const GROUP = "imessage:group:any;+;chat-1" as SessionKey;
+    putOwedSession({ key: GROUP });
+    state.recordRouting(100, GROUP);
+    state.markReplayed(GROUP, 100, NOW);
+    const { calls, deliver } = makeDeliver({ sent: 1, errors: [] });
+    await sweepFallbackNotices(depsFor([100, 101, 102, 103, 104, 105], deliver), NOW);
+    expect(calls.length).toBe(0);
+  });
+
+  test("group: a routed, unanswered row still gets its notice", async () => {
+    const GROUP = "imessage:group:any;+;chat-1" as SessionKey;
+    putOwedSession({ key: GROUP });
+    state.recordRouting(106, GROUP);
+    const { calls, deliver } = makeDeliver({ sent: 1, errors: [] });
+    await sweepFallbackNotices(depsFor([101, 106], deliver), NOW);
+    expect(calls.length).toBe(1);
   });
 
   test("failed send does not stamp — next sweep retries", async () => {
