@@ -186,6 +186,23 @@ describe("excerpts keep standing state", () => {
     expect(excerptNotes(notes, 3000).length).toBeGreaterThan(2700);
   });
 
+  test("a small share never overflows on a long heading and the omitted marker", () => {
+    const tight = [
+      "# P",
+      `## Open Items — everything still owed, promised or waiting ${"on someone ".repeat(4)}`,
+      ...Array.from(
+        { length: 30 },
+        (_, i) =>
+          `- **2026-10-${String((i % 28) + 1).padStart(2, "0")}** — item ${i} ${"w".repeat(40)}`,
+      ),
+      "## Who They Are",
+      ...Array.from({ length: 20 }, (_, i) => `- fact ${i} ${"v".repeat(40)}`),
+    ].join("\n");
+    for (let budget = 150; budget <= 1200; budget += 25) {
+      expect(excerptPersonFile(tight, budget).length).toBeLessThanOrEqual(budget);
+    }
+  });
+
   test("no excerpt is longer than its budget", () => {
     for (const budget of [1500, 3000, 6000]) {
       expect(excerptPersonFile(openItems, budget).length).toBeLessThanOrEqual(budget);

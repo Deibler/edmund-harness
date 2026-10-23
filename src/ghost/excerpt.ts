@@ -69,11 +69,13 @@ function fitSection(s: Section, budget: number): string {
     for (const x of byAge) if (!take(x, budget)) break;
     const omitted = items.length - keep.size;
     const kept = s.lines.filter((_, i) => keep.has(i));
-    return [s.heading, ...kept, omitted > 0 ? `(${omitted} entries omitted)` : null]
+    const out = [s.heading, ...kept, omitted > 0 ? `(${omitted} entries omitted)` : null]
       .filter((l) => l !== null)
       .join("\n");
+    // A share too small for the heading and the marker: fall to the head.
+    if (out.length <= budget) return out;
   }
-  return `${full.slice(0, Math.max(0, budget - 1))}…`;
+  return budget > 0 ? `${full.slice(0, budget - 1)}…` : "";
 }
 
 /**

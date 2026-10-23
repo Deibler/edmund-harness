@@ -384,6 +384,23 @@ export class GhostObserver {
     perReason.set(reason, now);
   }
 
+  /**
+   * The newest fires that reached this chat, labels checked against what
+   * the chat shows (ghost/landed.ts). The queue's 48h spacing runs on these.
+   */
+  contactFires(sessionKey: SessionKey, limit: number) {
+    const nowMs = Date.now();
+    return withLandingEvidence(
+      this.deps.prefs.recentFires(sessionKey, limit + 10),
+      sessionKey,
+      this.deps,
+      nowMs,
+      this.deps.prefs,
+    )
+      .filter((f) => isContact(f, nowMs))
+      .slice(0, limit);
+  }
+
   /** When the ghost says act:true, enqueue a brown-nose cron row. The
    *  scheduler picks it up at fireAtMs and routes through proactive/fire.ts. */
   private maybeEnqueue(sessionKey: SessionKey, decision: GhostDecision): void {
@@ -399,15 +416,7 @@ export class GhostObserver {
       // Enforces the 48h hard-spacing floor against the last fire that
       // reached the person; vetoed, errored and interrupted fires did not.
       prefsStore: {
-        recentFires: (key: SessionKey, limit: number) =>
-          withLandingEvidence(
-            this.deps.prefs.recentFires(key, limit + 10),
-            key,
-            this.deps,
-            Date.now(),
-          )
-            .filter((f) => isContact(f, Date.now()))
-            .slice(0, limit),
+        recentFires: (key: SessionKey, limit: number) => this.contactFires(key, limit),
       },
     });
     if (!res.enqueued) {

@@ -410,6 +410,7 @@ export async function runGhostTick(input: GhostInput, deps: GhostDeps): Promise<
     input.sessionKey,
     deps,
     nowMs,
+    prefs,
   );
   const weekAgo = nowMs - 7 * 24 * 3_600_000;
   const weekFires = recentFires.filter((f) => f.firedAtMs >= weekAgo);
