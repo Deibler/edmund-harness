@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config/config.ts";
@@ -10,6 +10,7 @@ import {
   MIN_OCCURRENCES,
   type Proposal,
   type SampledAsk,
+  chatTag,
   parseProposals,
   runCurator,
   sampleRecentAsks,
@@ -418,6 +419,13 @@ describe("where curated skills are written", () => {
       });
 
       expect(result).toMatchObject({ ran: true, created: "race-week-plan" });
+      // Chats are opaque tags in the prompt, never a prefix of the guid.
+      expect(prompt).toContain(`chat ${chatTag("chatA")},`);
+      expect(prompt).not.toMatch(/chat chat[AB]/);
+      const saved = JSON.parse(readFileSync(join(dataDir, "installed-skills.json"), "utf8"));
+      const provenance = (saved.skills["race-week-plan"].provenance as string[]).join("\n");
+      expect(provenance).toContain(`msg:a1 (chat ${chatTag("chatA")})`);
+      expect(provenance).not.toContain("(chat chatA)");
       // People are told apart by opaque ids; a handle never reaches the prompt.
       expect(prompt).toContain("person p1");
       expect(prompt).not.toContain("+1555");

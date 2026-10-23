@@ -411,6 +411,10 @@ intensity = 5                 # 1-10; drives cadence and how strong a reason mus
 dms_enabled_by_default = true
 groups_enabled_by_default = false
 ghost_model = ""              # blank = inherit [claude].model
+# A cheap first pass decides whether a tick is worth the full ghost call. It
+# reads the same GHOST.md guidance and intensity as the full tick.
+prescreen_enabled = true
+prescreen_model = "claude-haiku-4-5-20251001"
 default_timezone = "America/New_York"
 max_ghost_ticks_per_day = 24
 max_concurrent_fires = 5

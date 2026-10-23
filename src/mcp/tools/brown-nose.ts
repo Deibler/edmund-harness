@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { isContact } from "../../ghost/budget.ts";
 import { resolveIntensity } from "../../ghost/intensity.ts";
 import {
   type ActiveHoursWindow,
@@ -12,7 +13,7 @@ import {
 import { sandboxDir } from "../../persona/sandbox.ts";
 import { loadPortalSecret, portalUrl } from "../../portal/token.ts";
 import type { SessionKey } from "../../sessions/key.ts";
-import { easternDate } from "../../util/clock.ts";
+import { describeEastern, easternDate } from "../../util/clock.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
 
@@ -344,8 +345,10 @@ export function brownNoseTools(ctx: ToolContext): ToolDef[] {
           const row = prefs.get(sessionKey);
           if (!row) return text("brown-nose: not enrolled for this session");
           const params = resolveIntensity(ctx.config.brown_nose.intensity);
-          const recent = prefs.recentFires(sessionKey, 1);
-          const lastFire = recent[0];
+          // The cooldown runs from the last fire that reached them, as the
+          // budget counts it: a vetoed or interrupted fire starts none.
+          const now = Date.now();
+          const lastFire = prefs.recentFires(sessionKey, 20).find((f) => isContact(f, now));
           const nextEligibleMs = lastFire
             ? lastFire.firedAtMs + params.cooldownHours * 3_600_000 * row.cooldownMultiplier
             : 0;
@@ -356,8 +359,8 @@ export function brownNoseTools(ctx: ToolContext): ToolDef[] {
             `active hours: ${formatActiveHours(row.activeHours)} ${row.timezone}`,
             `focus suggestions: ${row.focusSuggestions.length}`,
             `next eligible: ${
-              nextEligibleMs > Date.now()
-                ? new Date(nextEligibleMs).toISOString()
+              nextEligibleMs > now
+                ? describeEastern(new Date(nextEligibleMs))
                 : "(now — no active cooldown)"
             }`,
           ];

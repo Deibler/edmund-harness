@@ -221,6 +221,36 @@ describe("ghost_status + query_ghost", () => {
     }
   });
 
+  test("ghost_status counts a cooldown only from a fire that reached them", async () => {
+    const { ctx, prefs, cleanup } = setup();
+    try {
+      await findTool(ctx, "set_brown_nose").handler({ enabled: true });
+      const status = async () =>
+        ((await findTool(ctx, "ghost_status").handler({})) as { content: Array<{ text: string }> })
+          .content[0]!.text;
+      const vetoed = prefs.recordFire({
+        sessionKey: JORDAN,
+        firedAtMs: Date.now() - 60_000,
+        brief: "x",
+        tags: [],
+      });
+      prefs.recordOutcome(vetoed, "vetoed");
+      expect(await status()).toContain("(now — no active cooldown)");
+      const sent = prefs.recordFire({
+        sessionKey: JORDAN,
+        firedAtMs: Date.now() - 30_000,
+        brief: "y",
+        tags: [],
+      });
+      prefs.markDelivered(sent);
+      const after = await status();
+      expect(after).not.toContain("no active cooldown");
+      expect(after).toMatch(/next eligible: \w{3}, \w{3} \d+ \d{4} at .* E[SD]T/);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("query_ghost includes the question plus recent state", async () => {
     const { ctx, cleanup } = setup();
     try {

@@ -44,6 +44,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
@@ -90,6 +91,15 @@ export type CuratorOutcome =
 
 /** One human message, flattened for the prompt. `sender` is for vetting
  *  only and never reaches the prompt. */
+/**
+ * A chat as the curator prompt and a skill's provenance name it: stable and
+ * opaque. It was the guid's first 12 characters, which for a DM
+ * (`any;-;+1555…`) is the country and area code and a digit of the number.
+ */
+export function chatTag(chatGuid: string): string {
+  return `c${createHash("sha256").update(chatGuid).digest("hex").slice(0, 6)}`;
+}
+
 export type SampledAsk = { ref: string; chat: string; sender: string; text: string; ts: number };
 
 /**
@@ -414,7 +424,7 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
     "",
     `SAMPLE — ${sample.length} asks from ${people.length} people across ${distinctChats} chats, last ${cfg.lookback_days} days:`,
     ...sample.map(
-      (s) => `[${s.ref}] (chat ${s.chat.slice(0, 12)}, person ${personId.get(s.sender)}) ${s.text}`,
+      (s) => `[${s.ref}] (chat ${chatTag(s.chat)}, person ${personId.get(s.sender)}) ${s.text}`,
     ),
   ].join("\n");
 
@@ -492,7 +502,10 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
       record.origin_scope = null;
       record.provenance = [
         `why: ${proposal.whyNow}`,
-        ...proposal.evidence.map((e) => `${e.ref} (chat ${e.chat.slice(0, 12)}) — ${e.reading}`),
+        ...proposal.evidence.map((e) => {
+          const ask = sample.find((a) => a.ref === e.ref);
+          return `${e.ref} (chat ${ask ? chatTag(ask.chat) : "unknown"}) — ${e.reading}`;
+        }),
       ];
       writeDb(deps.dbPath, after);
     }
