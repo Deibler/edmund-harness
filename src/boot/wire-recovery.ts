@@ -157,10 +157,7 @@ export function wireRecovery(args: {
 
   const reaperInterval = setInterval(() => {
     try {
-      reapStuckAgents(agentStore, crons, {
-        pendingStaleMs: 60_000,
-        runningStaleMs: 15 * 60 * 1000,
-      });
+      reapStuckAgents(agentStore, crons, config.paths.data_dir);
     } catch (err) {
       console.error("[reaper] agents error", err);
     }

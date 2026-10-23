@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CronStore } from "../cron/store.ts";
+import { isSubagentSession } from "../sessions/key.ts";
 import { isBackgroundable } from "./registry.ts";
 import type { BgJob, BgJobStore } from "./store.ts";
 import { randomJobId } from "./store.ts";
@@ -36,6 +37,11 @@ export function spawnBgJob(params: {
 }): BgJob {
   if (!isBackgroundable(params.toolName)) {
     throw new Error(`Tool ${params.toolName} does not support background execution`);
+  }
+  // Its wake-up would go to a session that does not exist (dispatchOrRun
+  // runs a sub-agent's jobs inline instead).
+  if (isSubagentSession(params.sessionKey)) {
+    throw new Error(`a sub-agent (${params.sessionKey}) cannot start a background job`);
   }
   const id = randomJobId();
   const argsJson = JSON.stringify(params.args);

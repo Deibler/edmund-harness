@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { z } from "zod";
-import { spawnAgent, spawnTeam } from "../../agents/spawn.ts";
+import { killAgentProcess, spawnAgent, spawnTeam } from "../../agents/spawn.ts";
 import { AgentStore } from "../../agents/store.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
@@ -204,8 +204,8 @@ export function agentTools(ctx: ToolContext): ToolDef[] {
             `task: ${agent.task}`,
             `age: ${age}`,
             agent.finishedAt
-              ? `finished: ${humanAge(Date.now() - agent.finishedAt)} ago`
-              : `running (pid ${agent.pid ?? "?"})`,
+              ? `finished: ${humanAge(Date.now() - agent.finishedAt)} ago${agent.stopReason ? ` (${agent.stopReason})` : ""}`
+              : `running (pid ${agent.pid ?? "?"}), last output ${humanAge(Date.now() - (agent.heartbeatAt ?? agent.spawnedAt))} ago`,
             ``,
             `--- log tail ---`,
             tail,
@@ -251,17 +251,12 @@ export function agentTools(ctx: ToolContext): ToolDef[] {
         if (agent.parentSessionKey !== ctx.sessionKey) {
           return text(`agent ${args.id} belongs to a different conversation`, true);
         }
-        if (agent.status !== "running" && agent.status !== "pending") {
-          return text(`agent ${args.id} is ${agent.status}; nothing to cancel`);
+        // Settle first: the runner's SIGTERM handler then keeps the partial
+        // result without reporting the agent as finished.
+        if (!getStore().finishIfActive(agent.id, "canceled", null, "canceled by its parent")) {
+          return text(`agent ${args.id} is ${getStore().get(agent.id)?.status}; nothing to cancel`);
         }
-        if (agent.pid) {
-          try {
-            process.kill(agent.pid, "SIGTERM");
-          } catch {
-            // already gone
-          }
-        }
-        getStore().finish(agent.id, "canceled", null);
+        if (agent.pid) killAgentProcess(agent.pid);
         return text(`canceled ${args.id}`);
       },
     },
@@ -348,13 +343,9 @@ export function agentTools(ctx: ToolContext): ToolDef[] {
         }
         let killed = 0;
         for (const m of members) {
-          if (m.status !== "running" && m.status !== "pending") continue;
-          if (m.pid) {
-            try {
-              process.kill(m.pid, "SIGTERM");
-            } catch {}
-          }
-          getStore().finish(m.id, "canceled", null);
+          if (!getStore().finishIfActive(m.id, "canceled", null, "canceled by its parent"))
+            continue;
+          if (m.pid) killAgentProcess(m.pid);
           killed++;
         }
         return text(`canceled ${killed} member(s) of team ${args.team_id}`);

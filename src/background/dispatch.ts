@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { ToolContext } from "../mcp/context.ts";
+import { isSubagentSession } from "../sessions/key.ts";
 import { BG_EXECUTORS } from "./registry.ts";
 import { spawnBgJob } from "./spawn.ts";
 
@@ -10,9 +11,10 @@ import { spawnBgJob } from "./spawn.ts";
  * with a job id. The runner fires a cron wake-up when done — model is
  * invoked again with the result path in the envelope.
  *
- * Otherwise: call the registered executor inline and return the summary
- * synchronously. Handlers that need a special inline format (e.g. text only,
- * no path) can skip this and call the executor directly.
+ * Otherwise, and always for a sub-agent: call the registered executor inline
+ * and return the summary synchronously. Handlers that need a special inline
+ * format (e.g. text only, no path) can skip this and call the executor
+ * directly.
  */
 
 export async function dispatchOrRun(
@@ -20,7 +22,13 @@ export async function dispatchOrRun(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
-  if (args.async === true) {
+  // A sub-agent has no session to wake: its job's wake-up went to an
+  // `agent:` key the cron fire skips (262 since May, 67 of 152 jobs in the
+  // last 14 days), and the agent polled check_bg_job instead. It is already
+  // running in the background, so it runs the tool inline and gets the
+  // result now. Every one of its 262 jobs finished within 62 seconds.
+  const subagent = isSubagentSession(ctx.sessionKey);
+  if (args.async === true && !subagent) {
     try {
       const job = spawnBgJob({
         store: ctx.bgJobs,
@@ -75,7 +83,11 @@ export async function dispatchOrRun(
       sessionKey: ctx.sessionKey,
       dataDir: ctx.dataDir,
     });
-    return { content: [{ type: "text", text: result.summary }] };
+    const note =
+      args.async === true
+        ? "(Ran inline: a sub-agent has no session to wake, so async does not apply here.)\n\n"
+        : "";
+    return { content: [{ type: "text", text: `${note}${result.summary}` }] };
   } catch (err) {
     return {
       content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
