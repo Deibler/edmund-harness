@@ -79,6 +79,10 @@ function fakeAttachmentBody(caption = "", trailerBytes = 4): Uint8Array {
  * dangerous: read as a length it says 43, which is exactly long enough to
  * swallow the real length byte plus the text.
  */
+function hex(bytes: string): number[] {
+  return bytes.split(" ").map((b) => Number.parseInt(b, 16));
+}
+
 function realAttributedBody(text: string): Uint8Array {
   const enc = new TextEncoder();
   const head = enc.encode("\x04\x0bstreamtyped");
@@ -90,15 +94,15 @@ function realAttributedBody(text: string): Uint8Array {
       ? new Uint8Array([utf8.length])
       : new Uint8Array([0x81, utf8.length & 0xff, (utf8.length >> 8) & 0xff]);
   const tail = new Uint8Array([
-    0x86, 0x84, 0x02, 0x69, 0x49, 0x01, 0x2b, 0x92, 0x84, 0x84, 0x84, 0x0c,
+    ...hex("86 84 02 69 49 01 2b 92 84 84 84 0c"),
     ...enc.encode("NSDictionary"),
-    0x00, 0x94, 0x84, 0x01, 0x69, 0x01, 0x92, 0x84, 0x96, 0x96, 0x1d,
+    ...hex("00 94 84 01 69 01 92 84 96 96 1d"),
     ...enc.encode("__kIMMessagePartAttributeName"),
-    0x86, 0x92, 0x84, 0x84, 0x84, 0x08,
+    ...hex("86 92 84 84 84 08"),
     ...enc.encode("NSNumber"),
-    0x00, 0x84, 0x84, 0x07,
+    ...hex("00 84 84 07"),
     ...enc.encode("NSValue"),
-    0x00, 0x94, 0x84, 0x01, 0x2a, 0x84, 0x99, 0x99, 0x00, 0x86, 0x86, 0x86,
+    ...hex("00 94 84 01 2a 84 99 99 00 86 86 86"),
   ]);
   return new Uint8Array([...head, ...cls, ...trailerAndTag, ...prefix, ...utf8, ...tail]);
 }
