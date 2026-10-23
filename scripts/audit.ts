@@ -25,7 +25,15 @@ const threshold = (process.argv.find((a) => a.startsWith("--level="))?.split("="
 const attempts = Number(process.argv.find((a) => a.startsWith("--attempts="))?.split("=")[1] ?? 4);
 
 /** package name -> why it is accepted. Revisit when the parent updates. */
-const ALLOWED: Record<string, string> = {};
+const ALLOWED: Record<string, string> = {
+  // 2026-10-23, GHSA-mrhx-c7xc-m3w5 (memory exhaustion validating an
+  // oversized constrained collection), fixed only in zod 4.6.6. zod 4 is held
+  // back (701 type errors; see dependabot.yml) and no zod 3 release has the
+  // fix. Zod here parses the operator's config, the model's tool arguments
+  // and manifests from the allowlisted skill registry; no network listener
+  // feeds it.
+  zod: "fixed only in zod 4, which is held back; inputs are config, tool arguments and allowlisted manifests",
+};
 
 function atOrAbove(sev: string | undefined, min: Level): boolean {
   const i = ORDER.indexOf((sev ?? "").toLowerCase() as Level);

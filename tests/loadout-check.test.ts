@@ -8,8 +8,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkLoadout } from "../src/claude/loadout-check.ts";
 
+// Only the model-name check: whether a claude binary is installed varies by
+// machine (CI has none).
 const agentWarnings = (agentModel?: string) =>
-  checkLoadout(undefined, agentModel).warnings.filter((w) => w.includes("agent_model"));
+  checkLoadout(undefined, agentModel).warnings.filter((w) =>
+    w.includes("cannot start a sub-agent"),
+  );
 
 describe("the boot loadout check", () => {
   test("a malformed agent_model is reported at boot", () => {
