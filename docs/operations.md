@@ -38,9 +38,11 @@ fight over the watcher.
 line is a timestamp, a level, a scope tag, and key value pairs. Values whose
 key looks like a secret are replaced with `***`.
 
-Read it with `edmund logs`. The useful habit is `edmund logs --session
-<handle>`, which pulls one conversation's turns, tool calls, sends,
-verifications, cron fires and proactive activity into a single column.
+Read it with `edmund logs`, which shows who each turn is for, one line per
+model step, subagents and wake-ups, with the heartbeat noise hidden
+(`--all` for every line). The useful habit is `edmund logs -f --session
+<name or handle>`, which follows one conversation's turns, steps, sends and
+wake-ups.
 
 Turn debug logging on with `EDMUND_LOG_LEVEL=debug` in `.env`, or
 `scripts/launchd/service.sh debug on`, which edits the tracked plist template

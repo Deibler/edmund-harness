@@ -46,7 +46,7 @@ ${color.bold("Services")}
   ${color.cyan("kill")}         uninstall both launchd jobs and kill local strays
 
 ${color.bold("Observe")}
-  ${color.cyan("logs")}         tail daemon.log (--error/--warn/--info, --follow, --session X, --scope Y, --grep RE, -n N)
+  ${color.cyan("logs")}         what the model is doing, for whom (--follow, --session NAME, --all, --error/--warn, --grep RE, -n N)
   ${color.cyan("recovery")}     operator channel (edmund-911) controls — logs [--follow]
   ${color.cyan("dashboard")}    dashboard URL, --pin, --logs [--follow]
   ${color.cyan("cron")}         list / delete scheduled jobs

@@ -1,15 +1,22 @@
 /**
  * Tiny terminal UI helpers. No deps — just ANSI.
  *
- * - Respects NO_COLOR and non-TTY stdout by degrading to plain text.
+ * - Respects NO_COLOR and non-TTY stdout by degrading to plain text; FORCE_COLOR
+ *   keeps color when piped.
  * - `box`, `row`, and `kv` are the three primitives every command uses so
  *   output stays visually consistent across the CLI.
  */
 
-const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+// FORCE_COLOR keeps color through a pipe (`edmund logs -f | less -R`).
+const useColor = (process.stdout.isTTY || !!process.env.FORCE_COLOR) && !process.env.NO_COLOR;
 
 function c(code: number) {
   return (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
+}
+
+/** A 256-color foreground, for palettes wider than the eight named colors. */
+export function color256(n: number): (s: string) => string {
+  return (s: string) => (useColor ? `\x1b[38;5;${n}m${s}\x1b[0m` : s);
 }
 
 export const color = {
