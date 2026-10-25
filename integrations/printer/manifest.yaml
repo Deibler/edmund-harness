@@ -1,0 +1,59 @@
+name: printer
+display_name: Bambu Lab 3D printer
+version: 1.0.0
+description: >-
+  Sees and drives the household's Bambu Lab P2S over the LAN: status, camera,
+  AMS filament, errors in Bambu's words, timelapses, headless slicing with
+  Bambu Studio and toolpath previews, wake-ups on progress, finish, errors
+  and filament changes, and a live page for each print. Prints start only
+  after the approver's yes, read from Messages itself.
+
+enabled: true
+config_key: printer
+
+external_deps:
+  - "A Bambu Lab printer on the LAN: [printer] host, access_code and serial in config.toml"
+  - "Bambu Studio for slicing (brew install --cask bambu-studio)"
+  - "ffmpeg for the camera (brew install ffmpeg)"
+  - "Printer settings: Developer Mode (after LAN Only Mode) to start, cancel or resume; LAN Only Liveview for the camera"
+  - "A Bambu account sign-in (makerworld_login, emailed code) to download MakerWorld files"
+
+access:
+  # Anyone Edmund talks to may ask for a print, and every conversation can read
+  # the printer. What moves it is gated per call on the approver's yes, not on
+  # which session holds the tool. Guest sessions lose integration tools at the
+  # host boundary.
+  sessions: ["*"]
+
+tools:
+  - export_name: printerTools
+    description: >-
+      Read (status, camera, timelapses, errors), slice and preview, jobs and
+      filament plans, approval asks, wake-ups, the gated start/cancel/resume,
+      and MakerWorld (search, photos, download to print or alter, packaging).
+    provides:
+      - printer_status
+      - printer_camera
+      - printer_watch
+      - printer_timelapse
+      - printer_error_lookup
+      - print_slice
+      - print_preview
+      - print_settings
+      - print_job
+      - print_request_approval
+      - print_start
+      - print_control
+      - makerworld_search
+      - makerworld_model
+      - makerworld_download
+      - makerworld_login
+      - makerworld_package
+
+instructions:
+  system_prompt_file: instructions.md
+  skills:
+    - printing
+
+runtime:
+  export_name: startPrinter

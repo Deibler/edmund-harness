@@ -514,6 +514,7 @@ See [sms-channel.md](sms-channel.md).
 | `[mirror]` | mirror | `enabled` false, host, port 8789, `token` required when enabled, speech settings, `session_key` |
 | `[trading]` | trading | `enabled` false, `handles` empty means nobody, risk limits, broker endpoint, `allow_model_supplied_risk_inputs` false. Real money |
 | `[kitchen]` | kitchen | `enabled` true, `dir`, `price_max_age_days` 21. The shipped default `dir` is an absolute path from the author's machine; set your own |
+| `[printer]` | printer | `enabled` false, `host`, `access_code` (LAN password, never in tracked files), `serial`, `approvers` (default: operator handles), `plate`, `timelapse`, `slicer_path`, `page_origin` (default `[shelf]` origin), `approval_ttl_hours` 12, `auto_progress` [25, 50, 75]. See integrations/printer/README.md |
 
 ## Environment variables
 

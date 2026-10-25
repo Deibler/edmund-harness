@@ -803,6 +803,8 @@ export const ConfigSchema = z.object({
   fishing: z.unknown().optional(),
   /** `[kitchen]` — owned by integrations/kitchen/config.ts. */
   kitchen: z.unknown().optional(),
+  /** `[printer]` — owned by integrations/printer/config.ts. */
+  printer: z.unknown().optional(),
   contacts: z.array(ContactSchema).default([]),
   /**
    * Stuck-session recovery sweep. Periodically checks for sessions where

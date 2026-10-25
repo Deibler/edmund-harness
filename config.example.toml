@@ -237,6 +237,25 @@ participant_roster = true
 # enabled = false
 # api_url = "http://127.0.0.1:8087/api/v1"
 
+# A Bambu Lab 3D printer on the LAN (integrations/printer). See
+# integrations/printer/README.md. The access code is a LAN password: put the
+# real one only in your own config.toml. Prints start only after an approver's
+# yes in Messages; approvers default to [security] operator_handles.
+[printer]
+# enabled = false
+# host = "192.168.1.50"
+# access_code = "00000000"
+# serial = "SERIAL_FROM_PRINTER"
+# name = "the printer"
+# approvers = []
+# approver_name = ""
+# plate = "textured_pei"        # textured_pei | smooth_pei | cool_plate | engineering_plate | supertack
+# timelapse = true
+# slicer_path = "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio"
+# page_origin = ""              # empty uses [shelf] origin
+# approval_ttl_hours = 12
+# auto_progress = [25, 50, 75]
+
 # Stuck-session recovery sweep. See docs/recovery-plan.md.
 [recovery]
 # enabled = true

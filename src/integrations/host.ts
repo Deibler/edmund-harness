@@ -62,7 +62,11 @@ export type IntegrationRuntimeContext = {
    * Inject a one-shot system event into a session — the mechanism watchers use
    * to wake the model when a condition fires (price cross, data trigger).
    */
-  fireSystemEvent: (sessionKey: SessionKey, systemEvent: string) => void;
+  fireSystemEvent: (
+    sessionKey: SessionKey,
+    systemEvent: string,
+    opts?: { attachImages?: string[] },
+  ) => void;
   /** True while any pooled Claude worker is mid-turn; for deferring restarts. */
   isBusy: () => boolean;
   /** Present only for integrations the host grants channel access to. */
