@@ -13,6 +13,32 @@ Sections marked *opaque* belong to an integration. Core does not validate
 them; the integration's own `config.ts` does, and if the integration is
 deleted the section is simply unused.
 
+## How the file is laid out
+
+Both `config.toml` and `config.example.toml` are grouped by how often each
+part changes (measured from dashboard save backups, agent edits and the
+example's history), each section with a one-line note:
+
+1. **The knobs that get turned**: `[claude]` models and effort, `[brown_nose]`,
+   `[group_addressing]`, `[people_maintainer]`, guest access and campaigns,
+   `[computer_use]`, `[imessage_actions]`, `[mcp_servers]`.
+2. **Features and services**: integrations, the printer, kitchen, shelf,
+   mirror, SMS, trading, the dashboard, generation providers and credits.
+3. **People and access**: owner, own handles, names, contacts, alerts,
+   `[security]`, allowlists, outbound.
+4. **Secrets**: `[keys]`.
+5. **Leave alone unless discussed**: `[claude.auto_compact]`, `[claude.pool]`,
+   `[behavior]`, `[memory_recall]`, the send and watch plumbing, recovery,
+   resource limits, paths and the rest. Each was set against a measured
+   problem.
+
+The order lives in `src/config/layout.ts`. `edmund config tidy` lays an
+existing `config.toml` out this way (with a backup, refusing if any value
+would change), and the dashboard's Settings page saves in the same layout.
+Comments written inside a section are not kept by a dashboard save; notes in
+the block at the top of the file are. A test fails if a new schema section is
+not given a place, or if the example's order drifts.
+
 ## Who talks and who answers
 
 ### `[self]`

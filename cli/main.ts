@@ -56,7 +56,7 @@ ${color.bold("Observe")}
   ${color.cyan("announce")}     feature log — tell regulars about a new capability
   ${color.cyan("credits")}      generation credits — list / show / mode / grant / pause / apply / liability
   ${color.cyan("portal")}       per-person portal links — link <handle> / revoke <handle>
-  ${color.cyan("config")}       show config sections
+  ${color.cyan("config")}       show config sections (show [section], path, tidy)
   ${color.cyan("review")}       write this week's review sheet (--days 7, --sample 40)
 
 ${color.bold("Misc")}

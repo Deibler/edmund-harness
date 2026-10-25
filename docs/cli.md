@@ -169,6 +169,7 @@ next proactive message, or the next `get_portal_link`, carries the new link.
 | `edmund dashboard [--pin <4-8 digits>] [--logs [-f]]` | Show dashboard state, set the PIN, or tail its log |
 | `edmund config show [section]` | Print the loaded config with secrets masked to their last four characters |
 | `edmund config path` | Where the config file is |
+| `edmund config tidy` | Lay `config.toml` out by how often each part changes (backup kept; refuses if a value would change) |
 | `edmund recovery logs [--follow] [--err]` | Tail the log of the optional watchdog daemon, if you run one |
 | `edmund install` | Symlink `bin/edmund` into `/opt/homebrew/bin` or `/usr/local/bin` |
 | `edmund help` | Top level help |
