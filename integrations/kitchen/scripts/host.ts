@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { serveShelf } from "../../../src/shelf/serve.ts";
 import { baseDir } from "../src/accounts.ts";
 import {
   type HostStatus,
@@ -22,7 +23,6 @@ import {
   route,
   writeStatus,
 } from "../src/host.ts";
-import { serveShelf } from "../../../src/shelf/serve.ts";
 import { dataDir, hostPort, loadKitchenSettings, siteOrigin } from "../src/settings.ts";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");

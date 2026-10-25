@@ -77,7 +77,12 @@ export function readVersionRecord(dataDir: string): CliVersionRecord | null {
  */
 export async function runCliCanary(model: string): Promise<CanaryResult> {
   const oneShot = await runClaudeOneShot({
-    args: ["--model", model, "--append-system-prompt", "You are a health check. Follow it exactly."],
+    args: [
+      "--model",
+      model,
+      "--append-system-prompt",
+      "You are a health check. Follow it exactly.",
+    ],
     input: "Reply with exactly the word OK and nothing else.",
     timeoutMs: 120_000,
   });

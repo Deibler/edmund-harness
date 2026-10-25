@@ -27,7 +27,13 @@ describe("a person's shelf", () => {
   });
 
   test("shelving copies the file and returns a permanent link and the shelf page", () => {
-    const r = shelveFile({ dataDir, sessionKey: "dm:+15555550101", src, origin, title: "Week 3 kit" });
+    const r = shelveFile({
+      dataDir,
+      sessionKey: "dm:+15555550101",
+      src,
+      origin,
+      title: "Week 3 kit",
+    });
     const token = shelfToken(dataDir, "dm:+15555550101");
     expect(r.url).toBe(`${origin}/shelf/${token}/Study-Kit-week-3.pdf`);
     expect(r.shelfUrl).toBe(`${origin}/shelf/${token}/`);
@@ -38,9 +44,9 @@ describe("a person's shelf", () => {
     rmSync(join(dataDir, "other"), { recursive: true, force: true });
     mkdirSync(join(dataDir, "other"));
     writeFileSync(other, "different contents");
-    expect(shelveFile({ dataDir, sessionKey: "dm:+15555550101", src: other, origin }).url).toEndWith(
-      "Study-Kit-week-3-2.pdf",
-    );
+    expect(
+      shelveFile({ dataDir, sessionKey: "dm:+15555550101", src: other, origin }).url,
+    ).toEndWith("Study-Kit-week-3-2.pdf");
   });
 });
 
@@ -89,9 +95,12 @@ describe("serving the shelf", () => {
       fetch: (req) => serveShelf(req, shelfRoot(dataDir)) ?? new Response("nf", { status: 404 }),
     });
     try {
-      const res = await fetch(`http://127.0.0.1:${server.port}/shelf/${token()}/Study-Kit-week-3.pdf`, {
-        headers: { range: "bytes=0-1" },
-      });
+      const res = await fetch(
+        `http://127.0.0.1:${server.port}/shelf/${token()}/Study-Kit-week-3.pdf`,
+        {
+          headers: { range: "bytes=0-1" },
+        },
+      );
       expect(res.status).toBe(206);
       expect(await res.text()).toBe("01");
     } finally {
@@ -105,6 +114,8 @@ describe("serving the shelf", () => {
       "utf8",
     );
     expect(host.indexOf("serveShelf(req, shelfDir)")).toBeGreaterThan(0);
-    expect(host.indexOf("serveShelf(req, shelfDir)")).toBeLessThan(host.indexOf("route(url, current)"));
+    expect(host.indexOf("serveShelf(req, shelfDir)")).toBeLessThan(
+      host.indexOf("route(url, current)"),
+    );
   });
 });

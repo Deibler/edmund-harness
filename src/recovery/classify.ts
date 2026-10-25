@@ -79,7 +79,11 @@ const CLASSIFIERS: ClassifierRow[] = [
   // The CLI's login expired or was revoked. Nothing in the harness can fix
   // it; only a human logging in can. Matched before the generic patterns so
   // the 401 inside "API Error: 401" does not read as transient.
-  { pattern: /failed to authenticate|oauth[^.\n]{0,40}expired|login expired|please run \/login|not logged in/i, cls: "auth_expired" },
+  {
+    pattern:
+      /failed to authenticate|oauth[^.\n]{0,40}expired|login expired|please run \/login|not logged in/i,
+    cls: "auth_expired",
+  },
   { pattern: /authentication_error|invalid authentication credentials/i, cls: "auth_expired" },
   // imsg IMCore bridge wedge: dylib in Messages.app stopped ACK'ing RPCs.
   // Heal by relaunching Messages with `imsg launch` (re-injects the dylib).

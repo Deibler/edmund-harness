@@ -263,7 +263,12 @@ async function transcribeLocally(
 export function cleanWhisperText(raw: string): string {
   return raw
     .split("\n")
-    .map((l) => l.replace(/\[[^\]]*\]|\((?:music|silence|applause|laughter|inaudible|blank_audio)[^)]*\)/gi, ""))
+    .map((l) =>
+      l.replace(
+        /\[[^\]]*\]|\((?:music|silence|applause|laughter|inaudible|blank_audio)[^)]*\)/gi,
+        "",
+      ),
+    )
     .map((l) => l.trim())
     .filter(Boolean)
     .join(" ")
@@ -276,7 +281,21 @@ function convertToWav(srcPath: string, cacheDir: string): Promise<string> {
   if (existsSync(outPath)) return Promise.resolve(outPath);
   return runProcess(
     "ffmpeg",
-    ["-v", "error", "-y", "-i", srcPath, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", outPath],
+    [
+      "-v",
+      "error",
+      "-y",
+      "-i",
+      srcPath,
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
+      "-c:a",
+      "pcm_s16le",
+      outPath,
+    ],
     120_000,
   ).then(() => {
     if (!existsSync(outPath)) throw new Error("ffmpeg wrote no wav");

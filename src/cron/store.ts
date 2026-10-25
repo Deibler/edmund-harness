@@ -77,7 +77,9 @@ export class CronStore {
 
   recordFireWindow(jobId: string, sessionKey: string, startedMs: number, endedMs: number): void {
     this.db
-      .query("INSERT INTO job_fires (job_id, session_key, started_ms, ended_ms) VALUES (?, ?, ?, ?)")
+      .query(
+        "INSERT INTO job_fires (job_id, session_key, started_ms, ended_ms) VALUES (?, ?, ?, ?)",
+      )
       .run(jobId, sessionKey, startedMs, endedMs);
   }
 

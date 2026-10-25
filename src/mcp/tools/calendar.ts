@@ -37,7 +37,9 @@ export function calendarTools(ctx: ToolContext): ToolDef[] {
           const now = Date.now();
           const n = parseCalendar(ics, now, now + 14 * 86_400_000).length;
           addCalendarFeed(ctx.dataDir, ctx.sessionKey, url, args.label?.trim() || "calendar");
-          return text(`connected (${n} events in the next two weeks). Use calendar_upcoming to read it.`);
+          return text(
+            `connected (${n} events in the next two weeks). Use calendar_upcoming to read it.`,
+          );
         } catch (err) {
           return text(`couldn't read that calendar link: ${(err as Error).message}`, true);
         }
@@ -48,21 +50,33 @@ export function calendarTools(ctx: ToolContext): ToolDef[] {
       description:
         "What is on this person's connected calendar for the next few days. Check it before planning trips, dinners, workouts or deadlines, and before suggesting a time.",
       inputSchema: z.object({
-        days: z.number().int().min(1).max(60).optional().describe("How many days ahead. Default 7."),
+        days: z
+          .number()
+          .int()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe("How many days ahead. Default 7."),
       }),
       handler: async (args) => {
         const feeds = calendarFeeds(ctx.dataDir, ctx.sessionKey);
         if (feeds.length === 0) {
-          return text("No calendar connected in this chat. They can share a secret iCal link with connect_calendar.");
+          return text(
+            "No calendar connected in this chat. They can share a secret iCal link with connect_calendar.",
+          );
         }
         const now = Date.now();
         const to = now + (args.days ?? 7) * 86_400_000;
         const parts: string[] = [];
         for (const f of feeds) {
           try {
-            parts.push(`${f.label}:\n${formatEvents(parseCalendar(await fetchCalendar(f.url), now, to))}`);
+            parts.push(
+              `${f.label}:\n${formatEvents(parseCalendar(await fetchCalendar(f.url), now, to))}`,
+            );
           } catch (err) {
-            parts.push(`${f.label}: couldn't read it (${(err as Error).message}); the link may have been reset.`);
+            parts.push(
+              `${f.label}: couldn't read it (${(err as Error).message}); the link may have been reset.`,
+            );
           }
         }
         return text(parts.join("\n\n"));

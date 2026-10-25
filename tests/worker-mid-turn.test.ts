@@ -197,7 +197,9 @@ describe("a finished result is shown to a running turn first", () => {
   test("a result that joins is not fired again; one that cannot, fires as before", async () => {
     const src = readFileSync(join(import.meta.dir, "..", "src/cron/fire.ts"), "utf8");
     const joinAt = src.indexOf("if (isResultWakeUp(job.systemEvent))");
-    const lockAt = src.indexOf("await locks.withLock(job.sessionKey, async () => {\n    await runAndDeliver(");
+    const lockAt = src.indexOf(
+      "await locks.withLock(job.sessionKey, async () => {\n    await runAndDeliver(",
+    );
     expect(joinAt).toBeGreaterThan(0);
     expect(joinAt).toBeLessThan(lockAt);
     expect(src).toContain('log.info("cron", "result joined the running turn"');

@@ -169,7 +169,6 @@ export function webTools(ctx: ToolContext): ToolDef[] {
   ];
 }
 
-
 /**
  * What the model is told when a page could not be read. The rule against
  * guessing lives in the tool result rather than only in the system prompt,

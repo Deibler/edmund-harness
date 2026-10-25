@@ -61,8 +61,12 @@ const to = Date.UTC(2026, 10, 16);
 
 describe("a person's own calendar", () => {
   test("wall-clock times convert across the daylight saving change", () => {
-    expect(zonedWallClockMs("America/New_York", 2026, 10, 27, 6, 30)).toBe(Date.UTC(2026, 9, 27, 10, 30));
-    expect(zonedWallClockMs("America/New_York", 2026, 11, 3, 6, 30)).toBe(Date.UTC(2026, 10, 3, 11, 30));
+    expect(zonedWallClockMs("America/New_York", 2026, 10, 27, 6, 30)).toBe(
+      Date.UTC(2026, 9, 27, 10, 30),
+    );
+    expect(zonedWallClockMs("America/New_York", 2026, 11, 3, 6, 30)).toBe(
+      Date.UTC(2026, 10, 3, 11, 30),
+    );
   });
 
   test("weekly repeats keep their local time, skip excluded dates and honour moved ones", () => {
@@ -81,7 +85,9 @@ describe("a person's own calendar", () => {
     const race = events.find((e) => e.title === "Race day");
     expect(race?.allDay).toBe(true);
     expect(race?.location).toBe("Philadelphia, PA");
-    expect(events.find((e) => e.title === "Recruiter call")?.startMs).toBe(Date.UTC(2026, 9, 28, 15));
+    expect(events.find((e) => e.title === "Recruiter call")?.startMs).toBe(
+      Date.UTC(2026, 9, 28, 15),
+    );
     expect(events.find((e) => e.title === "Cancelled thing")).toBeUndefined();
   });
 
@@ -92,11 +98,15 @@ describe("a person's own calendar", () => {
 
   test("COUNT and UNTIL end a series", () => {
     const start = Date.UTC(2026, 9, 1, 12);
-    expect(expandRule("FREQ=DAILY;COUNT=3", start, start, start + 30 * 86_400_000, "UTC")).toHaveLength(3);
+    expect(
+      expandRule("FREQ=DAILY;COUNT=3", start, start, start + 30 * 86_400_000, "UTC"),
+    ).toHaveLength(3);
     expect(
       expandRule("FREQ=DAILY;UNTIL=20261005T235959Z", start, start, start + 30 * 86_400_000, "UTC"),
     ).toHaveLength(5);
-    expect(expandRule("FREQ=MONTHLY", start, start, start + 95 * 86_400_000, "UTC")).toHaveLength(4);
+    expect(expandRule("FREQ=MONTHLY", start, start, start + 95 * 86_400_000, "UTC")).toHaveLength(
+      4,
+    );
   });
 
   test("events read as plain lines in Eastern time", () => {
@@ -107,7 +117,12 @@ describe("a person's own calendar", () => {
   });
 
   test("feeds are kept per chat; webcal links become https", () => {
-    addCalendarFeed(dir, "dm:+15555550101", normalizeCalendarUrl("webcal://example.com/a.ics"), "work");
+    addCalendarFeed(
+      dir,
+      "dm:+15555550101",
+      normalizeCalendarUrl("webcal://example.com/a.ics"),
+      "work",
+    );
     expect(calendarFeeds(dir, "dm:+15555550101")[0]?.url).toBe("https://example.com/a.ics");
     expect(calendarFeeds(dir, "dm:+15555550102")).toEqual([]);
     expect(removeCalendarFeed(dir, "dm:+15555550101", "work")).toBe(true);

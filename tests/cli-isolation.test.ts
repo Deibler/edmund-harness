@@ -59,14 +59,14 @@ describe("oneShotArgv", () => {
     const saved = { turn: process.env.EDMUND_EFFORT, bg: process.env.EDMUND_BACKGROUND_EFFORT };
     try {
       process.env.EDMUND_EFFORT = "xhigh";
-      delete process.env.EDMUND_BACKGROUND_EFFORT;
+      Reflect.deleteProperty(process.env, "EDMUND_BACKGROUND_EFFORT");
       expect(effortArg(oneShotArgv(base))).toEqual([]);
       process.env.EDMUND_BACKGROUND_EFFORT = "low";
       expect(effortArg(oneShotArgv(base))).toEqual(["low"]);
     } finally {
-      if (saved.turn === undefined) delete process.env.EDMUND_EFFORT;
+      if (saved.turn === undefined) Reflect.deleteProperty(process.env, "EDMUND_EFFORT");
       else process.env.EDMUND_EFFORT = saved.turn;
-      if (saved.bg === undefined) delete process.env.EDMUND_BACKGROUND_EFFORT;
+      if (saved.bg === undefined) Reflect.deleteProperty(process.env, "EDMUND_BACKGROUND_EFFORT");
       else process.env.EDMUND_BACKGROUND_EFFORT = saved.bg;
     }
   });
@@ -139,9 +139,12 @@ describe("every Claude spawn site is isolated", () => {
     walk("src");
     walk("scripts");
     // runner.ts spawns baseArgs (spawn-per-turn); worker.ts spawns the argv
-    // runner.ts hands the pool. A new site has to be added here on purpose.
+    // runner.ts hands the pool. cli-canary.ts runs only `claude --version`
+    // (no model, no settings); its model calls go through one-shot.ts and
+    // Worker. A new site has to be added here on purpose.
     expect(sites.sort()).toEqual([
       "scripts/agent-runner.ts",
+      "src/claude/cli-canary.ts",
       "src/claude/one-shot.ts",
       "src/claude/runner.ts",
       "src/claude/worker.ts",

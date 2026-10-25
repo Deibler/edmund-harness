@@ -571,7 +571,10 @@ describe("consolidation has its own model", () => {
 });
 
 describe("the size gate waits for current rules", () => {
-  const run = async (due: boolean, consolidate: () => Promise<{ ok: boolean; reason?: string }>) => {
+  const run = async (
+    due: boolean,
+    consolidate: () => Promise<{ ok: boolean; reason?: string }>,
+  ) => {
     const calls: string[] = [];
     const outcome = await consolidateThenArchive({
       subject: "dm:test",
@@ -708,8 +711,8 @@ describe("a correction replaces the line it corrects", () => {
   test("both maintainer paths apply supersessions before appending", () => {
     const src = readFileSync(join(import.meta.dir, "..", "src/persona/maintainer.ts"), "utf8");
     expect(src.match(/const replacements = applySupersessions\(/g)?.length).toBe(2);
-    expect(src.match(/for \(const n of \[\.\.\.replacements, \.\.\.parsed\.notes\]\)/g)?.length).toBe(
-      2,
-    );
+    expect(
+      src.match(/for \(const n of \[\.\.\.replacements, \.\.\.parsed\.notes\]\)/g)?.length,
+    ).toBe(2);
   });
 });

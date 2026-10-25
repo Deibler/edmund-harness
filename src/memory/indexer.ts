@@ -18,12 +18,12 @@ import { extractAppleTranscript } from "../imessage/apple-transcript.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { decodeMessageText } from "../imessage/decode.ts";
 import { dmChatGuid } from "../imessage/participants.ts";
+import { lessonForRecall } from "../persona/domains.ts";
 import { DEPENDENCY_DIRS, underDependencyDir } from "../persona/sandbox.ts";
 import { log } from "../util/log.ts";
 import { chunkMarkdownDoc, chunkPlainText } from "./chunker.ts";
 import type { EmbedProvider } from "./embed-provider.ts";
 import { type AttachmentInfo, buildEnrichedText } from "./enrich.ts";
-import { lessonForRecall } from "../persona/domains.ts";
 import { type IndexRow, type VectorStore, normalize } from "./vector-store.ts";
 
 /** Bound on chunks indexed per sandbox file (~17KB of text) — coverage

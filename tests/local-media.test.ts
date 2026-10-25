@@ -50,15 +50,19 @@ describe("speech-to-text runs locally first", () => {
 
   test("a relative model path resolves against the data dir", () => {
     const bin = fakeWhisper("whisper-rel", "echo hi");
-    expect(localSttBackend(config({ local_stt_model: "ggml-test.bin", whisper_cli: bin }))?.model).toBe(
-      model,
-    );
+    expect(
+      localSttBackend(config({ local_stt_model: "ggml-test.bin", whisper_cli: bin }))?.model,
+    ).toBe(model);
   });
 
   test("a missing model or binary leaves only hosted backends", () => {
     const bin = fakeWhisper("whisper-x", "echo hi");
-    expect(localSttBackend(config({ local_stt_model: join(dir, "absent.bin"), whisper_cli: bin }))).toBeNull();
-    expect(localSttBackend(config({ local_stt_model: model, whisper_cli: join(dir, "absent") }))).toBeNull();
+    expect(
+      localSttBackend(config({ local_stt_model: join(dir, "absent.bin"), whisper_cli: bin })),
+    ).toBeNull();
+    expect(
+      localSttBackend(config({ local_stt_model: model, whisper_cli: join(dir, "absent") })),
+    ).toBeNull();
     expect(
       sttBackends(config({ local_stt_model: "" }, { openrouter: "k" })).map((b) => b.kind),
     ).toEqual(["openrouter"]);
@@ -76,18 +80,24 @@ describe("speech-to-text runs locally first", () => {
     const wav = join(dir, "note.wav");
     spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=1", wav]);
     const bin = fakeWhisper("whisper-says", 'echo " Edmund, remind me at noon."');
-    const text = await transcribeMediaFile(wav, config({ local_stt_model: model, whisper_cli: bin }));
+    const text = await transcribeMediaFile(
+      wav,
+      config({ local_stt_model: model, whisper_cli: bin }),
+    );
     expect(text).toBe("Edmund, remind me at noon.");
   });
 
-  test.skipIf(!hasFfmpeg)("a failing local binary falls through, and the error is real", async () => {
-    const wav = join(dir, "note2.wav");
-    spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=1", wav]);
-    const bin = fakeWhisper("whisper-broken", "echo boom >&2; exit 3");
-    await expect(
-      transcribeMediaFile(wav, config({ local_stt_model: model, whisper_cli: bin })),
-    ).rejects.toThrow(/exit 3/);
-  });
+  test.skipIf(!hasFfmpeg)(
+    "a failing local binary falls through, and the error is real",
+    async () => {
+      const wav = join(dir, "note2.wav");
+      spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=1", wav]);
+      const bin = fakeWhisper("whisper-broken", "echo boom >&2; exit 3");
+      await expect(
+        transcribeMediaFile(wav, config({ local_stt_model: model, whisper_cli: bin })),
+      ).rejects.toThrow(/exit 3/);
+    },
+  );
 });
 
 describe("watching a video with the model's own eyes", () => {

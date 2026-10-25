@@ -112,7 +112,11 @@ function listChats(dataDir: string): Chat[] {
       }>
     )
       .filter((r) => /(^|:)(dm|group):/.test(r.session_key))
-      .map((r) => ({ sessionKey: r.session_key, chatGuid: r.chat_guid, isGroup: r.is_group === 1 }));
+      .map((r) => ({
+        sessionKey: r.session_key,
+        chatGuid: r.chat_guid,
+        isGroup: r.is_group === 1,
+      }));
   } finally {
     db.close();
   }
@@ -194,13 +198,17 @@ export function buildWeeklyReview(deps: {
       dmLatencies.push(...s.latenciesMs);
       for (const m of msgs) {
         if (!m.fromMe && isCorrection(m.text)) {
-          corrections.push(`${label(chat.sessionKey)} · ${new Date(m.ms).toISOString().slice(0, 16)} · ${clip(m.text, 200)}`);
+          corrections.push(
+            `${label(chat.sessionKey)} · ${new Date(m.ms).toISOString().slice(0, 16)} · ${clip(m.text, 200)}`,
+          );
         }
       }
     }
     for (const m of msgs) {
       if (m.fromMe && isLeak(m.text)) {
-        leaks.push(`${label(chat.sessionKey)} · ${new Date(m.ms).toISOString().slice(0, 16)} · ${clip(m.text, 200)}`);
+        leaks.push(
+          `${label(chat.sessionKey)} · ${new Date(m.ms).toISOString().slice(0, 16)} · ${clip(m.text, 200)}`,
+        );
       }
     }
     for (const x of exchanges(msgs)) {

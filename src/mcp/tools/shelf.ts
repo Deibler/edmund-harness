@@ -5,7 +5,9 @@ import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
 
 const ShelveInput = z.object({
-  file_path: z.string().describe("Absolute path of the file to keep (usually in this chat's sandbox)."),
+  file_path: z
+    .string()
+    .describe("Absolute path of the file to keep (usually in this chat's sandbox)."),
   title: z
     .string()
     .optional()

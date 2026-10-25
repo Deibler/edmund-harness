@@ -10,8 +10,8 @@ import { join } from "node:path";
 import type { Config } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
 import { checkActiveHours, nextActiveStartMs } from "../src/ghost/budget.ts";
-import { DEFAULT_ACTIVE_HOURS_DM } from "../src/ghost/prefs.ts";
 import { parseEasternWallClock } from "../src/ghost/mcp-server-validate.ts";
+import { DEFAULT_ACTIVE_HOURS_DM } from "../src/ghost/prefs.ts";
 import { enqueueBrownNoseFire, isSafetyFollowup } from "../src/proactive/queue.ts";
 import type { SessionKey } from "../src/sessions/key.ts";
 

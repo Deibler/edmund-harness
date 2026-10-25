@@ -26,7 +26,6 @@ import { wakeThread } from "./channels/history.ts";
 import { SessionPipeline } from "./channels/pipeline.ts";
 import { handleBatch, shouldAccept } from "./channels/turn.ts";
 import { startCliWatch } from "./claude/cli-canary.ts";
-import { backendForModel } from "./model/backend.ts";
 import { checkLoadout, formatLoadoutReport } from "./claude/loadout-check.ts";
 import { showToRunningTurn } from "./claude/mid-turn.ts";
 import {
@@ -65,6 +64,7 @@ import { configureSendVerification } from "./imessage/send.ts";
 import type { InboundMessage } from "./imessage/types.ts";
 import { startWatcher } from "./imessage/watcher.ts";
 import * as intSettings from "./integrations/settings.ts";
+import { backendForModel } from "./model/backend.ts";
 import { routeForMessage, sessionKeyForOrchestrator } from "./orchestrators/registry.ts";
 import { sweepAllArchives } from "./persona/archive.ts";
 import { PersonMaintainer } from "./persona/maintainer-observer.ts";
@@ -142,7 +142,7 @@ async function main() {
   if (config.claude.background_effort) {
     process.env.EDMUND_BACKGROUND_EFFORT = config.claude.background_effort;
   } else {
-    delete process.env.EDMUND_BACKGROUND_EFFORT;
+    Reflect.deleteProperty(process.env, "EDMUND_BACKGROUND_EFFORT");
   }
   if (config.claude.context_window_tokens) {
     process.env.EDMUND_CONTEXT_WINDOW_TOKENS = String(config.claude.context_window_tokens);

@@ -17,7 +17,10 @@ const m = (fromMe: boolean, minute: number, text = "x"): ReviewMsg => ({
 
 describe("the weekly review counts what people experienced", () => {
   test("a burst waits from its first message to the next reply", () => {
-    const s = replyStats([m(false, 0), m(false, 2), m(true, 5), m(false, 10), m(true, 11)], t0 + 3_600_000);
+    const s = replyStats(
+      [m(false, 0), m(false, 2), m(true, 5), m(false, 10), m(true, 11)],
+      t0 + 3_600_000,
+    );
     expect(s.bursts).toBe(2);
     expect(s.answered).toBe(2);
     expect(s.latenciesMs).toEqual([5 * 60_000, 60_000]);

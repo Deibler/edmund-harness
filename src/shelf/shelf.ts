@@ -42,7 +42,9 @@ export function shelfToken(dataDir: string, sessionKey: string): string {
 
 /** A file name that is safe in a URL path and on disk. */
 export function shelfName(raw: string): string {
-  const ext = extname(raw).toLowerCase().replace(/[^.a-z0-9]/g, "");
+  const ext = extname(raw)
+    .toLowerCase()
+    .replace(/[^.a-z0-9]/g, "");
   const stem = basename(raw, extname(raw))
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^[.-]+|[.-]+$/g, "")

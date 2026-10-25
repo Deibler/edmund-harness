@@ -30,13 +30,9 @@ const appleNs = (ms: number) => (ms - 978_307_200_000) * 1_000_000;
   let id = 0;
   const add = (fromMe: number, ms: number, text: string) => {
     id++;
-    db.query("INSERT INTO message (ROWID, guid, text, is_from_me, date) VALUES (?, ?, ?, ?, ?)").run(
-      id,
-      `g${id}`,
-      text,
-      fromMe,
-      appleNs(ms),
-    );
+    db.query(
+      "INSERT INTO message (ROWID, guid, text, is_from_me, date) VALUES (?, ?, ?, ?, ?)",
+    ).run(id, `g${id}`, text, fromMe, appleNs(ms));
     db.query("INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, ?)").run(id);
   };
   // Day 0: sent, replied. Days 1-3: sent, ignored.
@@ -46,7 +42,10 @@ const appleNs = (ms: number) => (ms - 978_307_200_000) * 1_000_000;
   db.close();
 }
 const chatDb = new ChatDb(path);
-const windows = [0, 1, 2, 3].map((d) => ({ startedMs: t0 + d * DAY, endedMs: t0 + d * DAY + 20_000 }));
+const windows = [0, 1, 2, 3].map((d) => ({
+  startedMs: t0 + d * DAY,
+  endedMs: t0 + d * DAY + 20_000,
+}));
 
 describe("a recurring job sees how its last sends landed", () => {
   test("each fire's sends and whether anyone answered come from chat.db", () => {
@@ -57,7 +56,9 @@ describe("a recurring job sees how its last sends landed", () => {
   });
 
   test("three ignored sends in a row: ask once instead of sending another", () => {
-    const block = receptionBlock(fireReceptions(chatDb, "any;-;+15555550101", windows, t0 + 4 * DAY));
+    const block = receptionBlock(
+      fireReceptions(chatDb, "any;-;+15555550101", windows, t0 + 4 * DAY),
+    );
     expect(block).toContain("Sales job 3");
     expect(block).toContain("no reply");
     expect(block).toContain("ask once");
@@ -66,7 +67,11 @@ describe("a recurring job sees how its last sends landed", () => {
 
   test("ignored after asking too: stay quiet and pause", () => {
     const quiet = (n: number): FireReception[] =>
-      Array.from({ length: n }, (_, i) => ({ startedMs: t0 + i * DAY, sends: [`s${i}`], replied: false }));
+      Array.from({ length: n }, (_, i) => ({
+        startedMs: t0 + i * DAY,
+        sends: [`s${i}`],
+        replied: false,
+      }));
     expect(receptionBlock(quiet(ASK_AFTER_IGNORED + 1))).toContain("KEEP_QUIET");
     expect(receptionBlock(quiet(2))).not.toContain("ask once");
   });
@@ -91,8 +96,10 @@ describe("a recurring job sees how its last sends landed", () => {
 
   test("recurring scheduled fires carry the block and record their window", () => {
     const src = readFileSync(join(import.meta.dir, "..", "src/cron/fire.ts"), "utf8");
-    expect(src).toContain('const recurring = job.schedule.kind !== "once" && kind === "scheduled";');
-    expect(src).toContain("...(reception ? [\"\", reception] : []),");
+    expect(src).toContain(
+      'const recurring = job.schedule.kind !== "once" && kind === "scheduled";',
+    );
+    expect(src).toContain('...(reception ? ["", reception] : []),');
     expect(src).toContain("crons.recordFireWindow(job.id, job.sessionKey, started, Date.now());");
   });
 });

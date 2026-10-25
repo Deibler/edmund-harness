@@ -5,11 +5,11 @@ import {
   isRetryable,
 } from "../alerts/operator-alert.ts";
 import { parseInboundDepth } from "../bridge/relay.ts";
-import { injectIntoRunningTurnAndConfirm } from "../claude/runner.ts";
-import type { ChatDb } from "../imessage/db.ts";
 import { deliverReply } from "../channels/deliver.ts";
+import { injectIntoRunningTurnAndConfirm } from "../claude/runner.ts";
 import type { Config } from "../config/config.ts";
 import type { GhostPrefsStore } from "../ghost/prefs.ts";
+import type { ChatDb } from "../imessage/db.ts";
 import { isPermanentSendError } from "../imessage/send.ts";
 import { compactConfigFor, reanchorCodexIfNeeded, runModel } from "../model/runner.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";

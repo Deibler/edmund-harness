@@ -201,7 +201,7 @@ const RememberSubjectInput = z.object({
     .string()
     .optional()
     .describe(
-      "Where it came from, by role rather than name (\"a runner I coach\", \"a teacher's lesson plans\"), so one-person claims stay visible. The lesson can surface in anyone's conversation.",
+      'Where it came from, by role rather than name ("a runner I coach", "a teacher\'s lesson plans"), so one-person claims stay visible. The lesson can surface in anyone\'s conversation.',
     ),
 });
 

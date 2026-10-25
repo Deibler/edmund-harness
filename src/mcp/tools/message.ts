@@ -5,9 +5,9 @@ import { peekPending } from "../../bridge/session-queue.ts";
 import { markdownToPlaintext, sanitizeOutbound } from "../../channels/sanitize-outbound.ts";
 import { appleMapsLink } from "../../imessage/maps-link.ts";
 import {
-  countSentSince,
   type ResolvedMessage,
   chatRowIdForGuids,
+  countSentSince,
   findRecentMessageByText,
   latestMessageInGuids,
   resolveMessageGuid,

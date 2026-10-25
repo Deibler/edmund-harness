@@ -79,7 +79,10 @@ function shelfPage(dir: string): Response {
         day: "numeric",
         year: "numeric",
       });
-      const kb = e.bytes > 1_048_576 ? `${(e.bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(e.bytes / 1024))} KB`;
+      const kb =
+        e.bytes > 1_048_576
+          ? `${(e.bytes / 1_048_576).toFixed(1)} MB`
+          : `${Math.max(1, Math.round(e.bytes / 1024))} KB`;
       return `<li><a href="${encodeURIComponent(e.name)}">${escapeHtml(e.title)}</a><span>${day} · ${kb}</span></li>`;
     })
     .join("\n");

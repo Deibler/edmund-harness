@@ -16,7 +16,13 @@ import { guardedFetch } from "../web/fetch.ts";
  * Feeds are per chat and never cross into another conversation.
  */
 
-export type CalendarEvent = { title: string; startMs: number; endMs: number; allDay: boolean; location?: string };
+export type CalendarEvent = {
+  title: string;
+  startMs: number;
+  endMs: number;
+  allDay: boolean;
+  location?: string;
+};
 
 type Feed = { url: string; label: string; addedMs: number };
 
@@ -38,7 +44,12 @@ export function calendarFeeds(dataDir: string, sessionKey: string): Feed[] {
   return readFeeds(dataDir)[sessionKey] ?? [];
 }
 
-export function addCalendarFeed(dataDir: string, sessionKey: string, url: string, label: string): void {
+export function addCalendarFeed(
+  dataDir: string,
+  sessionKey: string,
+  url: string,
+  label: string,
+): void {
   const all = readFeeds(dataDir);
   const list = (all[sessionKey] ?? []).filter((f) => f.url !== url);
   list.push({ url, label, addedMs: Date.now() });
@@ -83,7 +94,10 @@ export async function fetchCalendar(url: string, timeoutMs = 15_000): Promise<st
 type Prop = { name: string; params: Record<string, string>; value: string };
 
 function unfold(ics: string): string[] {
-  return ics.replace(/\r\n/g, "\n").replace(/\n[ \t]/g, "").split("\n");
+  return ics
+    .replace(/\r\n/g, "\n")
+    .replace(/\n[ \t]/g, "")
+    .split("\n");
 }
 
 function parseProp(line: string): Prop | null {
@@ -101,7 +115,15 @@ function parseProp(line: string): Prop | null {
 }
 
 /** Epoch ms for a wall-clock time in an IANA zone, exact across DST. */
-export function zonedWallClockMs(tz: string, y: number, mo: number, d: number, h = 0, mi = 0, s = 0): number {
+export function zonedWallClockMs(
+  tz: string,
+  y: number,
+  mo: number,
+  d: number,
+  h = 0,
+  mi = 0,
+  s = 0,
+): number {
   const wall = Date.UTC(y, mo - 1, d, h, mi, s);
   const offsetAt = (ms: number) => {
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -114,7 +136,8 @@ export function zonedWallClockMs(tz: string, y: number, mo: number, d: number, h
       second: "2-digit",
       hour12: false,
     }).formatToParts(new Date(ms));
-    const n = (t: string) => Number(parts.find((p) => p.type === t)?.value) % (t === "hour" ? 24 : 1e9);
+    const n = (t: string) =>
+      Number(parts.find((p) => p.type === t)?.value) % (t === "hour" ? 24 : 1e9);
     return Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second")) - ms;
   };
   const guess = wall - offsetAt(wall);
@@ -141,8 +164,11 @@ function parseDate(p: Prop, fallbackTz: string): { ms: number; allDay: boolean }
   return { ms: zonedWallClockMs(tz, +y!, +mo!, +d!, +h!, +mi!, +s!), allDay: false };
 }
 
-function unescape(v: string): string {
-  return v.replace(/\\n/gi, " ").replace(/\\([,;\\])/g, "$1").trim();
+function unescapeIcs(v: string): string {
+  return v
+    .replace(/\\n/gi, " ")
+    .replace(/\\([,;\\])/g, "$1")
+    .trim();
 }
 
 const DAY_MS = 86_400_000;
@@ -168,7 +194,9 @@ export function expandRule(
   }
   const interval = Math.max(1, Number(r.INTERVAL ?? 1));
   const count = r.COUNT ? Number(r.COUNT) : Number.POSITIVE_INFINITY;
-  const until = r.UNTIL ? (parseDate({ name: "UNTIL", params: {}, value: r.UNTIL }, tz)?.ms ?? toMs) : Number.POSITIVE_INFINITY;
+  const until = r.UNTIL
+    ? (parseDate({ name: "UNTIL", params: {}, value: r.UNTIL }, tz)?.ms ?? toMs)
+    : Number.POSITIVE_INFINITY;
   const end = Math.min(toMs, until);
   // Wall-clock fields of the first occurrence, in its zone, so repeats keep
   // their local time across a DST change.
@@ -183,7 +211,14 @@ export function expandRule(
     hour12: false,
   }).formatToParts(new Date(startMs));
   const g = (t: string) => Number(f.find((p) => p.type === t)?.value) % (t === "hour" ? 24 : 1e9);
-  const [y0, m0, d0, h0, mi0, s0] = [g("year"), g("month"), g("day"), g("hour"), g("minute"), g("second")];
+  const [y0, m0, d0, h0, mi0, s0] = [
+    g("year"),
+    g("month"),
+    g("day"),
+    g("hour"),
+    g("minute"),
+    g("second"),
+  ];
   const at = (y: number, m: number, d: number) => zonedWallClockMs(tz, y, m, d, h0, mi0, s0);
   const out: number[] = [];
   let produced = 0;
@@ -202,7 +237,11 @@ export function expandRule(
       if (!take(at(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate()))) break;
     }
   } else if (freq === "WEEKLY") {
-    const days = r.BYDAY!.split(",").map((d) => WEEKDAYS.indexOf(d.slice(-2))).filter((d) => d >= 0).sort();
+    const days = r
+      .BYDAY!.split(",")
+      .map((d) => WEEKDAYS.indexOf(d.slice(-2)))
+      .filter((d) => d >= 0)
+      .sort();
     const startDow = new Date(Date.UTC(y0, m0 - 1, d0)).getUTCDay();
     outer: for (let w = 0; w < 1000; w++) {
       for (const dow of days) {
@@ -265,7 +304,7 @@ export function parseCalendar(ics: string, fromMs: number, toMs: number): Calend
     const e = end ? parseDate(end, calTz) : null;
     const dur = e ? Math.max(0, e.ms - s.ms) : s.allDay ? DAY_MS : 0;
     const tz = start!.params.TZID ?? calTz;
-    const title = unescape(get("SUMMARY")?.value ?? "(untitled)");
+    const title = unescapeIcs(get("SUMMARY")?.value ?? "(untitled)");
     const loc = get("LOCATION")?.value;
     const uid = get("UID")?.value ?? "";
     const rrule = get("RRULE")?.value;
@@ -275,11 +314,12 @@ export function parseCalendar(ics: string, fromMs: number, toMs: number): Calend
         .filter((p) => p.name === "EXDATE")
         .flatMap((p) => p.value.split(",").map((v) => parseDate({ ...p, value: v }, calTz)?.ms)),
     );
-    const starts = rrule && !isOverride
-      ? expandRule(rrule, s.ms, fromMs - dur, toMs, tz).filter(
-          (ms) => !exdates.has(ms) && !overrides.has(`${uid}@${ms}`),
-        )
-      : [s.ms];
+    const starts =
+      rrule && !isOverride
+        ? expandRule(rrule, s.ms, fromMs - dur, toMs, tz).filter(
+            (ms) => !exdates.has(ms) && !overrides.has(`${uid}@${ms}`),
+          )
+        : [s.ms];
     for (const ms of starts) {
       if (ms + dur < fromMs || ms > toMs) continue;
       events.push({
@@ -287,7 +327,7 @@ export function parseCalendar(ics: string, fromMs: number, toMs: number): Calend
         startMs: ms,
         endMs: ms + dur,
         allDay: s.allDay,
-        ...(loc ? { location: unescape(loc) } : {}),
+        ...(loc ? { location: unescapeIcs(loc) } : {}),
       });
     }
   }
@@ -296,8 +336,17 @@ export function parseCalendar(ics: string, fromMs: number, toMs: number): Calend
 
 export function formatEvents(events: CalendarEvent[], tz = DEFAULT_TZ): string {
   if (events.length === 0) return "nothing on the calendar in that window";
-  const day = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" });
-  const time = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  const time = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+  });
   return events
     .map((e) => {
       const when = e.allDay

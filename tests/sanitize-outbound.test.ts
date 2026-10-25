@@ -179,7 +179,11 @@ describe("no control word ever reaches a person", () => {
   });
 
   test("every control word in the prompts is in the registry", () => {
-    const files = ["src/channels/turn.ts", "src/channels/envelope.ts", "src/claude/system-prompt.ts"];
+    const files = [
+      "src/channels/turn.ts",
+      "src/channels/envelope.ts",
+      "src/claude/system-prompt.ts",
+    ];
     const words = new Set<string>();
     for (const f of files) {
       const src = readFileSync(join(import.meta.dir, "..", f), "utf8");

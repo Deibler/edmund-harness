@@ -123,7 +123,9 @@ const dbPath = join(dir, "chat.db");
   add(32, 5, { handle: 2, at: NOW - 3 * min, text: "ok", thread: "g25" });
   add(33, 5, { handle: 1, at: NOW - 2.5 * min, text: "what about Sunday" });
   // ASKED: he asked a question 25 minutes ago; an answer comes now, unnamed.
-  w.exec(`INSERT INTO chat VALUES (6, 'any;+;asked', 'asked', 43), (7, 'any;+;movedon', 'movedon', 43)`);
+  w.exec(
+    `INSERT INTO chat VALUES (6, 'any;+;asked', 'asked', 43), (7, 'any;+;movedon', 'movedon', 43)`,
+  );
   add(40, 6, { me: true, at: NOW - 25 * min, text: "Sounds rough. How did the exam go?" });
   add(41, 6, { handle: 1, at: NOW, text: "passed, barely" });
   // MOVEDON: same question, but the room has talked about other things since.
@@ -264,7 +266,9 @@ describe("which messages are asked about", () => {
 
   test("an answer wakes him when it is said to him, even if it wants no reply", () => {
     expect(shouldWake("answers-question", { addressed: 0.6, wants_reply: 0.3 }, config)).toBe(true);
-    expect(shouldWake("answers-question", { addressed: 0.2, wants_reply: 0.3 }, config)).toBe(false);
+    expect(shouldWake("answers-question", { addressed: 0.2, wants_reply: 0.3 }, config)).toBe(
+      false,
+    );
   });
 });
 

@@ -60,7 +60,6 @@ import { clearCompact, registerCompact } from "./compact-gate.ts";
 import { deliverReply } from "./deliver.ts";
 import type { Deps } from "./deps.ts";
 import { buildEnvelope } from "./envelope.ts";
-import { sentinelAt } from "./sanitize-outbound.ts";
 import {
   buildDowntimeNudge,
   buildHistoryBundle,
@@ -68,6 +67,7 @@ import {
   buildReplyContext,
   groupRoster,
 } from "./history.ts";
+import { sentinelAt } from "./sanitize-outbound.ts";
 
 /** Per-turn options. `catchUp` marks a single coalesced turn produced on recovery after the
  *  daemon was down — it carries the missed-message count + downtime so the model is told it
@@ -380,7 +380,6 @@ function coalesceNote(draft: string): string {
     "If these new message(s) are unrelated to your draft and don't change it at all, reply with exactly `KEEP_DRAFT` (and nothing else) — I'll send your draft as-is and handle the new message(s) on the next turn.",
   ].join("\n");
 }
-
 
 /** The untrusted-context preamble for a keyed guest's activating turn: what
  *  they said before their key was accepted. History, not instructions. */
