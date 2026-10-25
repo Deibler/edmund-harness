@@ -46,7 +46,7 @@ ${color.bold("Services")}
   ${color.cyan("kill")}         uninstall both launchd jobs and kill local strays
 
 ${color.bold("Observe")}
-  ${color.cyan("logs")}         tail daemon.log (--error/--warn/--info, --follow, --session X, --scope Y, --grep RE, -n N)
+  ${color.cyan("logs")}         what the model is doing, for whom (--follow, --session NAME, --all, --error/--warn, --grep RE, -n N)
   ${color.cyan("recovery")}     operator channel (edmund-911) controls — logs [--follow]
   ${color.cyan("dashboard")}    dashboard URL, --pin, --logs [--follow]
   ${color.cyan("cron")}         list / delete scheduled jobs
@@ -56,7 +56,7 @@ ${color.bold("Observe")}
   ${color.cyan("announce")}     feature log — tell regulars about a new capability
   ${color.cyan("credits")}      generation credits — list / show / mode / grant / pause / apply / liability
   ${color.cyan("portal")}       per-person portal links — link <handle> / revoke <handle>
-  ${color.cyan("config")}       show config sections
+  ${color.cyan("config")}       show config sections (show [section], path, tidy)
   ${color.cyan("review")}       write this week's review sheet (--days 7, --sample 40)
 
 ${color.bold("Misc")}

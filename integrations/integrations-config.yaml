@@ -75,3 +75,12 @@ integrations:
   # ─────────────────────────────────────────────────────────────────────────
   kitchen:
     enabled: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # printer — a Bambu Lab printer on the LAN. Every conversation can read it,
+  # slice and preview, and ask for a print; a print starts only after the
+  # approver's yes, read from Messages by the daemon's runtime, which is the
+  # only code that sends a print, cancel or resume. No pause exists.
+  # ─────────────────────────────────────────────────────────────────────────
+  printer:
+    enabled: true

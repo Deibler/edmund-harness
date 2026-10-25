@@ -87,6 +87,21 @@ addresses), `check_bg_job`, `list_bg_jobs` for long running fetches. A page
 that turns a plain fetch away is retried once in headless Chrome; if that is
 refused too, the result says plainly that the page was not read.
 
+## The 3D printer (integrations/printer)
+
+`printer_status`, `printer_camera`, `printer_watch`, `printer_timelapse`,
+`printer_error_lookup`: read everything about a Bambu Lab printer, see it, and
+be woken at a percent, a layer, the end (with a photo), a pause, an error, or
+a filament change. `print_slice`, `print_preview`, `print_settings`: slice with
+Bambu Studio's own engine and any setting, with every slicer warning, and look
+at the toolpaths from any side, by layer, with seams, supports and overhangs.
+`print_job`, `print_request_approval`, `print_start`, `print_control`: the job,
+its filament plan, the approver's yes (read from Messages), the gated start,
+and approved cancel or resume. There is no pause. `makerworld_search`,
+`makerworld_model`, `makerworld_download`, `makerworld_login`,
+`makerworld_package`: find, show, download, alter and package MakerWorld
+models. Details in integrations/printer/README.md and the `printing` skill.
+
 ## Scheduling and proactive behaviour
 
 | Tool | What it does |

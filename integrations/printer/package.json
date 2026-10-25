@@ -1,0 +1,9 @@
+{
+  "name": "@edmund-harness/integration-printer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bambu Lab printer integration for edmund-harness",
+  "main": "./tools.ts",
+  "exports": { ".": "./tools.ts" }
+}

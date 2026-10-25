@@ -14,6 +14,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { serveShelf } from "../../../src/shelf/serve.ts";
+import { mountFor } from "../../../src/web/mounts.ts";
 import { baseDir } from "../src/accounts.ts";
 import {
   type HostStatus,
@@ -42,6 +43,8 @@ const routerPort = Number(process.env.KITCHEN_HOST_PORT) || hostPort();
 /** Edmund's shelf (src/shelf/): permanent links for what he hands people,
  *  served under this host because it is the one named tunnel on the machine. */
 const shelfDir = process.env.EDMUND_SHELF_DIR || join(ROOT, "data", "shelf");
+/** Other local servers that publish a page under a path prefix here (src/web/mounts.ts). */
+const mountsDir = process.env.EDMUND_DATA_DIR || join(ROOT, "data");
 const server = join(ROOT, "skills", "instant-share", "scripts", "secure_server.py");
 const shareConfig = join(baseDir(), "host-share");
 mkdirSync(shareConfig, { recursive: true, mode: 0o700 });
@@ -183,26 +186,31 @@ Bun.serve({
     const url = new URL(req.url);
     const shelf = serveShelf(req, shelfDir);
     if (shelf) return shelf;
+    const mounted = mountFor(mountsDir, url.pathname);
+    if (mounted)
+      return forward(req, url, mounted, "This page is restarting. Try again in a minute.");
     const h = route(url, current);
     if (!h) return new Response("Not found", { status: 404 });
-    const headers = new Headers(req.headers);
-    headers.delete("host");
-    try {
-      const res = await fetch(`http://127.0.0.1:${h.port}${url.pathname}${url.search}`, {
-        method: req.method,
-        headers,
-        body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer(),
-        redirect: "manual",
-        decompress: false,
-      } as RequestInit);
-      return new Response(res.body, { status: res.status, headers: res.headers });
-    } catch {
-      return new Response("This kitchen page is restarting. Try again in a minute.", {
-        status: 502,
-      });
-    }
+    return forward(req, url, h.port, "This kitchen page is restarting. Try again in a minute.");
   },
 });
+
+async function forward(req: Request, url: URL, port: number, down: string): Promise<Response> {
+  const headers = new Headers(req.headers);
+  headers.delete("host");
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}${url.pathname}${url.search}`, {
+      method: req.method,
+      headers,
+      body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer(),
+      redirect: "manual",
+      decompress: false,
+    } as RequestInit);
+    return new Response(res.body, { status: res.status, headers: res.headers });
+  } catch {
+    return new Response(down, { status: 502 });
+  }
+}
 log(`router on 127.0.0.1:${routerPort}, publishing at ${origin ?? "(no site_origin set)"}`);
 
 /* ── the tunnel ──────────────────────────────────────────────────────────── */

@@ -34,17 +34,38 @@ login rather than at boot, and it runs as you.
 ## Logs
 
 ```
-edmund logs [--follow] [--debug|--info|--warn|--error] [--session X] [--scope Y] [--grep RE] [-n 200]
+edmund logs [--follow] [--all] [--debug|--info|--warn|--error] [--session X] [--scope Y] [--grep RE] [-n 200]
 edmund logs --dashboard | --trading | --fishing
 ```
 
-Tails `data/daemon.log` and reparses each line into time, level, scope,
-session and event columns. The session column is the thread: a `--session`
-substring pulls one conversation's turns, tool calls, sends, verifications,
-cron fires and proactive activity into one view. Scopes are coloured by
-family: model runtime, message plane, tools, scheduling, proactive, alerts.
-Level flags are additive. Continuation lines inherit the parent's verdict, so
-a stack trace stays with its error.
+Tails `data/daemon.log` as a story of what the model is doing and for whom:
+
+```
+20:23:46  INFO  message   Axolotl crew          ← Sam Rivera          2 msgs, 1 attachment
+20:23:46  INFO  model     Axolotl crew          working               cold start
+20:24:54  INFO  step      Axolotl crew          Bash                  Check v1 support usage
+20:52:13  INFO  subagent  Axolotl crew          started               "Build a candidate sourcing list"
+20:52:19  INFO  step      ↳ 2762f4 Axolotl crew web_search            "superintendent open to work"
+20:48:46  INFO  model     Axolotl crew          done in 24m60s        43 steps · 202-char reply · $29.68 session
+          ·     still working: Sean Conway 3m, 4 steps, last Bash
+```
+
+The who column names the person or group (from Contacts and Messages), and
+`--session` matches a name as well as a handle (`--session sam`). Each
+conversation has its own color, a bar down the left edge and its name in that
+color, so one thread can be followed through a long, interleaved log; a
+subagent's lines take the color of the conversation that spawned it.
+`FORCE_COLOR=1` keeps the colors through a pipe (`| less -R`). Each model
+step is one line saying what it does (a Bash step's description, the file it
+read, the text it sent); the tool server's duplicate lines are hidden and
+failures are kept. Subagents show when they start, what they do and when they
+finish; scheduled wake-ups and background jobs show too. Heartbeat lines
+(mirror reconnects, widget refreshes, recall progress, pool stats) are
+hidden, and any line the view does not recognise is shown as it is. While
+following, a line each minute names every turn still running. `--all` shows
+every line in the raw columns (time, level, scope, session, event). Level
+flags are additive. Continuation lines inherit the parent's verdict, so a
+stack trace stays with its error.
 
 ## Sessions
 
@@ -148,6 +169,7 @@ next proactive message, or the next `get_portal_link`, carries the new link.
 | `edmund dashboard [--pin <4-8 digits>] [--logs [-f]]` | Show dashboard state, set the PIN, or tail its log |
 | `edmund config show [section]` | Print the loaded config with secrets masked to their last four characters |
 | `edmund config path` | Where the config file is |
+| `edmund config tidy` | Lay `config.toml` out by how often each part changes (backup kept; refuses if a value would change) |
 | `edmund recovery logs [--follow] [--err]` | Tail the log of the optional watchdog daemon, if you run one |
 | `edmund install` | Symlink `bin/edmund` into `/opt/homebrew/bin` or `/usr/local/bin` |
 | `edmund help` | Top level help |

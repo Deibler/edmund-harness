@@ -24,14 +24,32 @@
  *
  * Scopes are colored by family: model runtime cyan, message plane blue,
  * tools/MCP green, scheduling yellow, ghost/proactive magenta, alerts red.
+ *
+ * By default the daemon log is shown as a story (cli/log-story.ts): who each
+ * turn is for by name, one line per model step, subagents and wake-ups, the
+ * heartbeat noise hidden, and while following, a line each minute naming
+ * every turn still running. `--all` shows every line in the raw columns.
  */
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { loadConfig } from "../../src/config/config.ts";
+import { ChatDb } from "../../src/imessage/db.ts";
+import { getGroupParticipants } from "../../src/imessage/participants.ts";
+import { AddressBook } from "../../src/sessions/address-book.ts";
+import { ContactBook } from "../../src/sessions/contacts.ts";
 import type { Parsed } from "../args.ts";
 import { getString, hasFlag } from "../args.ts";
+import {
+  type Story,
+  type StoryState,
+  newStoryState,
+  tell,
+  threadColors,
+  workingLine,
+} from "../log-story.ts";
 import { DAEMON_LOG, DASHBOARD_LOG, FISHING_LOG, TRADING_LOG } from "../services/paths.ts";
-import { color, fail, print } from "../ui.ts";
+import { color, color256, fail, print } from "../ui.ts";
 
 type Level = "debug" | "info" | "warn" | "error";
 const ALL_LEVELS: Level[] = ["debug", "info", "warn", "error"];
@@ -51,6 +69,12 @@ export async function logsCommand(p: Parsed): Promise<void> {
         ? DASHBOARD_LOG
         : DAEMON_LOG;
   const follow = hasFlag(p, "follow", "f");
+  // The story view reads the daemon's own lines; other logs keep the raw view.
+  const names = nameLookup();
+  const story =
+    !hasFlag(p, "all", "a") && path === DAEMON_LOG
+      ? newStoryState(names.name, names.canonical)
+      : null;
   const activeLevels: Level[] = ALL_LEVELS.filter((l) => hasFlag(p, l));
   const levelFilter = activeLevels.length > 0 ? new Set(activeLevels) : null;
   const lineCount = getString(p, "lines", "n") ?? "200";
@@ -82,7 +106,14 @@ export async function logsCommand(p: Parsed): Promise<void> {
   const tailArgs = follow ? ["-n", lineCount, "-F", path] : ["-n", lineCount, path];
   const child = spawn("tail", tailArgs, { stdio: ["inherit", "pipe", "inherit"] });
 
-  const state: RenderState = { lastPassed: false };
+  const state: RenderState = { lastPassed: false, story };
+  if (follow && story) {
+    // A turn can run for half an hour with long quiet tool calls; say so.
+    setInterval(() => {
+      const line = workingLine(story, Date.now());
+      if (line) print(color.dim(`${new Date().toTimeString().slice(0, 8)}  ·      ${line}`));
+    }, 60_000);
+  }
   let carry = "";
   child.stdout.on("data", (chunk: Buffer) => {
     carry += chunk.toString("utf8");
@@ -111,7 +142,7 @@ type Filters = {
 
 /** `lastPassed` lets stack-trace continuation lines (no timestamp/level)
  *  follow their parent through the filters instead of being judged alone. */
-type RenderState = { lastPassed: boolean };
+type RenderState = { lastPassed: boolean; story?: StoryState | null };
 
 function writeLine(raw: string, f: Filters, state: RenderState): void {
   if (!raw) return;
@@ -132,16 +163,137 @@ function writeLine(raw: string, f: Filters, state: RenderState): void {
     state.lastPassed = false;
     return;
   }
-  if (f.session && !(parsed.session ?? "").toLowerCase().includes(f.session)) {
+  if (f.grep && !f.grep.test(raw)) {
     state.lastPassed = false;
     return;
   }
-  if (f.grep && !f.grep.test(raw)) {
+  if (state.story) {
+    const told = tell(parsed, state.story);
+    if (!told || (f.session && !matchesSession(f.session, parsed, told))) {
+      state.lastPassed = false;
+      return;
+    }
+    state.lastPassed = true;
+    print(formatStory(parsed, told));
+    return;
+  }
+  if (f.session && !(parsed.session ?? "").toLowerCase().includes(f.session)) {
     state.lastPassed = false;
     return;
   }
   state.lastPassed = true;
   print(format(parsed));
+}
+
+/** `--session` matches the key (dm:+1555…) or the name the story shows ("hunter"). */
+function matchesSession(want: string, p: ParsedLine, s: Story): boolean {
+  return (p.session ?? "").toLowerCase().includes(want) || s.who.toLowerCase().includes(want);
+}
+
+const W_KIND = 10;
+const W_WHO = 22;
+
+/** One color per conversation for the life of this view, so a long log can be read by thread. */
+const colorOf = threadColors();
+
+function formatStory(p: ParsedLine, s: Story): string {
+  const paint = s.thread ? color256(colorOf(s.thread)) : color.dim;
+  // A bar in the conversation's color down the left edge, then the usual columns.
+  const bar = s.thread ? paint("▌") : " ";
+  const t = p.ts ? color.dim(p.ts.slice(11, 19)) : "        ";
+  const lvl = s.tone === "bad" && p.level !== "error" ? color.yellow("WARN ") : colorLevel(p.level);
+  const kind = pad(colorKind(s.kind), W_KIND);
+  const name = s.who.length > W_WHO ? `${s.who.slice(0, W_WHO - 1)}…` : s.who;
+  const who = pad(s.thread ? color.bold(paint(name)) : color.dim(name), W_WHO);
+  const event = pad(
+    s.tone === "bad" ? color.red(s.event) : s.tone === "dim" ? s.event : color.bold(s.event),
+    W_EVENT,
+  );
+  const details = s.tone === "dim" ? color.dim(s.details) : s.details;
+  return `${bar}${[t, lvl, kind, who, event, details].filter(Boolean).join("  ")}`;
+}
+
+/** Story kinds, colored so the eye finds the turns: people blue, the model cyan, its work green. */
+function colorKind(kind: string): string {
+  if (kind === "message" || kind === "sent") return color.blue(kind);
+  if (kind === "model") return color.cyan(kind);
+  if (kind === "step" || kind === "plan" || kind === "background") return color.green(kind);
+  if (kind === "subagent" || kind === "wake" || kind === "proactive") return color.yellow(kind);
+  if (kind === "memory") return color.dim(kind);
+  return colorScope(kind);
+}
+
+/**
+ * Names for sessions, from the operator's contacts and Messages: a DM by the
+ * person's name, a group by its name or its members' first names. Built
+ * lazily and cached; any failure leaves the raw key showing.
+ */
+function nameLookup(): {
+  name: (session: string) => string | null;
+  canonical: (session: string) => string | null;
+} {
+  let ready = false;
+  let contacts: ContactBook | null = null;
+  let chatDb: ChatDb | null = null;
+  const groupIds = new Map<string, string | null>();
+  const init = () => {
+    ready = true;
+    try {
+      const config = loadConfig(process.env.EDMUND_CONFIG_PATH ?? "./config.toml");
+      contacts = new ContactBook(config.contacts, new AddressBook());
+      chatDb = new ChatDb(config.paths.chat_db);
+    } catch {
+      // No config or no Full Disk Access: names stay as keys.
+    }
+  };
+  // Groups are logged by six hex characters of their id: the last six by most
+  // subsystems, the first six by the memory maintainer. Either finds the chat.
+  const groupGuid = (session: string): string | null => {
+    const g = session.match(/^group:(?:[\w;+]*;)?([a-f0-9]{6,})…*$/i);
+    if (!g) return null;
+    if (groupIds.has(g[1]!)) return groupIds.get(g[1]!) ?? null;
+    if (!ready) init();
+    let guid: string | null = null;
+    try {
+      guid =
+        (chatDb as ChatDb | null)
+          ?.query<{ guid: string }>(
+            "SELECT guid FROM chat WHERE guid LIKE ? AND guid LIKE '%;+;%' LIMIT 1",
+          )
+          .get(`%${g[1]}%`)?.guid ?? null;
+    } catch {
+      guid = null;
+    }
+    groupIds.set(g[1]!, guid);
+    return guid;
+  };
+  return {
+    canonical: (session) => {
+      const guid = groupGuid(session);
+      return guid ? `group:${guid}` : null;
+    },
+    name: (session) => {
+      if (!ready) init();
+      if (session.startsWith("dm:")) return contacts?.displayName(session.slice(3)) ?? null;
+      const guid = groupGuid(session);
+      if (!guid || !chatDb) return null;
+      try {
+        const row = (chatDb as ChatDb)
+          .query<{ display_name: string | null }>(
+            "SELECT display_name FROM chat WHERE guid = ? LIMIT 1",
+          )
+          .get(guid);
+        if (row?.display_name?.trim()) return row.display_name.trim();
+        const firsts = getGroupParticipants(chatDb as ChatDb, guid)
+          .map((h) => ((contacts as ContactBook | null)?.displayName(h) ?? "").split(/\s+/)[0])
+          .filter(Boolean)
+          .slice(0, 3);
+        return firsts.length ? `${firsts.join(", ")}${firsts.length === 3 ? "…" : ""}` : null;
+      } catch {
+        return null;
+      }
+    },
+  };
 }
 
 export type ParsedLine = {
@@ -155,6 +307,8 @@ export type ParsedLine = {
   continuation: boolean;
   /** True when the line came from a subprocess sink (mcp[…]/agent[…]). */
   subprocess: boolean;
+  /** The session as logged, before display truncation; the story view keys names on it. */
+  sessionKey?: string | null;
 };
 
 export function parseLine(raw: string): ParsedLine {
@@ -182,15 +336,19 @@ export function parseLine(raw: string): ParsedLine {
     };
   }
 
-  // Subprocess sink prefix: `mcp[dm:+1555…] ` / `agent[abc123] `. The
-  // bracket payload is that process's session/thread identity.
+  // Subprocess sink prefix: `mcp[dm:+1555…] ` / `agent[abc123] ` /
+  // `bg[bg_…] `. The bracket payload is that process's identity.
   let subprocess = false;
   let prefixSession: string | null = null;
-  const originM = rest.match(/^(mcp|agent)\[([^\]]+)\]\s+/);
+  const originM = rest.match(/^(mcp|agent|bg)\[([^\]]+)\]\s+/);
   if (originM) {
     subprocess = true;
     prefixSession =
-      originM[1] === "agent" ? `agent:${originM[2]}` : normalizeSession(originM[2] ?? "");
+      originM[1] === "agent"
+        ? `agent:${originM[2]}`
+        : originM[1] === "bg"
+          ? `bg:${originM[2]}`
+          : normalizeSession(originM[2] ?? "");
     rest = rest.slice(originM[0].length);
   }
 
@@ -271,7 +429,8 @@ function extractSession(text: string): { session: string | null; remainder: stri
 export function normalizeSession(raw: string): string {
   const stripped = raw.replace(/^imessage:/, "");
   if (/^(dm:|group:|mirror:|orch:|agent:)/.test(stripped)) {
-    return stripped.replace(/^(group:)[\w;+]*([a-f0-9]{6})[a-f0-9]*/i, "$1$2…");
+    // The daemon already logs groups as `group:2045d3…`; do not add a second ellipsis.
+    return stripped.replace(/^(group:)[\w;+]*([a-f0-9]{6})[a-f0-9]*…?/i, "$1$2…");
   }
   if (/^\+?[\w.@-]+$/.test(stripped) && stripped.length > 3) return `dm:${stripped}`;
   return stripped;

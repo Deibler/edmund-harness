@@ -6,15 +6,17 @@
  * Write: validate the merged object, stringify with smol-toml, write atomically
  * via a temp file + rename, keeping a timestamped backup for each save.
  *
- * Inline comments inside TOML are lost on save — smol-toml has no
- * comment-preserving round-trip. A leading comment block (everything before
- * the first `[section]` in the file) is preserved.
+ * The file is written in the shared layout (src/config/layout.ts): sections
+ * grouped by how often they change, each with its note. Comments a person
+ * wrote inside a section are lost on save (smol-toml has no comment-keeping
+ * round-trip); the notes block at the top of the file is kept.
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { parse as parseToml } from "smol-toml";
 import { ConfigSchema } from "../../../src/config/config.ts";
+import { formatChecked, machineNotes } from "../../../src/config/layout.ts";
 
 const CONFIG_PATH = resolve(import.meta.dir, "../../../config.toml");
 
@@ -115,28 +117,9 @@ export async function writeConfig(next: Record<string, unknown>): Promise<{ back
   return { backupPath };
 }
 
-function serializeToml(obj: Record<string, unknown>): string {
-  // Preserve the file's leading comment block (everything before the first
-  // `[section]`). smol-toml drops comments but the top-of-file block is
-  // usually where the user has orientation notes.
-  const leader = extractLeadingComments();
-  const body = stringifyToml(obj);
-  return leader ? `${leader}\n${body}\n` : `${body}\n`;
-}
-
-function extractLeadingComments(): string {
-  if (!existsSync(CONFIG_PATH)) return "";
-  const raw = readFileSync(CONFIG_PATH, "utf8");
-  const out: string[] = [];
-  for (const line of raw.split("\n")) {
-    const t = line.trim();
-    if (t === "" || t.startsWith("#")) {
-      out.push(line);
-      continue;
-    }
-    break;
-  }
-  return out.join("\n").replace(/\s+$/, "");
+export function serializeToml(obj: Record<string, unknown>): string {
+  const notes = existsSync(CONFIG_PATH) ? machineNotes(readFileSync(CONFIG_PATH, "utf8")) : [];
+  return formatChecked(obj, notes);
 }
 
 /**

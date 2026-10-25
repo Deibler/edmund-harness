@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -257,7 +257,7 @@ export function skillTools(ctx: ToolContext): ToolDef[] {
             return text(serveAsk(rec, ctx.sessionKey, state, consentDeps));
           }
         }
-        const body = readFileSync(path, "utf8");
+        const body = readFileSync(path, "utf8") + referencesFooter(dirname(path));
         // Record the read. This is the only signal the harness has for which
         // skills are earning their place in the catalogue, and the retirement
         // pass depends on it. Written after every gate, so a withheld body is
@@ -481,4 +481,20 @@ function parseDescription(md: string): string | null {
 
 function text(body: string, isError = false) {
   return { content: [{ type: "text" as const, text: body }], isError };
+}
+
+/**
+ * A skill that points at `references/` files has to say where they are: the
+ * body is returned on its own, and the model cannot read a relative path it
+ * has no root for. Lists them as absolute paths after the body.
+ */
+export function referencesFooter(skillDir: string): string {
+  const refs = join(skillDir, "references");
+  if (!existsSync(refs)) return "";
+  const files = readdirSync(refs)
+    .filter((f) => !f.startsWith("."))
+    .sort()
+    .slice(0, 30);
+  if (files.length === 0) return "";
+  return `\n\n---\nThis skill's references (read them with your file tools when the steps above point to them):\n${files.map((f) => `- ${join(refs, f)}`).join("\n")}\n`;
 }

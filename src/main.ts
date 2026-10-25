@@ -648,11 +648,12 @@ async function main() {
   const integrationRuntimes = await startIntegrationRuntimes({
     config,
     isBusy: isWorkerPoolBusy,
-    fireSystemEvent: (sessionKey, systemEvent) => {
+    fireSystemEvent: (sessionKey, systemEvent, opts) => {
       crons.create({
         sessionKey,
         systemEvent,
         schedule: { kind: "once", atMs: Date.now() + 1000 },
+        attachImages: opts?.attachImages,
       });
       scheduler.poke();
     },
