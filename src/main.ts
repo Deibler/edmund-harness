@@ -273,7 +273,7 @@ async function main() {
   );
   outcomeSweep.unref?.();
   const echoes = new EchoCache();
-  const personMaintainer = new PersonMaintainer({ config, state, chatDb, contacts });
+  const personMaintainer = new PersonMaintainer({ config, state, chatDb, contacts, crons });
   // Cross-conversation skill curation. Unlike the person maintainer this is
   // not reply-triggered — its whole premise is the pattern no single
   // conversation can see — so it runs on a wall clock and persists its own

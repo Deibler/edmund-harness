@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { groupFilePath, personFilePath } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
+import type { CronStore } from "../cron/store.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { getRecentMessages } from "../imessage/history.ts";
 import { getChatDisplayName } from "../imessage/participants.ts";
@@ -9,7 +10,7 @@ import type { ContactBook } from "../sessions/contacts.ts";
 import { type SessionKey, chatIdFromKey, isGroupSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { recordSpend } from "../spend/ledger.ts";
-import { easternDateTime } from "../util/clock.ts";
+import { easternDateTime, homeWallClockMs } from "../util/clock.ts";
 import { log } from "../util/log.ts";
 import {
   archiveGroupFile,
@@ -100,6 +101,7 @@ Schema:
 {
   "notes": [{ "section": "<slug>", "note": "<short prose>" }, ...],
   "supersede": [{ "old": "<existing line, quoted exactly>", "section": "<slug>", "new": "<corrected note>" | null }, ...],
+  "deadlines": [{ "what": "<the commitment, short>", "due": "YYYY-MM-DD", "deliverable": "<what to have ready>" }, ...],
   "full_rewrite": null | "<full new markdown body>",
   "reason": "<one-line explanation, for the maintainer log>"
 }
@@ -110,6 +112,13 @@ adding a note that contradicts it:
 - "old": the existing line's text, quoted exactly as it appears in the file
   (enough of it to match that one line; the date prefix may be left off).
 - "new": the corrected note for "section", or null to retire the line.
+Deadlines: list a dated commitment only when the exchange states the date
+outright, either the person's own deadline ("TEACH application due Nov 13",
+"rent renewal by the 1st") or something the assistant promised by a day ("I'll
+have the compliance reply ready Thursday"). "deliverable" names the thing to
+draft (the reply, the form answers, the message to their director), not "a
+reminder". A turn is scheduled the day before to draft it. Never guess a date.
+
 Supersede when someone corrects a fact (dates, names, numbers), a
 recommendation was retracted, a plan was cancelled or done, or an open item
 resolved. When something ENDS (a death, a job, a club, a trip, a treatment),
@@ -135,6 +144,8 @@ export type MaintenanceDeps = {
   state: StateStore;
   chatDb: ChatDb;
   contacts: ContactBook;
+  /** Where dated commitments get their drafting turn. Absent in tests. */
+  crons?: CronStore;
 };
 
 export type MaintenanceResult =
@@ -243,6 +254,9 @@ async function runDmMaintenance(args: {
     (body) => writePersonFile({ handle, displayName, body }),
     `dm:${shortHandle(handle)}`,
   );
+  if (deps.crons && parsed.deadlines.length > 0) {
+    scheduleDeadlines(deps.crons, sessionKey, parsed.deadlines);
+  }
   let applied = 0;
   for (const n of [...replacements, ...parsed.notes]) {
     try {
@@ -379,6 +393,9 @@ async function runGroupMaintenance(args: {
     (body) => writeGroupFile({ chatGuid, displayName, body }),
     `group:${shortGuid(chatGuid)}`,
   );
+  if (deps.crons && parsed.deadlines.length > 0) {
+    scheduleDeadlines(deps.crons, sessionKey, parsed.deadlines);
+  }
   let applied = 0;
   for (const n of [...replacements, ...parsed.notes]) {
     try {
@@ -475,6 +492,7 @@ function buildPrompt(args: {
 }
 
 export type Supersession = { old: string; section: string; replacement: string | null };
+export type Deadline = { what: string; due: string; deliverable: string };
 
 export function parseOutput(
   raw: string,
@@ -482,6 +500,7 @@ export function parseOutput(
 ): {
   notes: Array<{ section: string; note: string }>;
   supersede: Supersession[];
+  deadlines: Deadline[];
   fullRewrite: string | null;
   reason: string;
 } | null {
@@ -528,7 +547,17 @@ export function parseOutput(
   const fullRewrite =
     typeof o.full_rewrite === "string" && o.full_rewrite.trim().length > 0 ? o.full_rewrite : null;
   const reason = typeof o.reason === "string" ? o.reason : "";
-  return { notes, supersede, fullRewrite, reason };
+  const deadlines: Deadline[] = [];
+  for (const x of Array.isArray(o.deadlines) ? o.deadlines : []) {
+    if (!x || typeof x !== "object") continue;
+    const xx = x as Record<string, unknown>;
+    const what = typeof xx.what === "string" ? xx.what.trim() : "";
+    const due = typeof xx.due === "string" ? xx.due.trim() : "";
+    const deliverable = typeof xx.deliverable === "string" ? xx.deliverable.trim() : "";
+    if (what.length < 4 || !/^\d{4}-\d{2}-\d{2}$/.test(due)) continue;
+    deadlines.push({ what, due, deliverable });
+  }
+  return { notes, supersede, deadlines, fullRewrite, reason };
 }
 
 /**
@@ -560,6 +589,59 @@ export function settleMaintenance(
   }
   io.stamp();
   return { kind: "append" };
+}
+
+export const DEADLINE_PREFIX = "[Deadline]";
+
+/**
+ * Give each dated commitment a drafting turn the day before it is due (10:00
+ * Eastern; within the hour when that has passed), unless one is already
+ * queued for it. A dated open item used to sit in the file and nothing acted
+ * on it: a compliance reply promised for a Thursday was never sent, and an
+ * application due in three weeks needed a signature first and got no nudge.
+ * The turn drafts the thing, which is what the person needs, rather than
+ * reminding them it exists.
+ */
+export function scheduleDeadlines(
+  crons: Pick<CronStore, "create" | "listActive">,
+  sessionKey: SessionKey,
+  deadlines: Deadline[],
+  nowMs = Date.now(),
+): number {
+  const queued = new Set(
+    crons
+      .listActive(sessionKey)
+      .filter((j) => j.systemEvent.startsWith(DEADLINE_PREFIX))
+      .map((j) => deadlineKey(j.systemEvent.slice(DEADLINE_PREFIX.length).split(" — due ")[0] ?? "")),
+  );
+  let created = 0;
+  for (const d of deadlines) {
+    const [y, m, day] = d.due.split("-").map(Number) as [number, number, number];
+    const dueMs = homeWallClockMs(y, m, day, 23, 59);
+    if (dueMs <= nowMs) continue;
+    if (queued.has(deadlineKey(d.what))) continue;
+    const dayBefore = homeWallClockMs(y, m, day, 10, 0) - 86_400_000;
+    const atMs = dayBefore > nowMs ? dayBefore : nowMs + 60 * 60_000;
+    crons.create({
+      sessionKey,
+      systemEvent: [
+        `${DEADLINE_PREFIX} ${d.what} — due ${d.due}.`,
+        "",
+        `Draft ${d.deliverable || "what this needs"} now and send it to them ready to use, with anything they must do themselves (a signature, a login, a payment) named in one line.`,
+        "If the thread shows it is already done or no longer wanted, reply KEEP_QUIET.",
+      ].join("\n"),
+      schedule: { kind: "once", atMs },
+      harnessWritten: true,
+    });
+    queued.add(deadlineKey(d.what));
+    created++;
+  }
+  if (created > 0) log.info("maintainer", "deadline turns scheduled", { session: sessionKey, created });
+  return created;
+}
+
+function deadlineKey(what: string): string {
+  return what.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 /**
