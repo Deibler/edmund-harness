@@ -128,6 +128,7 @@ each default are in [group-addressing.md](group-addressing.md).
 | `reply_threshold` | `0.7` | Wake when "wants a reply" reaches this |
 | `addressed_floor` | `0.5` | Soon after he spoke, "said to him" must also reach this |
 | `addressed_threshold` | `0.7` | For a swipe-reply to him or a misspelled name, "said to him" alone wakes him at this |
+| (fixed) | 60 min | A message after his own question (fewer than three others since) is a candidate too; "said to him" at `addressed_floor` wakes him |
 | `streak_budget` | `0.6` | Expected wrong wakes allowed in one run of wakes since someone last named him or swipe-replied to him |
 | `max_wakes_per_group_per_day` | `20` | Each wake is a full turn; this bounds a bad day |
 
@@ -145,6 +146,7 @@ Applies to both providers despite the name.
 | `context_window_tokens` | unset | Codex only. Leave unset so the CLI uses its own metadata |
 | `agent_model` | `claude-sonnet-5` | Model for detached sub-agents |
 | `agent_effort` | unset | Effort for sub-agents |
+| `background_effort` | unset | Effort for satellite one-shots (maintainer, consolidation, ghost, judge, curator). Unset = no flag, the model's CLI default. Never inherits `effort` |
 
 ### `[claude.pool]`
 
@@ -531,3 +533,29 @@ are not for you to set.
 | `EDMUND_CONFIG_PATH` | Config path for subprocesses and hooks |
 | `SKYSTREAM_API_HOSTS`, `SKYCAM_CAMERA_HOST` | LAN hosts for two personal skills |
 | `KITCHEN_*`, `INSTANT_SHARE_*`, `FISHING_API_URL`, `CONSTELLATION_REPO` | Integration and skill specific |
+
+## Media, the shelf and the CLI
+
+### `[tools]` speech to text
+
+| Key | Default | Meaning |
+|---|---|---|
+| `local_stt_model` | `models/ggml-small.en.bin` | whisper.cpp model file, relative to the data dir. Tried before any hosted backend |
+| `whisper_cli` | `whisper-cli` | The whisper.cpp binary (`brew install whisper-cpp`). Missing model or binary = hosted only |
+
+Videos are watched locally: frames on contact sheets the model reads, plus the
+transcript. A hosted video model is used only when `analyze_video` names one.
+
+### `[shelf]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `origin` | `""` | Public URL of the kitchen host's named tunnel. Files are served at `<origin>/shelf/<token>/`. Empty = no shelf |
+
+### The Claude CLI
+
+Not pinned on purpose: `claude update` reaches Edmund underneath. On boot and
+every 30 minutes the daemon reads `claude --version`; a version it has not
+checked gets a canary through a one-shot and a stream-json worker turn, and a
+failure alerts the operator. The last result is in `data/cli-version.json`.
+

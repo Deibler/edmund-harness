@@ -26,6 +26,7 @@ import { logsCommand } from "./commands/logs.ts";
 import { portalCommand } from "./commands/portal.ts";
 import { recoveryCommand } from "./commands/recovery.ts";
 import { restartCommand } from "./commands/restart.ts";
+import { reviewCommand } from "./commands/review.ts";
 import { sessionsCommand } from "./commands/sessions.ts";
 import { skillsCommand } from "./commands/skills.ts";
 import { startCommand } from "./commands/start.ts";
@@ -56,6 +57,7 @@ ${color.bold("Observe")}
   ${color.cyan("credits")}      generation credits — list / show / mode / grant / pause / apply / liability
   ${color.cyan("portal")}       per-person portal links — link <handle> / revoke <handle>
   ${color.cyan("config")}       show config sections
+  ${color.cyan("review")}       write this week's review sheet (--days 7, --sample 40)
 
 ${color.bold("Misc")}
   ${color.cyan("install")}      symlink this CLI into /opt/homebrew/bin
@@ -125,6 +127,9 @@ async function main() {
       break;
     case "portal":
       await portalCommand(p);
+      break;
+    case "review":
+      await reviewCommand(p);
       break;
     case "config":
       await configCommand(p);

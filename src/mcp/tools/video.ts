@@ -1,7 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { z } from "zod";
 import { dispatchOrRun } from "../../background/dispatch.ts";
-import { analyzeVideoFile, hasVideoAnalysisBackend } from "../../media/video-analyze.ts";
+import { analyzeVideoFile } from "../../media/video-analyze.ts";
+import { describeWatch, watchVideoLocally } from "../../media/video-watch.ts";
 import { assertPathSafe } from "../../util/path-safety.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef } from "./types.ts";
@@ -18,33 +19,41 @@ const AnalyzeVideoInput = z.object({
     .describe(
       "Optional question or instruction, e.g. 'What does the person say?' or 'Describe the last 5 seconds'. Defaults to a general description.",
     ),
+  dense: z
+    .boolean()
+    .optional()
+    .describe(
+      "Sample up to 81 frames instead of 36: for form checks, fast motion or a moment you need to find exactly.",
+    ),
   model: z
     .string()
     .optional()
     .describe(
-      "Model override. Omit for the default (google/gemini-3.5-flash via OpenRouter); a slash slug picks another OpenRouter video-capable model.",
+      "Hosted video model, only when you need one: an OpenRouter slug such as google/gemini-3.5-flash (needs credit). Omit to watch it yourself.",
     ),
   async: z
     .boolean()
     .optional()
     .describe(
-      "Run in background. Video analysis can take 30-90s depending on clip length; pass true for anything longer than a few seconds so the session lock releases.",
+      "Run in background. Watching locally takes seconds, so only pass true for very long videos (several minutes); the result then arrives as sheet paths to Read.",
     ),
 });
 
 /**
- * Claude has no built-in video vision, so we delegate to a video-capable
- * model — Gemini via OpenRouter inline video (primary; oversized files get
- * an ffmpeg analysis proxy first), or the direct Gemini File API when only
- * that key is configured. Received iMessage videos live under the sandbox's
- * `received-videos/` dir after copyReceivedAttachments runs.
+ * Claude has no video input, so it watches the way a person skims: frames
+ * sampled across the clip on contact sheets it reads as images, plus a local
+ * transcript of the audio. Nothing hosted, so nothing prepaid to run out (the
+ * hosted path refused 30 videos and voice notes in one week when its balance
+ * fell under its floor). A hosted video model is still reachable by naming
+ * one. Received iMessage videos live under the sandbox's `received-videos/`
+ * dir after copyReceivedAttachments runs.
  */
 export function videoTools(ctx: ToolContext): ToolDef[] {
   return [
     {
       name: "analyze_video",
       description:
-        "Analyze a video file (describe content, transcribe speech, answer questions about it) via Gemini. Use when the user sends a video and you need to understand what's in it — the built-in Read tool can't process video. For clips longer than a few seconds, pass async:true.",
+        "Watch a video: returns its frames on contact sheets (images you look at yourself) plus a transcript of what is said. Use when someone sends a video or you need to check one you made — the built-in Read tool can't open video. Takes a few seconds. Pass dense:true for motion or exact moments.",
       inputSchema: AnalyzeVideoInput,
       handler: async (args) => {
         try {
@@ -66,25 +75,29 @@ export function videoTools(ctx: ToolContext): ToolDef[] {
             isError: true,
           };
         }
-        if (!hasVideoAnalysisBackend(ctx.config)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "No video analysis backend configured (need config.keys.openrouter or keys.gemini). Ask the user to set one before analyzing videos.",
-              },
-            ],
-            isError: true,
-          };
-        }
         if (args.async === true) {
           return dispatchOrRun("analyze_video", args as Record<string, unknown>, ctx);
         }
-        const text = await analyzeVideoFile(
-          { filePath: args.file_path, prompt: args.prompt, model: args.model },
-          ctx.config,
-        );
-        return { content: [{ type: "text", text }] };
+        if (args.model?.includes("/")) {
+          const text = await analyzeVideoFile(
+            { filePath: args.file_path, prompt: args.prompt, model: args.model },
+            ctx.config,
+          );
+          return { content: [{ type: "text", text }] };
+        }
+        const watched = await watchVideoLocally(args.file_path, ctx.config, {
+          dense: args.dense === true,
+        });
+        return {
+          content: [
+            { type: "text", text: describeWatch(watched, args.prompt) },
+            ...watched.sheets.map((s) => ({
+              type: "image" as const,
+              data: readFileSync(s.path).toString("base64"),
+              mimeType: "image/jpeg",
+            })),
+          ],
+        };
       },
     },
   ];

@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { groupFilePath, personFilePath } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
+import type { CronStore } from "../cron/store.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { getRecentMessages } from "../imessage/history.ts";
 import { getChatDisplayName } from "../imessage/participants.ts";
@@ -9,12 +10,13 @@ import type { ContactBook } from "../sessions/contacts.ts";
 import { type SessionKey, chatIdFromKey, isGroupSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { recordSpend } from "../spend/ledger.ts";
-import { easternDateTime } from "../util/clock.ts";
+import { easternDateTime, homeWallClockMs } from "../util/clock.ts";
 import { log } from "../util/log.ts";
 import {
   archiveGroupFile,
   archivePersonFile,
   archiveRewriteDrops,
+  archiveSupersededLines,
   archivedObservationCount,
   personArchivableSections,
   reconcileRewrite,
@@ -49,6 +51,10 @@ import { type PersonSection, appendPersonNote } from "./write-note.ts";
  */
 
 const MAINTAINER_TIMEOUT_MS = 90_000;
+/** The consolidation pass reads the whole file plus its archived observations
+ *  and runs on the judgment model (Opus); 90 s timed out 13 of its first 20
+ *  calls. It runs off the reply path, so waiting longer costs nobody. */
+const CONSOLIDATION_TIMEOUT_MS = 300_000;
 
 const DM_SECTIONS: PersonSection[] = [
   "who-they-are",
@@ -94,12 +100,35 @@ Output ONE valid JSON object — nothing else, no prose, no markdown fences.
 Schema:
 {
   "notes": [{ "section": "<slug>", "note": "<short prose>" }, ...],
+  "supersede": [{ "old": "<existing line, quoted exactly>", "section": "<slug>", "new": "<corrected note>" | null }, ...],
+  "deadlines": [{ "what": "<the commitment, short>", "due": "YYYY-MM-DD", "deliverable": "<what to have ready>" }, ...],
   "full_rewrite": null | "<full new markdown body>",
   "reason": "<one-line explanation, for the maintainer log>"
 }
 
+Corrections REPLACE, they do not stack. When the exchange shows an existing
+line is wrong, outdated or no longer true, put it in "supersede" instead of
+adding a note that contradicts it:
+- "old": the existing line's text, quoted exactly as it appears in the file
+  (enough of it to match that one line; the date prefix may be left off).
+- "new": the corrected note for "section", or null to retire the line.
+Deadlines: list a dated commitment only when the exchange states the date
+outright, either the person's own deadline ("grant application due Nov 13",
+"rent renewal by the 1st") or something the assistant promised by a day ("I'll
+have the compliance reply ready Thursday"). "deliverable" names the thing to
+draft (the reply, the form answers, the message to their director), not "a
+reminder". A turn is scheduled the day before to draft it. Never guess a date.
+
+Supersede when someone corrects a fact (dates, names, numbers), a
+recommendation was retracted, a plan was cancelled or done, or an open item
+resolved. When something ENDS (a death, a job, a club, a trip, a treatment),
+retire every line that assumes it continues: medication courses, reminders,
+"ask about" items, jokes about them. A stale line in the file is repeated as
+fact on every later turn; one that contradicts its own correction lower down
+has already produced a résumé with the wrong dates.
+
 Conservatism is the default:
-- If the exchange added nothing durable, return {"notes": [], "full_rewrite": null, "reason": "nothing new worth noting"}. That is the correct output most of the time.
+- If the exchange added nothing durable, return {"notes": [], "supersede": [], "full_rewrite": null, "reason": "nothing new worth noting"}. That is the correct output most of the time.
 - A note must be DURABLE — true after this conversation ends. "They love sourdough" is durable; "they're hungry right now" is not.
 - A note must be GROUNDED — visible in the recent exchange. Do not invent or infer from absence.
 - A note must be NEW — read the current file carefully. If the same fact (or a near-paraphrase) is already there, do not re-add. The append path is de-duped by exact text but you should also catch semantic dupes.
@@ -115,6 +144,8 @@ export type MaintenanceDeps = {
   state: StateStore;
   chatDb: ChatDb;
   contacts: ContactBook;
+  /** Where dated commitments get their drafting turn. Absent in tests. */
+  crons?: CronStore;
 };
 
 export type MaintenanceResult =
@@ -217,8 +248,17 @@ async function runDmMaintenance(args: {
     };
   }
 
+  const replacements = applySupersessions(
+    parsed.supersede,
+    () => readPersonFile(handle),
+    (body) => writePersonFile({ handle, displayName, body }),
+    `dm:${shortHandle(handle)}`,
+  );
+  if (deps.crons && parsed.deadlines.length > 0) {
+    scheduleDeadlines(deps.crons, sessionKey, parsed.deadlines);
+  }
   let applied = 0;
-  for (const n of parsed.notes) {
+  for (const n of [...replacements, ...parsed.notes]) {
     try {
       appendPersonNote({
         handle,
@@ -240,37 +280,38 @@ async function runDmMaintenance(args: {
   // persist and are revised across passes, so knowledge earned from an
   // observation survives that observation leaving the live file, and the
   // evidence dates still resolve because the archive is recall-indexed.
-  try {
-    const before = readPersonFile(handle);
-    if (before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path))) {
-      await consolidatePerson(handle, (system, user) =>
-        spawnMaintainerModel(judgmentModel(cfg), system, user, {
-          dataDir: deps.config.paths.data_dir,
-          sessionKey,
-        }),
+  const before = readPersonFile(handle);
+  await consolidateThenArchive({
+    subject: `dm:${shortHandle(handle)}`,
+    due: Boolean(
+      before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path)),
+    ),
+    consolidate: () =>
+      consolidatePerson(handle, (system, user) =>
+        spawnMaintainerModel(
+          judgmentModel(cfg),
+          system,
+          user,
+          { dataDir: deps.config.paths.data_dir, sessionKey },
+          CONSOLIDATION_TIMEOUT_MS,
+        ),
+      ),
+    // Size gate, AFTER consolidation. Once the file has principles, "Our
+    // Dynamic" joins the archivable sections — that section is the principles
+    // in undistilled form ("he pings until answered", "his cut ships"), so
+    // keeping both live pays twice for the same knowledge. It stays exempt
+    // until the rules actually exist. `Who They Are` is never archived:
+    // identity, medical history and methodology are not something a rule
+    // encodes.
+    archive: () => {
+      const body = readPersonFile(handle)?.body ?? "";
+      archivePersonFile(
+        basename(personFilePath(handle)),
+        undefined,
+        personArchivableSections(body),
       );
-    }
-  } catch (err) {
-    // Never fail maintenance over consolidation; the log is still correct.
-    log.warn("persona-consolidate", "pass failed", { err: (err as Error).message });
-  }
-
-  // Size gate, AFTER consolidation. Once the file has principles, "Our
-  // Dynamic" joins the archivable sections — that section is the principles in
-  // undistilled form ("he pings until answered", "his cut ships"), so keeping
-  // both live pays twice for the same knowledge. It stays exempt until the
-  // rules actually exist. `Who They Are` is never archived: identity, medical
-  // history and methodology are not something a rule encodes.
-  try {
-    const body = readPersonFile(handle)?.body ?? "";
-    archivePersonFile(
-      basename(personFilePath(handle)),
-      undefined,
-      personArchivableSections(body),
-    );
-  } catch (err) {
-    log.warn("maintainer", "archive sweep failed", { handle, err: (err as Error).message });
-  }
+    },
+  });
   log.info("maintainer", `dm:${shortHandle(handle)} → +${applied} notes`, {
     reason: parsed.reason,
   });
@@ -346,8 +387,17 @@ async function runGroupMaintenance(args: {
     };
   }
 
+  const replacements = applySupersessions(
+    parsed.supersede,
+    () => readGroupFile(chatGuid),
+    (body) => writeGroupFile({ chatGuid, displayName, body }),
+    `group:${shortGuid(chatGuid)}`,
+  );
+  if (deps.crons && parsed.deadlines.length > 0) {
+    scheduleDeadlines(deps.crons, sessionKey, parsed.deadlines);
+  }
   let applied = 0;
-  for (const n of parsed.notes) {
+  for (const n of [...replacements, ...parsed.notes]) {
     try {
       appendGroupNote({
         chatGuid,
@@ -370,35 +420,31 @@ async function runGroupMaintenance(args: {
   // doctrine — turning a drift into a personality. The group prompt separates
   // how the room works from how Edmund behaves in it, and asks him to correct
   // his own drift rather than ratify it.
-  try {
-    const before = readGroupFile(chatGuid);
-    if (before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path))) {
-      await consolidatePerson(
+  const before = readGroupFile(chatGuid);
+  await consolidateThenArchive({
+    subject: `group:${shortGuid(chatGuid)}`,
+    due: Boolean(
+      before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path)),
+    ),
+    consolidate: () =>
+      consolidatePerson(
         chatGuid,
         (system, user) =>
-          spawnMaintainerModel(judgmentModel(cfg), system, user, {
-            dataDir: deps.config.paths.data_dir,
-            sessionKey,
-          }),
+          spawnMaintainerModel(
+            judgmentModel(cfg),
+            system,
+            user,
+            { dataDir: deps.config.paths.data_dir, sessionKey },
+            CONSOLIDATION_TIMEOUT_MS,
+          ),
         GROUP_CONSOLIDATION_PROMPT,
         groupFilePath,
         "group",
-      );
-    }
-  } catch (err) {
-    log.warn("persona-consolidate", "group pass failed", { err: (err as Error).message });
-  }
-
-  // Same size gate as person files: aged Group Dynamic / Shared History
-  // bullets move to the append-only archive once the file is oversized.
-  try {
-    archiveGroupFile(basename(groupFilePath(chatGuid)));
-  } catch (err) {
-    log.warn("maintainer", "group archive sweep failed", {
-      chatGuid,
-      err: (err as Error).message,
-    });
-  }
+      ),
+    // Same size gate as person files: aged Group Dynamic / Shared History
+    // bullets move to the append-only archive once the file is oversized.
+    archive: () => archiveGroupFile(basename(groupFilePath(chatGuid))),
+  });
   log.info("maintainer", `group:${shortGuid(chatGuid)} → +${applied} notes`, {
     reason: parsed.reason,
   });
@@ -445,11 +491,16 @@ function buildPrompt(args: {
   ].join("\n");
 }
 
-function parseOutput(
+export type Supersession = { old: string; section: string; replacement: string | null };
+export type Deadline = { what: string; due: string; deliverable: string };
+
+export function parseOutput(
   raw: string,
   validSections: string[],
 ): {
   notes: Array<{ section: string; note: string }>;
+  supersede: Supersession[];
+  deadlines: Deadline[];
   fullRewrite: string | null;
   reason: string;
 } | null {
@@ -482,10 +533,31 @@ function parseOutput(
     }
     notes.push({ section, note });
   }
+  const supersede: Supersession[] = [];
+  for (const x of Array.isArray(o.supersede) ? o.supersede : []) {
+    if (!x || typeof x !== "object") continue;
+    const xx = x as Record<string, unknown>;
+    const oldText = typeof xx.old === "string" ? xx.old.trim() : "";
+    if (oldText.length < 8) continue;
+    const section = typeof xx.section === "string" ? xx.section : "";
+    const replacement = typeof xx.new === "string" && xx.new.trim() ? xx.new.trim() : null;
+    if (replacement && !validSections.includes(section)) continue;
+    supersede.push({ old: oldText, section, replacement });
+  }
   const fullRewrite =
     typeof o.full_rewrite === "string" && o.full_rewrite.trim().length > 0 ? o.full_rewrite : null;
   const reason = typeof o.reason === "string" ? o.reason : "";
-  return { notes, fullRewrite, reason };
+  const deadlines: Deadline[] = [];
+  for (const x of Array.isArray(o.deadlines) ? o.deadlines : []) {
+    if (!x || typeof x !== "object") continue;
+    const xx = x as Record<string, unknown>;
+    const what = typeof xx.what === "string" ? xx.what.trim() : "";
+    const due = typeof xx.due === "string" ? xx.due.trim() : "";
+    const deliverable = typeof xx.deliverable === "string" ? xx.deliverable.trim() : "";
+    if (what.length < 4 || !/^\d{4}-\d{2}-\d{2}$/.test(due)) continue;
+    deadlines.push({ what, due, deliverable });
+  }
+  return { notes, supersede, deadlines, fullRewrite, reason };
 }
 
 /**
@@ -517,6 +589,116 @@ export function settleMaintenance(
   }
   io.stamp();
   return { kind: "append" };
+}
+
+export const DEADLINE_PREFIX = "[Deadline]";
+
+/**
+ * Give each dated commitment a drafting turn the day before it is due (10:00
+ * Eastern; within the hour when that has passed), unless one is already
+ * queued for it. A dated open item used to sit in the file and nothing acted
+ * on it: a compliance reply promised for a Thursday was never sent, and an
+ * application due in three weeks needed a signature first and got no nudge.
+ * The turn drafts the thing, which is what the person needs, rather than
+ * reminding them it exists.
+ */
+export function scheduleDeadlines(
+  crons: Pick<CronStore, "create" | "listActive">,
+  sessionKey: SessionKey,
+  deadlines: Deadline[],
+  nowMs = Date.now(),
+): number {
+  const queued = new Set(
+    crons
+      .listActive(sessionKey)
+      .filter((j) => j.systemEvent.startsWith(DEADLINE_PREFIX))
+      .map((j) => deadlineKey(j.systemEvent.slice(DEADLINE_PREFIX.length).split(" — due ")[0] ?? "")),
+  );
+  let created = 0;
+  for (const d of deadlines) {
+    const [y, m, day] = d.due.split("-").map(Number) as [number, number, number];
+    const dueMs = homeWallClockMs(y, m, day, 23, 59);
+    if (dueMs <= nowMs) continue;
+    if (queued.has(deadlineKey(d.what))) continue;
+    const dayBefore = homeWallClockMs(y, m, day, 10, 0) - 86_400_000;
+    const atMs = dayBefore > nowMs ? dayBefore : nowMs + 60 * 60_000;
+    crons.create({
+      sessionKey,
+      systemEvent: [
+        `${DEADLINE_PREFIX} ${d.what} — due ${d.due}.`,
+        "",
+        `Draft ${d.deliverable || "what this needs"} now and send it to them ready to use, with anything they must do themselves (a signature, a login, a payment) named in one line.`,
+        "If the thread shows it is already done or no longer wanted, reply KEEP_QUIET.",
+      ].join("\n"),
+      schedule: { kind: "once", atMs },
+      harnessWritten: true,
+    });
+    queued.add(deadlineKey(d.what));
+    created++;
+  }
+  if (created > 0) log.info("maintainer", "deadline turns scheduled", { session: sessionKey, created });
+  return created;
+}
+
+function deadlineKey(what: string): string {
+  return what.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Take superseded lines out of a body. Each `old` must match exactly one
+ * bullet line (whitespace-insensitive, date prefix optional); anything that
+ * matches none or several is left alone and reported, because removing the
+ * wrong line is worse than leaving a stale one. Pure: the caller writes.
+ */
+export function removeSuperseded(
+  body: string,
+  items: Supersession[],
+): { body: string; removed: string[]; matched: Supersession[]; unmatched: string[] } {
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  const lines = body.split("\n");
+  const removed: string[] = [];
+  const matched: Supersession[] = [];
+  const unmatched: string[] = [];
+  const drop = new Set<number>();
+  for (const item of items) {
+    const needle = norm(item.old.replace(/^-\s*/, ""));
+    const hits = lines
+      .map((l, i) => ({ l, i }))
+      .filter(({ l, i }) => !drop.has(i) && /^\s*-\s/.test(l) && norm(l).includes(needle));
+    if (hits.length !== 1) {
+      unmatched.push(item.old);
+      continue;
+    }
+    drop.add(hits[0]!.i);
+    removed.push(hits[0]!.l);
+    matched.push(item);
+  }
+  return { body: lines.filter((_, i) => !drop.has(i)).join("\n"), removed, matched, unmatched };
+}
+
+/**
+ * Apply supersessions to a live file: re-read it, remove the matched lines,
+ * archive them as superseded, write. Returns the replacement notes to append
+ * through the normal path.
+ */
+function applySupersessions(
+  items: Supersession[],
+  read: () => { path: string; body: string } | null,
+  write: (body: string) => void,
+  label: string,
+): Array<{ section: string; note: string }> {
+  if (items.length === 0) return [];
+  const current = read();
+  if (!current) return [];
+  const { body, removed, matched, unmatched } = removeSuperseded(current.body, items);
+  if (removed.length > 0) {
+    archiveSupersededLines(current.path, current.body, removed);
+    write(body);
+  }
+  log.info("maintainer", `${label} → superseded ${removed.length}`, {
+    unmatched: unmatched.length,
+  });
+  return matched.flatMap((i) => (i.replacement ? [{ section: i.section, note: i.replacement }] : []));
 }
 
 /**
@@ -565,12 +747,57 @@ export function judgmentModel(cfg: Config["people_maintainer"]): string {
   return cfg.consolidation_model || cfg.model;
 }
 
+/**
+ * Consolidate, then run the size gate, and run the gate only when the rules
+ * are current. The archiver moves observations out of the prompt on the
+ * understanding that a principle now carries what they taught. When a due
+ * consolidation fails, that is not true: from 2026-10-23 every consolidation
+ * of the operator's file timed out while the archiver kept moving 20+ newer
+ * observations out, and a vet's name left another person's live file the
+ * same way. A held sweep only delays the size gate; the next successful pass
+ * releases it.
+ */
+export async function consolidateThenArchive(steps: {
+  subject: string;
+  due: boolean;
+  consolidate: () => Promise<{ ok: boolean; reason?: string }>;
+  archive: () => void;
+}): Promise<"archived" | "held"> {
+  if (steps.due) {
+    let failure: string | null = null;
+    try {
+      const result = await steps.consolidate();
+      if (!result.ok) failure = result.reason ?? "not ok";
+    } catch (err) {
+      failure = (err as Error).message;
+    }
+    if (failure !== null) {
+      // Never fail maintenance over consolidation; the log is still correct.
+      log.warn("persona-consolidate", "pass failed, archive held", {
+        subject: steps.subject,
+        reason: failure,
+      });
+      return "held";
+    }
+  }
+  try {
+    steps.archive();
+  } catch (err) {
+    log.warn("maintainer", "archive sweep failed", {
+      subject: steps.subject,
+      err: (err as Error).message,
+    });
+  }
+  return "archived";
+}
+
 /** One maintainer model call, spend-accounted (subsystem "maintainer"). */
 async function spawnMaintainerModel(
   model: string,
   systemPrompt: string,
   userPrompt: string,
   spend: { dataDir: string; sessionKey: string },
+  timeoutMs = MAINTAINER_TIMEOUT_MS,
 ): Promise<string | null> {
   const r = await runModelOneShot({
     args: [
@@ -582,7 +809,7 @@ async function spawnMaintainerModel(
       systemPrompt,
     ],
     input: userPrompt,
-    timeoutMs: MAINTAINER_TIMEOUT_MS,
+    timeoutMs,
   });
   recordSpend(spend.dataDir, {
     sessionKey: spend.sessionKey,
@@ -592,7 +819,11 @@ async function spawnMaintainerModel(
     durMs: r.durationMs,
   });
   if (!r.ok) {
-    log.warn("persona-maintainer", "model call failed", { err: r.error ?? "unknown" });
+    log.warn("persona-maintainer", "model call failed", {
+      session: spend.sessionKey,
+      model,
+      err: r.error ?? "unknown",
+    });
     return null;
   }
   return r.text;

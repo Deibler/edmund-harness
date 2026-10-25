@@ -31,7 +31,7 @@ export type InboundMessage = {
 
 /** Why an un-named group message was let in, and Jev's probabilities. */
 export type UnnamedWake = {
-  reason: "reply-to-assistant" | "after-assistant" | "name-like";
+  reason: "reply-to-assistant" | "after-assistant" | "name-like" | "answers-question";
   /** P(the message is said to the assistant). */
   addressed: number;
   /** P(the sender wants the assistant to reply or act). */

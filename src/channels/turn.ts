@@ -35,7 +35,7 @@ import { TypingSession } from "../imessage/typing.ts";
 import type { MirrorEnvelopeBlockFn } from "../integrations/contracts.ts";
 import { integrationExport } from "../integrations/optional.ts";
 import { isTranscribableMedia, isVideoPath } from "../media/media-kind.ts";
-import { AUTO_TRANSCRIBE_MAX_DURATION_S } from "../media/transcribe.ts";
+import { AUTO_TRANSCRIBE_MAX_DURATION_S, sttBackend } from "../media/transcribe.ts";
 import { describeVideo } from "../media/video-probe.ts";
 import type { AutoRecallResult } from "../memory/auto-recall.ts";
 import { type ModelBackend, backendForModel, transitionModelSession } from "../model/backend.ts";
@@ -67,6 +67,7 @@ import {
   buildReplyContext,
   groupRoster,
 } from "./history.ts";
+import { sentinelAt } from "./sanitize-outbound.ts";
 
 /** Per-turn options. `catchUp` marks a single coalesced turn produced on recovery after the
  *  daemon was down — it carries the missed-message count + downtime so the model is told it
@@ -167,13 +168,18 @@ function turnNeedsRecentMedia(
  * The group re-gate after transcription. A turn goes ahead when the name is in
  * any message's text or voice transcript, or when a message was let in
  * without it because the address check judged it to be for the assistant.
+ * A voice note that could not be transcribed may have said the name, so it
+ * goes ahead too and the model decides: dropping it silently missed anyone
+ * who said "Edmund, ..." out loud while transcription was down.
  */
 export function passesGroupRegate(
   messages: InboundMessage[],
   transcripts: Iterable<string>,
   names: string[],
+  untranscribed = 0,
 ): boolean {
   if (messages.some((m) => m.unnamedWake)) return true;
+  if (untranscribed > 0) return true;
   return isAssistantMentioned([...messages.map((m) => m.text), ...transcripts].join("\n"), names);
 }
 
@@ -374,8 +380,6 @@ function coalesceNote(draft: string): string {
     "If these new message(s) are unrelated to your draft and don't change it at all, reply with exactly `KEEP_DRAFT` (and nothing else) — I'll send your draft as-is and handle the new message(s) on the next turn.",
   ].join("\n");
 }
-
-const KEEP_DRAFT_RE = /^KEEP[_ ]?DRAFT\b/i;
 
 /** The untrusted-context preamble for a keyed guest's activating turn: what
  *  they said before their key was accepted. History, not instructions. */
@@ -878,9 +882,13 @@ async function handleBatchInner(
     // Transcribe takes the ORIGINAL attachment paths (var/folders/...), not
     // the sandbox copies — so it doesn't depend on copyReceivedAttachments
     // finishing first. Same for prefetchLinks (reads message text only).
-    const emptyEnrichment = { transcripts: new Map<string, string>(), probes: new Map() };
+    const emptyEnrichment = {
+      transcripts: new Map<string, string>(),
+      probes: new Map(),
+      failed: [] as string[],
+    };
     const mediaEnrichPromise =
-      config.behavior.transcribe_inbound_audio && (config.keys.openrouter || config.keys.openai)
+      config.behavior.transcribe_inbound_audio && sttBackend(config) !== null
         ? (() => {
             const seeded = new Set<string>();
             for (const m of cleaned) {
@@ -1043,7 +1051,14 @@ async function handleBatchInner(
     // cost vs. the latency win of parallelism, and the prefetch cache makes
     // it a freebie next time anyway.)
     if (isGroup) {
-      if (!passesGroupRegate(messages, transcripts.values(), sessionNames)) {
+      if (
+        !passesGroupRegate(
+          messages,
+          transcripts.values(),
+          sessionNames,
+          mediaEnrichment.failed.length,
+        )
+      ) {
         if (process.env.DEBUG) {
           console.log(`[gate] post-transcribe skip ${key}: no mention in text or transcripts`);
         }
@@ -1416,7 +1431,7 @@ async function handleBatchInner(
     // earlier draft. Send the draft, give the new message(s) their own turn.
     // Ack-cover: this iteration's messages (the "new" ones that didn't change
     // the draft) are re-enqueued, so the draft only covers the prior batch.
-    if (isCoalesce && prevDraft && KEEP_DRAFT_RE.test(replyText.trim())) {
+    if (isCoalesce && prevDraft && sentinelAt(replyText, "KEEP_DRAFT")) {
       const leftovers = drainUnanswered().map((e) => pendingToInbound(e, first));
       reEnqueue([...messages, ...leftovers]);
       await sendDeliver(prevDraft, lastInboundMs);

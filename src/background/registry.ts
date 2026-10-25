@@ -5,6 +5,7 @@ import * as intSettings from "../integrations/settings.ts";
 import { recordModelOutcome } from "../media/model-scorecard.ts";
 import { transcribeMediaFile } from "../media/transcribe.ts";
 import { analyzeVideoFile } from "../media/video-analyze.ts";
+import { describeWatch, watchVideoLocally } from "../media/video-watch.ts";
 import { indexGeneratedMedia } from "../memory/index-artifact.ts";
 import { generatedPath } from "../persona/media-paths.ts";
 import type { SessionKey } from "../sessions/key.ts";
@@ -286,17 +287,23 @@ async function execAnalyzeVideo(
   ctx: BgToolContext,
 ): Promise<BgToolResult> {
   const filePath = args.file_path as string;
-  const text = await analyzeVideoFile(
-    {
-      filePath,
-      prompt: args.prompt as string | undefined,
-      model: args.model as string | undefined,
-    },
-    ctx.config,
-  );
+  const model = args.model as string | undefined;
+  if (model?.includes("/")) {
+    const text = await analyzeVideoFile(
+      { filePath, prompt: args.prompt as string | undefined, model },
+      ctx.config,
+    );
+    return { resultPath: null, summary: `Video analysis of ${filePath}:\n\n${text}` };
+  }
+  const watched = await watchVideoLocally(filePath, ctx.config, { dense: args.dense === true });
   return {
-    resultPath: null,
-    summary: `Video analysis of ${filePath}:\n\n${text}`,
+    resultPath: watched.sheets[0]?.path ?? null,
+    summary: [
+      `Watched ${filePath}. Read each contact sheet to see it:`,
+      ...watched.sheets.map((s) => `- ${s.path}`),
+      "",
+      describeWatch(watched, args.prompt as string | undefined),
+    ].join("\n"),
   };
 }
 

@@ -6,9 +6,9 @@ import * as gemini from "../tools/gemini-http.ts";
 import * as openrouter from "../tools/openrouter-http.ts";
 
 /**
- * Backend-agnostic "watch this video" — the brains behind the analyze_video
- * tool. OpenRouter (the one live key) is primary: Gemini models there take
- * inline base64 video. The direct Gemini File API remains as fallback for
+ * A hosted video model, reached only when the analyze_video caller names one
+ * (the default is watching locally, see video-watch.ts). OpenRouter is
+ * primary: Gemini models there take inline base64 video. The direct Gemini File API remains as fallback for
  * setups with only a Gemini key.
  *
  * Inline base64 means the request body carries the whole file, so oversized
@@ -36,10 +36,6 @@ export type AnalyzeArgs = {
    *  routing via OpenRouter, or a bare Gemini id on the direct fallback. */
   model?: string;
 };
-
-export function hasVideoAnalysisBackend(config: Config): boolean {
-  return Boolean(config.keys.openrouter || config.keys.gemini);
-}
 
 export async function analyzeVideoFile(args: AnalyzeArgs, config: Config): Promise<string> {
   if (!existsSync(args.filePath)) throw new Error(`file not found: ${args.filePath}`);

@@ -15,7 +15,9 @@ import { protectStdout } from "./stdio-safety.ts";
 import { agentTools } from "./tools/agents.ts";
 import { annotateTools } from "./tools/annotate.ts";
 import { backgroundTools } from "./tools/background.ts";
+import { blindCheckTools } from "./tools/blind-check.ts";
 import { brownNoseTools } from "./tools/brown-nose.ts";
+import { calendarTools } from "./tools/calendar.ts";
 import { contactsTools } from "./tools/contacts.ts";
 import { cronTools } from "./tools/cron.ts";
 import { deepResearchTools } from "./tools/deep-research.ts";
@@ -28,6 +30,7 @@ import { messageTools } from "./tools/message.ts";
 import { missionTools } from "./tools/missions.ts";
 import { personTools } from "./tools/person.ts";
 import { semanticRecallTools } from "./tools/semantic-recall.ts";
+import { shelfTools } from "./tools/shelf.ts";
 import { skillRegistryTools } from "./tools/skill-registry.ts";
 import { skillTools } from "./tools/skills.ts";
 import { triggerTools } from "./tools/triggers.ts";
@@ -215,6 +218,9 @@ function assembleByTier(ctx: ToolContext): ToolDef[] {
     ...voiceTools(ctx),
     ...videoTools(ctx),
     ...messageTools(ctx),
+    ...(guest ? [] : shelfTools(ctx)),
+    ...(guest ? [] : blindCheckTools(ctx)),
+    ...(guest ? [] : calendarTools(ctx)),
     // send_message/send_attachment/react above are this-chat scoped and stay.
     // The cross-chat and shared-surface actions (create_chat, group
     // management, edit/unsend) go with the rest of the imessage actions.

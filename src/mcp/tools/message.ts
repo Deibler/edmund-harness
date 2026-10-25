@@ -7,6 +7,7 @@ import { appleMapsLink } from "../../imessage/maps-link.ts";
 import {
   type ResolvedMessage,
   chatRowIdForGuids,
+  countSentSince,
   findRecentMessageByText,
   latestMessageInGuids,
   resolveMessageGuid,
@@ -461,7 +462,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           return { content: [{ type: "text", text: `send error: ${res.error}` }], isError: true };
         }
         recordToolSend(ctx, cleaned, chatGuid);
-        return { content: [{ type: "text", text: "sent" }] };
+        return { content: [{ type: "text", text: sendCountNote(ctx) }] };
       },
     },
     {
@@ -773,4 +774,26 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
       },
     },
   ];
+}
+
+/** The window and count past which a run of sends reads as a flood. */
+const SEND_WINDOW_MS = 10 * 60_000;
+const MANY_SENDS = 4;
+
+/**
+ * "sent", plus how many messages this chat has had from the assistant in the
+ * last ten minutes. The model sees its own count rather than hitting a cap: a
+ * cap would suppress replies, and about 15% of group bubbles over 30 days
+ * (to 2026-10-25) were progress updates, up to 20 in 40 minutes in one chat.
+ */
+export function sendCountNote(ctx: Pick<ToolContext, "chatDb" | "chatGuids">): string {
+  let n = 0;
+  try {
+    // The send just made may not be in chat.db yet; count it either way.
+    n = Math.max(1, countSentSince(ctx.chatDb, ctx.chatGuids, Date.now() - SEND_WINDOW_MS));
+  } catch {
+    return "sent";
+  }
+  if (n < MANY_SENDS) return "sent";
+  return `sent (${n} messages from you in this chat in the last 10 minutes; fold further updates into one message, or wait until you have the result)`;
 }

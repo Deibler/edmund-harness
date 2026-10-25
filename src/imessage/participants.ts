@@ -146,6 +146,27 @@ export function findRecentMessageByText(
   return null;
 }
 
+/**
+ * How many messages the assistant sent to these chats since `sinceMs`
+ * (reactions excluded). Read from chat.db, the system of record, so it counts
+ * every path that sends: replies, tool sends, attachments.
+ */
+export function countSentSince(chatDb: ChatDb, guids: string[], sinceMs: number): number {
+  if (guids.length === 0) return 0;
+  const placeholders = guids.map(() => "?").join(",");
+  const sinceAppleNs = (sinceMs - 978_307_200_000) * 1_000_000;
+  const row = chatDb
+    .query<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM message m
+         JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         JOIN chat c ON c.ROWID = cmj.chat_id
+        WHERE c.guid IN (${placeholders}) AND m.is_from_me = 1 AND m.date >= ?
+          AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)`,
+    )
+    .get(...guids, sinceAppleNs);
+  return row?.n ?? 0;
+}
+
 const MESSAGE_BY_GUID_SQL = `
   SELECT c.guid AS cguid, m.is_from_me AS from_me, m.text AS text, m.attributedBody AS body
   FROM message m

@@ -141,29 +141,44 @@ export function webTools(ctx: ToolContext): ToolDef[] {
           const truncatedNote = result.truncated
             ? "\n\n[Content truncated — use max_chars to increase limit]"
             : "";
+          const thinNote =
+            result.content.trim().length < 300
+              ? `\n\n[Only ${result.content.trim().length} characters of text came back. This may be an app shell or a wall, not the page: do not state details it does not show.]`
+              : "";
 
           return {
             content: [
               {
                 type: "text",
-                text: `${header}${result.content}${truncatedNote}`,
+                text: `${header}${result.content}${truncatedNote}${thinNote}`,
               },
             ],
           };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          const isBlocked = err instanceof SsrfBlockedError;
+          if (err instanceof SsrfBlockedError) {
+            return { content: [{ type: "text", text: `Blocked: ${msg}` }], isError: true };
+          }
           return {
-            content: [
-              {
-                type: "text",
-                text: isBlocked ? `Blocked: ${msg}` : `Fetch failed: ${msg}`,
-              },
-            ],
+            content: [{ type: "text", text: unreadablePageText(args.url, msg) }],
             isError: true,
           };
         }
       },
     },
   ];
+}
+
+/**
+ * What the model is told when a page could not be read. The rule against
+ * guessing lives in the tool result rather than only in the system prompt,
+ * because it has to be in front of the model at the moment it is about to
+ * fill the gap from a search snippet or the title.
+ */
+export function unreadablePageText(url: string, reason: string): string {
+  return [
+    `COULD NOT READ ${url} (${reason}).`,
+    "You have not seen this page. Do not state its contents, prices, specs, fit, stock or availability as fact, and do not fill them in from a title or search snippet.",
+    "Instead: read another source you can open, use the browser tools if you have them, or tell the person you couldn't open it and ask for a screenshot or the details.",
+  ].join("\n");
 }

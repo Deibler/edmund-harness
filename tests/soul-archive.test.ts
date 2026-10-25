@@ -137,7 +137,8 @@ describe("archived self-notes stay reachable", () => {
     // A global pass, because the chat-scoped blocks can never see a null guid.
     expect(recall).toContain('scope: { kind: "global" }');
     expect(recall).toContain('rowKinds: ["self-file"]');
-    // The LIVE file is already in the prompt; only the archive is worth recalling.
-    expect(recall).toContain('ref.startsWith("self:") && !ref.startsWith("self:archive/")');
+    // The LIVE file is already in the prompt; its archive and the domain notes
+    // are worth recalling.
+    expect(recall).toContain("/^self:SOUL\\.md#/.test(ref)");
   });
 });

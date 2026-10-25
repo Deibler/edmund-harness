@@ -23,6 +23,7 @@ There are 91 core tools. This page groups them; the source files under
 | `send_location` | Send an Apple Maps card for an address or coordinates |
 | `react` | Add a tapback to a message |
 | `check_incoming` | Peek at messages that arrived while this turn was running |
+| `shelve` | Put a finished file on the person's shelf: a permanent link plus their shelf page, newest first |
 | `activate_typing` | Show the typing indicator |
 
 ## iMessage actions
@@ -65,18 +66,26 @@ imagent drops still returns cleanly, so "accepted" is not the outcome.
 | `generate_image`, `generate_video`, `generate_audio` | Generate through OpenRouter and deliver the result to the chat |
 | `list_image_models`, `list_video_models`, `list_audio_models` | What is available |
 | `model_scorecard`, `rate_model_output` | Track which models produce good results |
-| `transcribe_audio` | Speech to text for a voice memo |
-| `analyze_video` | Describe a video |
+| `transcribe_audio` | Speech to text for a voice memo (local whisper.cpp first) |
+| `analyze_video` | Watch a video: frames on contact sheets the model sees, plus a transcript |
+| `blind_check` | A cold description of a render from a model not told what it should be, with counts of every repeated part |
 | `request_image_annotation` | Hand the person a link where they can mark up an image |
 
 Every generation goes through the credits layer. If the person's wallet
 cannot cover it, the tool refuses with a message the model relays along with a
 link to top up. See [generation-credits.md](generation-credits.md).
 
+## Their own data
+
+`connect_calendar`, `calendar_upcoming`, `disconnect_calendar`: a person's own
+calendar by the secret iCal link they share, read live, scoped to that chat.
+
 ## Web
 
 `web_search` (Brave), `web_fetch` (with an SSRF guard that refuses private
-addresses), `check_bg_job`, `list_bg_jobs` for long running fetches.
+addresses), `check_bg_job`, `list_bg_jobs` for long running fetches. A page
+that turns a plain fetch away is retried once in headless Chrome; if that is
+refused too, the result says plainly that the page was not read.
 
 ## Scheduling and proactive behaviour
 

@@ -200,7 +200,9 @@ const RememberSubjectInput = z.object({
   source: z
     .string()
     .optional()
-    .describe("Who/when it came from, so one-person claims stay visible."),
+    .describe(
+      'Where it came from, by role rather than name ("a runner I coach", "a teacher\'s lesson plans"), so one-person claims stay visible. The lesson can surface in anyone\'s conversation.',
+    ),
 });
 
 export function memoryTools(_ctx: ToolContext): ToolDef[] {
@@ -216,7 +218,7 @@ export function memoryTools(_ctx: ToolContext): ToolDef[] {
         "",
         "NOT for facts about one person (use remember_about_person) or about yourself (remember_about_self). The test: would this still be useful with a different person, next year? Then it belongs here.",
         "",
-        "Indexed globally, so it surfaces by recall in any conversation, not just the one it came from.",
+        "Indexed globally, so it surfaces by recall in any conversation, not just the one it came from. Write it so it is useful and fine for anyone to read: about the subject, no names or contact details.",
       ].join("\n"),
       inputSchema: RememberSubjectInput,
       handler: (args) => {

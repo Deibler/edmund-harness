@@ -25,6 +25,7 @@ import type { Deps } from "./channels/deps.ts";
 import { wakeThread } from "./channels/history.ts";
 import { SessionPipeline } from "./channels/pipeline.ts";
 import { handleBatch, shouldAccept } from "./channels/turn.ts";
+import { startCliWatch } from "./claude/cli-canary.ts";
 import { checkLoadout, formatLoadoutReport } from "./claude/loadout-check.ts";
 import { showToRunningTurn } from "./claude/mid-turn.ts";
 import {
@@ -63,6 +64,7 @@ import { configureSendVerification } from "./imessage/send.ts";
 import type { InboundMessage } from "./imessage/types.ts";
 import { startWatcher } from "./imessage/watcher.ts";
 import * as intSettings from "./integrations/settings.ts";
+import { backendForModel } from "./model/backend.ts";
 import { routeForMessage, sessionKeyForOrchestrator } from "./orchestrators/registry.ts";
 import { sweepAllArchives } from "./persona/archive.ts";
 import { PersonMaintainer } from "./persona/maintainer-observer.ts";
@@ -135,6 +137,13 @@ async function main() {
   // agent tree uses the same effort level as the main session.
   process.env.EDMUND_EFFORT = config.claude.effort;
   process.env.EDMUND_AGENT_EFFORT = config.claude.agent_effort ?? config.claude.effort;
+  // Satellite one-shots (maintainer, ghost, judge, curator) have their own
+  // knob and never inherit the turn effort; see [claude] background_effort.
+  if (config.claude.background_effort) {
+    process.env.EDMUND_BACKGROUND_EFFORT = config.claude.background_effort;
+  } else {
+    Reflect.deleteProperty(process.env, "EDMUND_BACKGROUND_EFFORT");
+  }
   if (config.claude.context_window_tokens) {
     process.env.EDMUND_CONTEXT_WINDOW_TOKENS = String(config.claude.context_window_tokens);
   } else {
@@ -264,7 +273,7 @@ async function main() {
   );
   outcomeSweep.unref?.();
   const echoes = new EchoCache();
-  const personMaintainer = new PersonMaintainer({ config, state, chatDb, contacts });
+  const personMaintainer = new PersonMaintainer({ config, state, chatDb, contacts, crons });
   // Cross-conversation skill curation. Unlike the person maintainer this is
   // not reply-triggered — its whole premise is the pattern no single
   // conversation can see — so it runs on a wall clock and persists its own
@@ -329,6 +338,11 @@ async function main() {
   const evalTimer = setInterval(evalTick, 6 * 3_600_000);
   evalTimer.unref?.();
   setTimeout(evalTick, 2 * 60_000).unref?.();
+  // The Claude CLI updates underneath on purpose; a canary on each new
+  // version alerts the operator if the update broke a path Edmund relies on.
+  if (backendForModel(config.claude.model) === "claude") {
+    startCliWatch({ dataDir: config.paths.data_dir, model: config.claude.model, alert });
+  }
   const locks = new SessionLocks({
     // Liveness lease, not a wall-clock cap: the Claude worker heartbeats
     // the lock on every stream event, so an actively-working turn (however
@@ -596,8 +610,17 @@ async function main() {
   const scheduler = new Scheduler({
     store: crons,
     onFire: (job) =>
-      fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs, (key, guid, sinceMs) =>
-        wakeThread(key, guid, deps, sinceMs),
+      fireJob(
+        job,
+        config,
+        state,
+        echoes,
+        alert,
+        locks,
+        crons,
+        ghostPrefs,
+        (key, guid, sinceMs) => wakeThread(key, guid, deps, sinceMs),
+        { chatDb },
       ),
   });
   scheduler.start();

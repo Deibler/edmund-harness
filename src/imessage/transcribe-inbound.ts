@@ -27,6 +27,9 @@ export type InboundMediaEnrichment = {
   transcripts: Map<string, string>;
   /** ffprobe results keyed by original attachment path (video only). */
   probes: Map<string, VideoProbe>;
+  /** Paths whose transcription was attempted and failed: what they say is
+   *  unknown, which is not the same as saying nothing. */
+  failed: string[];
 };
 
 export async function enrichInboundMedia(
@@ -35,6 +38,7 @@ export async function enrichInboundMedia(
 ): Promise<InboundMediaEnrichment> {
   const transcripts = new Map<string, string>();
   const probes = new Map<string, VideoProbe>();
+  const failed: string[] = [];
   const backend = sttBackend(config);
 
   await Promise.all(
@@ -59,9 +63,10 @@ export async function enrichInboundMedia(
         const transcript = await transcribeMediaFile(p, config);
         if (transcript.trim()) transcripts.set(p, transcript.trim());
       } catch (err) {
+        failed.push(p);
         console.warn(`[transcribe] ${basename(p)}: ${(err as Error).message}`);
       }
     }),
   );
-  return { transcripts, probes };
+  return { transcripts, probes, failed };
 }

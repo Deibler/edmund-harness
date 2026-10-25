@@ -153,6 +153,53 @@ export function lastAssistantMs(
   return row?.date_ns ? Math.floor(row.date_ns / 1_000_000) + 978_307_200_000 : null;
 }
 
+/** How long after he asked a question an un-named message may be the answer. */
+export const QUESTION_WINDOW_MS = 60 * 60_000;
+/** Messages by others after his question beyond which the thread has moved on. */
+const QUESTION_MAX_OTHERS = 3;
+
+/**
+ * His last message in the chat, when it asked a question within the window,
+ * and how many messages others have sent since. A person answering his own
+ * question rarely names him: over 30 days to 2026-10-25 such answers were
+ * missed when they came more than ten minutes later, or when "wants a reply"
+ * scored just under the bar, though they were said to him.
+ */
+export function openAssistantQuestion(
+  chatDb: ChatDb,
+  chatGuid: string,
+  beforeRowId: number,
+  nowMs: number,
+): { ms: number; othersSince: number } | null {
+  const last = chatDb
+    .query<{ rowid: number; date_ns: number; text: string | null; body: Uint8Array | null }>(
+      `SELECT m.ROWID AS rowid, m.date AS date_ns, m.text AS text, m.attributedBody AS body
+         FROM message m
+         JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         JOIN chat c ON c.ROWID = cmj.chat_id
+        WHERE c.guid = ? AND m.is_from_me = 1 AND m.ROWID < ?
+          AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
+        ORDER BY m.ROWID DESC LIMIT 1`,
+    )
+    .get(chatGuid, beforeRowId);
+  if (!last) return null;
+  const ms = Math.floor(last.date_ns / 1_000_000) + 978_307_200_000;
+  if (nowMs - ms > QUESTION_WINDOW_MS) return null;
+  const text = decodeMessageText(last.text, last.body).trim();
+  const lastSentence = text.split(/(?<=[.!?])\s+/).pop() ?? "";
+  if (!lastSentence.includes("?")) return null;
+  const others = chatDb
+    .query<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM message m
+         JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         JOIN chat c ON c.ROWID = cmj.chat_id
+        WHERE c.guid = ? AND m.is_from_me = 0 AND m.ROWID > ? AND m.ROWID < ?
+          AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)`,
+    )
+    .get(chatGuid, last.rowid, beforeRowId);
+  return { ms, othersSince: others?.n ?? 0 };
+}
+
 /** First names by handle, from the address book. */
 export type Contacts = { displayName(handle: string): string | null };
 
@@ -300,6 +347,8 @@ export function candidateReason(
   if (msg.replyToGuid && lookupReplyContext(chatDb, msg.replyToGuid)?.fromMe)
     return "reply-to-assistant";
   if (nameLikeWord(msg.text, config.identity.names)) return "name-like";
+  const question = openAssistantQuestion(chatDb, msg.chatGuid, msg.rowId, msg.timestampMs);
+  if (question && question.othersSince < QUESTION_MAX_OTHERS) return "answers-question";
   const last = lastAssistantMs(chatDb, msg.chatGuid, msg.rowId);
   const windowMs = config.group_addressing.window_minutes * 60_000;
   if (last !== null && msg.timestampMs - last <= windowMs) return "after-assistant";
@@ -377,6 +426,11 @@ export function shouldWake(
   const c = config.group_addressing;
   if (reason === "after-assistant") {
     return scores.wants_reply >= c.reply_threshold && scores.addressed >= c.addressed_floor;
+  }
+  // An answer to his own question need not want a reply: being said to him
+  // is enough, and he decides whether it needs one.
+  if (reason === "answers-question") {
+    return scores.addressed >= c.addressed_floor || scores.wants_reply >= c.reply_threshold;
   }
   return scores.wants_reply >= c.reply_threshold || scores.addressed >= c.addressed_threshold;
 }

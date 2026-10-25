@@ -28,7 +28,9 @@ function runCodexOneShot(opts: ModelOneShotInput, model: string): Promise<OneSho
     const systemPrompt = argValue(opts.args, "--append-system-prompt") ?? "";
     const mcpConfig = argValue(opts.args, "--mcp-config") ?? '{"mcpServers":{}}';
     const hasMcp = mcpConfig !== '{"mcpServers":{}}';
-    const effort = parseEffort(argValue(opts.args, "--effort") ?? process.env.EDMUND_EFFORT);
+    const effort = parseEffort(
+      argValue(opts.args, "--effort") ?? process.env.EDMUND_BACKGROUND_EFFORT,
+    );
     let args: string[];
     let executable: string;
     try {

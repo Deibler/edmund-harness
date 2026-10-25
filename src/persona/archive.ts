@@ -405,6 +405,26 @@ export function reconcileRewrite(snapshot: string, latest: string, rewrite: stri
  * (`write_person_file`) may be removing something the person asked it to
  * forget, and archiving that would bring it back through recall.
  */
+/**
+ * Archive lines a later conversation showed were wrong or finished, under
+ * their sections, marked as superseded. Live and archive together still hold
+ * every line the file held; the live file just stops asserting the old one.
+ */
+export function archiveSupersededLines(livePath: string, oldBody: string, lines: string[]): number {
+  const wanted = new Set(lines);
+  const bySection = new Map<string, string[]>();
+  let section = "";
+  for (const line of oldBody.split("\n")) {
+    const h = line.match(/^#{2,}\s+(.+?)\s*$/);
+    if (h) section = h[1]!;
+    if (!wanted.has(line)) continue;
+    const list = bySection.get(section) ?? [];
+    list.push(line);
+    bySection.set(section, list);
+  }
+  return appendToArchive(livePath, oldBody, bySection, "superseded by a later conversation");
+}
+
 export function archiveRewriteDrops(livePath: string, oldBody: string, newBody: string): number {
   const kept = new Set(newBody.split("\n"));
   const dropped = new Map<string, string[]>();

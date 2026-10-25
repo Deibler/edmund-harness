@@ -43,6 +43,10 @@ export async function prefetchLinks(texts: string[]): Promise<PrefetchEntry[]> {
         maxChars: PREFETCH_MAX_CHARS,
         mode: "text",
         timeoutMs: PREFETCH_TIMEOUT_MS,
+        // The prefetch is on the reply path; a headless render can take 20 s.
+        // A blocked link is reported as unreadable instead, and web_fetch
+        // still tries the browser if the model needs the page.
+        browserFallback: false,
       }),
     ),
   );
@@ -61,7 +65,11 @@ export async function prefetchLinks(texts: string[]): Promise<PrefetchEntry[]> {
       const err = r.reason as Error;
       if (!(err instanceof SsrfBlockedError)) {
         // Non-security error: include a short error note so the model knows the fetch failed
-        entries.push({ url, title: null, snippet: `[fetch failed: ${err.message}]` });
+        entries.push({
+          url,
+          title: null,
+          snippet: `[could not read this link: ${err.message}. You have not seen it; do not describe it from the URL.]`,
+        });
       }
       // Silently skip SSRF-blocked URLs
     }

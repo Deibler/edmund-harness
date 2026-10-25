@@ -99,11 +99,17 @@ export function parseOneShotStream(stdout: string): StreamFacts {
  * the MCP servers the caller names, and no built-in tools unless the caller
  * names them with --tools. A caller that passes --mcp-config (the ghost tick)
  * keeps the default built-ins and chooses its own. Nothing resumes a
- * one-shot, so its transcript is not kept either. Effort came from the
- * operator's settings file (xhigh); it now comes from [claude] effort, which
- * the daemon exports, unless the caller names one.
+ * one-shot, so its transcript is not kept either. Effort comes from
+ * [claude] background_effort (EDMUND_BACKGROUND_EFFORT) unless the caller
+ * names one; with neither, no flag is passed and the model runs at the CLI's
+ * default. It must not come from [claude] effort: that is tuned for Opus
+ * turns, and passing it to every Haiku pass doubled their thinking and timed
+ * out about a quarter of the maintainer's calls (2026-10-23 to 10-25).
  */
-export function oneShotArgv(args: string[], effort = process.env.EDMUND_EFFORT): string[] {
+export function oneShotArgv(
+  args: string[],
+  effort = process.env.EDMUND_BACKGROUND_EFFORT,
+): string[] {
   const has = (flag: string) => args.includes(flag);
   return [
     "-p",

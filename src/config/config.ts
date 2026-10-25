@@ -238,6 +238,16 @@ export const ConfigSchema = z.object({
       /** Detached-agent effort. Omitted = inherit the main effort. */
       agent_effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
       /**
+       * Effort for the satellite one-shot calls: the person maintainer and
+       * its consolidation pass, the ghost, the eval judge, the skill
+       * curator, catch-up summaries and the research planner. Omitted = no
+       * effort flag, so each model runs at the CLI's own default. These calls
+       * never inherit `effort`: when they did (2026-10-23 to 10-25), the
+       * Haiku note pass thought about twice as long, averaged 41 s instead of
+       * 11 s, and hit its 90 s timeout on 24 of 106 calls.
+       */
+      background_effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+      /**
        * Claude-only resident worker pool. When enabled, the daemon keeps `claude -p
        * --input-format stream-json` subprocesses warm per session and reuses
        * them across turns — eliminates the ~500-1500 ms Node/CLI cold start
@@ -373,18 +383,37 @@ export const ConfigSchema = z.object({
       stripe_publishable: "",
       stripe_webhook_secret: "",
     }),
+  /**
+   * `[shelf]` — permanent links for what Edmund hands people (src/shelf/).
+   * `origin` is the public base the kitchen host's named tunnel serves, e.g.
+   * "https://kitchen.example.com"; files are served at <origin>/shelf/<token>/.
+   * Empty = no shelf: the `shelve` tool says so instead of returning a link.
+   */
+  shelf: z.object({ origin: z.string().default("") }).default({ origin: "" }),
   tools: z
     .object({
       image_provider: z.enum(["openai", "gemini"]).default("openai"),
       image_model: z.string().default("gpt-image-1"),
       tts_voice: z.string().default("nova"),
       stt_model: z.string().default("whisper-1"),
+      /**
+       * Local speech-to-text with whisper.cpp, tried before any hosted
+       * backend: a ggml model file and the `whisper-cli` binary. A relative
+       * model path resolves against the data dir. When the model file or the
+       * binary is missing, transcription falls back to the hosted backend.
+       * Hosted STT failed 30 times in one week when its prepaid balance ran
+       * low; local transcription of a 9 s voice note takes under a second.
+       */
+      local_stt_model: z.string().default("models/ggml-small.en.bin"),
+      whisper_cli: z.string().default("whisper-cli"),
     })
     .default({
       image_provider: "openai",
       image_model: "gpt-image-1",
       tts_voice: "nova",
       stt_model: "whisper-1",
+      local_stt_model: "models/ggml-small.en.bin",
+      whisper_cli: "whisper-cli",
     }),
   /**
    * `[sms]` — outbound/inbound SMS through Twilio.

@@ -76,11 +76,35 @@ const OUTCOME_LABEL: Record<DomainNote["outcome"], string> = {
   untested: "UNTESTED",
 };
 
+/** Phone numbers and email addresses identify a person outright. */
+const HANDLE_RE = /\+?\d[\d\s().-]{8,}\d|[\w.+-]+@[\w-]+\.[\w.]+/;
+
+/**
+ * The text recall indexes for a domain file: the same lessons without the
+ * "who it came from" suffix on each Outcome line. Domain notes surface in any
+ * conversation, and the source often names the person a lesson came from; the
+ * lesson is the subject knowledge, the source is
+ * provenance for whoever audits the file. 149 of the first 214 lessons
+ * carried one.
+ */
+export function lessonForRecall(body: string): string {
+  return body.replace(/^(- \*\*Outcome:\*\* [A-Z]+) — .*$/gm, "$1");
+}
+
 /**
  * Append one lesson. Idempotent on the title within a domain, so restating a
- * lesson you are unsure you already recorded is safe.
+ * lesson you are unsure you already recorded is safe. Refuses phone numbers
+ * and email addresses: a lesson is about the subject and reaches every
+ * conversation through recall.
  */
 export function appendDomainNote(note: DomainNote): { path: string; appended: boolean } {
+  for (const field of [note.title, note.applies, note.learned, note.source ?? ""]) {
+    if (HANDLE_RE.test(field)) {
+      throw new Error(
+        "a lesson is about the subject and can surface in any conversation: leave out phone numbers and email addresses, and say who by role",
+      );
+    }
+  }
   const slug = domainSlug(note.domain);
   mkdirSync(DOMAINS_DIR, { recursive: true });
   const path = domainPath(slug);

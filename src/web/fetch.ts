@@ -1,3 +1,7 @@
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SsrfBlockedError, assertPublicUrl } from "./ssrf.ts";
 
 const DEFAULT_MAX_CHARS = 40_000;
@@ -50,7 +54,90 @@ export type FetchResult = {
   title: string | null;
   content: string;
   truncated: boolean;
+  /** True when the page came from the headless-browser fallback. */
+  viaBrowser?: boolean;
 };
+
+/**
+ * The page could not be read: a bot wall, a login wall, an error page. Its
+ * message says what was tried. Distinct from other failures so the tool can
+ * tell the model plainly that it has NOT seen the page: in 90 days, 19
+ * requests hit a blocked site, and at least one answer ($449 headlights
+ * "plug right in") was built from the listing title instead.
+ */
+export class UnreadablePageError extends Error {}
+
+/** Statuses a site uses to turn away a non-browser client. */
+const BLOCK_STATUSES = new Set([401, 403, 406, 429, 451, 503]);
+
+/** A page whose title says it is a wall rather than the content. */
+const BLOCK_TITLE =
+  /\b(blocked|access denied|just a moment|attention required|are you a robot|captcha|security check|unusual traffic|error page|pardon our interruption|request rejected)\b/i;
+
+export function looksBlocked(title: string | null, text: string): boolean {
+  if (title && BLOCK_TITLE.test(title)) return true;
+  return (
+    text.length < 2_000 &&
+    /\b(enable javascript and cookies|verify you are (a )?human|access to this page has been denied)\b/i.test(
+      text,
+    )
+  );
+}
+
+const CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+/**
+ * Render a page in headless Chrome (a fresh throwaway profile) and return
+ * its DOM, or null when Chrome is missing, times out or returns nothing.
+ * Many sites that refuse a plain fetch serve a real browser (measured
+ * 2026-10-25: a retailer's search page, 403 to fetch, rendered in full);
+ * sites with stronger bot detection still refuse it, and then the page is
+ * reported unreadable rather than guessed at.
+ */
+export async function renderInBrowser(
+  url: string,
+  opts: { timeoutMs?: number; chromeBin?: string } = {},
+): Promise<string | null> {
+  const bin = opts.chromeBin ?? CHROME_BIN;
+  if (!existsSync(bin)) return null;
+  const profile = mkdtempSync(join(tmpdir(), "edmund-headless-"));
+  try {
+    return await new Promise<string | null>((resolve) => {
+      const proc = spawn(
+        bin,
+        [
+          "--headless=new",
+          "--disable-gpu",
+          "--no-first-run",
+          "--no-default-browser-check",
+          `--user-data-dir=${profile}`,
+          "--virtual-time-budget=8000",
+          "--dump-dom",
+          url,
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      let out = "";
+      const timer = setTimeout(() => {
+        proc.kill("SIGKILL");
+        resolve(null);
+      }, opts.timeoutMs ?? 30_000);
+      proc.stdout.on("data", (c) => {
+        if (out.length < DEFAULT_MAX_BYTES * 2) out += c.toString();
+      });
+      proc.on("error", () => {
+        clearTimeout(timer);
+        resolve(null);
+      });
+      proc.on("close", () => {
+        clearTimeout(timer);
+        resolve(out.trim() ? out : null);
+      });
+    });
+  } finally {
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
 
 type FetchError = {
   url: string;
@@ -65,6 +152,8 @@ export async function webFetch(
     mode?: "markdown" | "text";
     timeoutMs?: number;
     maxBytes?: number;
+    /** Retry a blocked page in headless Chrome. Default on. */
+    browserFallback?: boolean;
   } = {},
 ): Promise<FetchResult> {
   const maxChars = opts.maxChars ?? DEFAULT_MAX_CHARS;
@@ -100,6 +189,9 @@ export async function webFetch(
   }
 
   if (!response.ok) {
+    if (BLOCK_STATUSES.has(response.status) && opts.browserFallback !== false) {
+      return fromBrowser(urlStr, `HTTP ${response.status}`, mode, maxChars);
+    }
     throw new Error(`HTTP ${response.status} ${response.statusText}`);
   }
 
@@ -138,6 +230,12 @@ export async function webFetch(
   const title = extractTitle(html);
 
   const content = mode === "text" ? htmlToText(html) : htmlToMarkdown(html);
+  if (looksBlocked(title, content)) {
+    if (opts.browserFallback === false) {
+      throw new UnreadablePageError(`the site served a block page ("${title ?? "untitled"}")`);
+    }
+    return fromBrowser(urlStr, `a block page ("${title ?? "untitled"}")`, mode, maxChars);
+  }
   const truncated = truncatedAtByte || content.length > maxChars;
 
   return {
@@ -145,6 +243,33 @@ export async function webFetch(
     title,
     content: truncated ? content.slice(0, maxChars) : content,
     truncated,
+  };
+}
+
+async function fromBrowser(
+  url: string,
+  firstFailure: string,
+  mode: "markdown" | "text",
+  maxChars: number,
+): Promise<FetchResult> {
+  const html = await renderInBrowser(url);
+  if (!html) {
+    throw new UnreadablePageError(`${firstFailure}, and a headless browser got nothing back`);
+  }
+  const title = extractTitle(html);
+  const content = mode === "text" ? htmlToText(html) : htmlToMarkdown(html);
+  if (looksBlocked(title, content)) {
+    throw new UnreadablePageError(
+      `${firstFailure}, and a headless browser was refused too ("${title ?? "untitled"}")`,
+    );
+  }
+  const truncated = content.length > maxChars;
+  return {
+    url,
+    title,
+    content: truncated ? content.slice(0, maxChars) : content,
+    truncated,
+    viaBrowser: true,
   };
 }
 

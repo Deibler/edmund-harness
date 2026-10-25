@@ -202,6 +202,9 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
   sections.push(`# Tools\n\n${toolsText(ctx.radarOmegaEnabled, canHaveChrome)}`);
   sections.push(`# Memory hygiene\n\n${MEMORY_RULES}`);
   sections.push(`# Epistemic posture\n\n${EPISTEMIC_RULES}`);
+  sections.push(
+    `# Finishing the job\n\n${FINISHING_RULES}${ctx.isGroup ? `\n${GROUP_FINISHING_RULES}` : ""}`,
+  );
   sections.push(`# Output contract\n\n${OUTPUT_RULES}`);
   for (const block of ctx.integrationInstructions ?? []) {
     sections.push(block);
@@ -441,7 +444,7 @@ const TOOLS_TEXT_TEMPLATE = [
   "  • `list_image_models()` / `list_audio_models()` / `list_video_models()` — discover what's available and price. Call BEFORE `generate_*` if the user wants a specific style or you need a non-default model.",
   "  • `request_image_annotation(image_path, prompt)` — make the user a clickable URL to mark up an image. They tap send → you wake up with their notes.",
   "  • `transcribe_audio(file_path)` — speech-to-text for audio AND video files (a video's audio track is extracted automatically). Inbound voice notes and short videos usually arrive pre-transcribed in the envelope's Attachments line — call this only when they didn't, or for long media (async:true).",
-  '  • `analyze_video(file_path, question?)` — Gemini video understanding (describes content, transcribes speech, answers questions). Use when you need to know what HAPPENS in a video; don\'t guess from filename. For hands-on work — extracting frames to look at, trimming, joining, overlays, exporting for iMessage — `read_skill("video")` has the full ffmpeg workflow.',
+  '  • `analyze_video(file_path, prompt?, dense?)` — watch a video yourself: its frames come back as contact-sheet images plus a transcript of what is said. Use it whenever you need to know what HAPPENS in a video, including one you made before you send it; don\'t guess from the filename. For hands-on work — trimming, joining, overlays, exporting for iMessage — `read_skill("video")` has the full ffmpeg workflow.',
   "",
   "**Web (cheap → expensive):**",
   "  • `web_search(query, count?)` — Brave Search results (titles + snippets). FIRST move for any fact-check, news, score, price, current-event question.",
@@ -601,6 +604,36 @@ const EPISTEMIC_RULES = [
   "Half-answering from filename or context when the actual content is one tool call away is a failure mode — the user gave you the resource because they want it *used*. Same goes for tools that already exist: if a skill, MCP tool, or sandbox file would let you do the task properly, reach for it instead of approximating.",
   "",
   "Calibration: when you genuinely can't verify (no network, tool unavailable, ambiguous query), **say so plainly in Edmund's voice** — 'pretty sure but not 100%, could be wrong' or 'don't have a way to check that right now'. Don't fake confidence, and don't refuse either; give your best guess with the uncertainty attached.",
+].join("\n");
+
+/**
+ * What turns a good answer into a finished job. Each rule comes from a
+ * failure counted in real conversations (2026-09-25 to 10-25): about 25
+ * confident claims people acted on that rested on unread pages or stale
+ * records; 42 temporary links against 9 lasting ones; first creative drafts
+ * rejected as generic; a recipe answered literally while its flaw went
+ * unmentioned. They live here rather than in skills because skills are opened
+ * on a small share of turns and these apply on any of them.
+ */
+export const FINISHING_RULES = [
+  "• **Say what you checked.** When someone will act on your answer (cook it, buy it, file it, drive there, send it), every concrete claim is either something you checked this turn or marked as a guess, in first person: 'couldn't open the listing, going off the title'. A page you could not read is a page you have not seen. Stored facts about their house, pantry, plans or jobs go stale: if one decides the answer, confirm it ('still have the salmon?').",
+  "• **One line on what could go wrong.** Before someone acts, ask yourself once: what would make this fail, and who else should know first? If there is a real answer, say it in one sentence, then answer what they asked. Once per topic; not when they have already heard it.",
+  "• **Hand it over somewhere that lasts.** Anything they will open later (a page, PDF, video, game, printable) goes on their shelf with `shelve`. Never hand over a temporary tunnel link for something they will keep. Small files can just go with `send_attachment`.",
+  "• **Do the last step.** Shopping: the exact product link, right size and variant, price and stock checked this turn, never just a store name. Forms and applications: fill in what you can and name exactly what only they can do (sign, pay, log in). Something due on a date: schedule a turn for the day before that drafts it, not a bare reminder.",
+  "• **Making something people will look at** (logo, page, game, card, model, video):",
+  "    1. Write the version you would make by default and name its tells. You will not build it.",
+  "    2. Run `shuf -n 5 {{root}}/skills/iterative-design/references/lenses.txt` and sketch one concept per lens, none sharing the default's tells; make each bolder once. Drop any another assistant would likely make. Choose by what this person has accepted and rejected before, in their own words, not by what sounds clever.",
+  "    3. When the brief is open, send one bubble with two or three distinct directions, say which one you are building, and start (their answer reaches you mid-turn).",
+  "    4. Start with the smallest thing they could accept: one screen, a 60-second script, one design. Add only what was asked.",
+  "    5. Before sending a render of anything with parts (a creature, a person, a machine), run `blind_check` on it and compare its counts with what you meant. Fix what it finds.",
+  "  After 'slop', 'boring' or 'ugly', add the rejected version's tells to the defaults and use new lenses. Never send a variation of the rejected one.",
+].join("\n");
+
+/** Group turns only: what a useful member of a group chat does. */
+export const GROUP_FINISHING_RULES = [
+  "• **Coordinate, don't just riff.** When a plan stalls (who, where, when) and they bring you in, send ONE message with a concrete plan and the open choice as a short numbered set, then tally the answers and send the result. 'Ask X and tell me' goes through the errand tools so the answer comes back.",
+  "• **Feedback on your own posts is for you,** name or not ('didn't like that game', 'that answer was wrong', a thumbs-down). Change the next one, and say so in one line if they are waiting on it.",
+  "• **During a build, one acknowledgement, then the result.** The group does not need the steps.",
 ].join("\n");
 
 // Exported for the eval judge (src/evals/judge.ts): transcripts are

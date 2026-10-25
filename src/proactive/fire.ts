@@ -27,7 +27,7 @@ import { type SessionKey, chatIdFromKey, isGroupSession } from "../sessions/key.
 import type { StateStore } from "../sessions/store.ts";
 import { recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { humanMs, log, snippet } from "../util/log.ts";
-import { decodeBrownNoseSystemEvent } from "./queue.ts";
+import { decodeBrownNoseSystemEvent, isSafetyFollowup } from "./queue.ts";
 import { getSemaphore } from "./semaphore.ts";
 
 /**
@@ -251,11 +251,15 @@ async function fireImpl(
   // Standing self-service link for the recipient — every proactive message
   // closes with a one-sentence explanation + this link so the user always
   // has a way to tune or kill the feature for themselves.
+  // Not on a safety follow-up: a settings link under a check-in on someone
+  // who said they were struggling reads as a form letter.
   let portalLink: string | undefined;
-  try {
-    portalLink = portalUrl(config, loadPortalSecret(config.paths.data_dir), sessionKey);
-  } catch {
-    portalLink = undefined; // no secret yet (dashboard never booted) — skip footer
+  if (!isSafetyFollowup(payload.tags)) {
+    try {
+      portalLink = portalUrl(config, loadPortalSecret(config.paths.data_dir), sessionKey);
+    } catch {
+      portalLink = undefined; // no secret yet (dashboard never booted) — skip footer
+    }
   }
 
   const envelope = buildProactiveEnvelope({

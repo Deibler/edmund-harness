@@ -15,6 +15,7 @@ export type FailureClass =
   | "invalid_tool_schema"
   | "empty_content_block"
   | "thread_refused"
+  | "auth_expired"
   | "transient_api"
   | "send_failed"
   | "unknown";
@@ -75,6 +76,15 @@ const CLASSIFIERS: ClassifierRow[] = [
   // failed four turns running on 2026-10-23, the recovery retry included,
   // and every /compact of that thread failed with the same words.
   { pattern: /safeguards flagged this/i, cls: "thread_refused" },
+  // The CLI's login expired or was revoked. Nothing in the harness can fix
+  // it; only a human logging in can. Matched before the generic patterns so
+  // the 401 inside "API Error: 401" does not read as transient.
+  {
+    pattern:
+      /failed to authenticate|oauth[^.\n]{0,40}expired|login expired|please run \/login|not logged in/i,
+    cls: "auth_expired",
+  },
+  { pattern: /authentication_error|invalid authentication credentials/i, cls: "auth_expired" },
   // imsg IMCore bridge wedge: dylib in Messages.app stopped ACK'ing RPCs.
   // Heal by relaunching Messages with `imsg launch` (re-injects the dylib).
   // Matched BEFORE the generic /timeout/ pattern so it wins over transient_api.
@@ -132,6 +142,8 @@ export function describeErrorClass(
     // dropped the refused thread, this turn runs on a fresh one.
     case "thread_refused":
       return `An earlier attempt to reply was refused by the model provider while continuing this conversation's previous thread. This turn runs on a fresh thread, so that thread's tool work is not in your context; rely on the chat itself and your files.`;
+    case "auth_expired":
+      return `An earlier attempt to reply failed because the model provider login had expired, so every conversation was down until the operator logged in again. It is working now; the message below waited through that outage.`;
     case "transient_api":
       return `An earlier attempt hit a transient API issue (rate limit / overload / network). The condition has likely cleared.`;
     case "send_failed":

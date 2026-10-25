@@ -1,8 +1,15 @@
-import { type OperatorAlert, isOperatorActionable, isRetryable } from "../alerts/operator-alert.ts";
+import {
+  type OperatorAlert,
+  isAuthFailure,
+  isOperatorActionable,
+  isRetryable,
+} from "../alerts/operator-alert.ts";
 import { parseInboundDepth } from "../bridge/relay.ts";
 import { deliverReply } from "../channels/deliver.ts";
+import { injectIntoRunningTurnAndConfirm } from "../claude/runner.ts";
 import type { Config } from "../config/config.ts";
 import type { GhostPrefsStore } from "../ghost/prefs.ts";
+import type { ChatDb } from "../imessage/db.ts";
 import { isPermanentSendError } from "../imessage/send.ts";
 import { compactConfigFor, reanchorCodexIfNeeded, runModel } from "../model/runner.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
@@ -15,6 +22,7 @@ import type { StateStore } from "../sessions/store.ts";
 import { recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { envelopeStamp } from "../util/clock.ts";
 import { humanMs, log, snippet } from "../util/log.ts";
+import { fireReceptions, receptionBlock } from "./reception.ts";
 import { inboundRetryAlreadyAnswered } from "./retry-marker.ts";
 import type { CronStore } from "./store.ts";
 import type { CronJob } from "./types.ts";
@@ -22,6 +30,21 @@ import { type RecentThread, wakeThreadBlock } from "./wake-thread.ts";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 5 * 60 * 1000;
+/** An expired login lasts until a human logs in again: 63 minutes on
+ *  2026-10-23, about 15 hours on 08-25. Three retries five minutes apart gave
+ *  up after a quarter of an hour, and 33 scheduled jobs were lost that way.
+ *  Doubling from five minutes to a two-hour ceiling covers about 8.5 hours. */
+const AUTH_MAX_RETRIES = 8;
+const AUTH_RETRY_CEILING_MS = 2 * 60 * 60 * 1000;
+
+/** How many retries a failure gets and how long to wait before this one. */
+export function retryPlan(attempt: number, error: string): { max: number; delayMs: number } {
+  if (!isAuthFailure(error)) return { max: MAX_RETRIES, delayMs: RETRY_DELAY_MS };
+  return {
+    max: AUTH_MAX_RETRIES,
+    delayMs: Math.min(RETRY_DELAY_MS * 2 ** Math.max(0, attempt - 1), AUTH_RETRY_CEILING_MS),
+  };
+}
 
 /**
  * Fire a cron job: resume the session, tell the model the event happened,
@@ -49,7 +72,34 @@ export async function fireJob(
   crons: CronStore,
   ghostPrefs: GhostPrefsStore,
   recentThread: RecentThread,
+  opts: {
+    /** Show a finished result to the session's running turn; true once it joined. */
+    showToRunningTurn?: (sessionKey: string, text: string) => Promise<boolean>;
+    /** chat.db, so a recurring job can see how its last sends landed. */
+    chatDb?: ChatDb;
+  } = {},
 ): Promise<void> {
+  const showToRunningTurn = opts.showToRunningTurn ?? injectIntoRunningTurnAndConfirm;
+  // A finished result for a chat whose turn is still running joins that turn
+  // at its next tool step instead of waiting for the lock: sub-agent results
+  // waited a p90 of 49 minutes and background-job results 28 behind turns
+  // that were already running in the same chat (30 days to 2026-10-25). If it
+  // cannot join (no turn, no tool step, the turn ended first), it fires as
+  // its own turn exactly as before.
+  if (isResultWakeUp(job.systemEvent)) {
+    const joined = await showToRunningTurn(job.sessionKey, resultNote(job.systemEvent)).catch(
+      () => false,
+    );
+    if (joined) {
+      log.info("cron", "result joined the running turn", {
+        job: job.id,
+        session: job.sessionKey,
+        kind: classifyEvent(job.systemEvent),
+      });
+      return;
+    }
+  }
+
   // Brown-nose route: cron rows enqueued by the ghost have a tagged
   // systemEvent. They use a different envelope shape (no "scheduled
   // event" framing), recheck budgets, and respect the global
@@ -120,6 +170,7 @@ export async function fireJob(
       session.chatGuid,
       () => locks.touch(job.sessionKey),
       recentThread,
+      opts.chatDb,
     );
   });
 }
@@ -134,19 +185,33 @@ async function runAndDeliver(
   chatGuid: string,
   onHeartbeat: (() => void) | undefined,
   recentThread: RecentThread,
+  chatDb?: ChatDb,
 ): Promise<void> {
   const now = Date.now();
   const latenessMs = now - job.nextFireMs;
   const latenessNote = latenessMs > 90_000 ? ` · ${Math.round(latenessMs / 60_000)}m late` : "";
   const thread = wakeThreadBlock(job.sessionKey, chatGuid, config, state, recentThread);
+  const kind = classifyEvent(job.systemEvent);
+  // A recurring job sees how its last sends landed (cron/reception.ts).
+  const recurring = job.schedule.kind !== "once" && kind === "scheduled";
+  let reception: string | null = null;
+  if (recurring && chatDb) {
+    try {
+      reception = receptionBlock(
+        fireReceptions(chatDb, chatGuid, crons.recentFireWindows(job.id, 6), now),
+      );
+    } catch (err) {
+      log.warn("cron", "reception lookup failed", { job: job.id, err: (err as Error).message });
+    }
+  }
   const envelope = [
     scheduledEventHeader(job.nextFireMs, now, latenessNote),
     "",
     job.systemEvent,
+    ...(reception ? ["", reception] : []),
     ...(thread ? ["", thread] : []),
   ].join("\n");
 
-  const kind = classifyEvent(job.systemEvent);
   log.info("cron", `fire ${kind}`, {
     job: job.id,
     session: job.sessionKey,
@@ -184,6 +249,11 @@ async function runAndDeliver(
     durMs: Date.now() - started,
     contextTokens: result.ok ? (result.contextTokens ?? null) : null,
   });
+  if (recurring && result.ok) {
+    try {
+      crons.recordFireWindow(job.id, job.sessionKey, started, Date.now());
+    } catch {}
+  }
   if (!result.ok) {
     log.error("cron", `fire failed ${kind}`, {
       job: job.id,
@@ -198,7 +268,7 @@ async function runAndDeliver(
       });
     }
     if (isRetryable(result.error)) {
-      scheduleRetry(job, crons);
+      scheduleRetry(job, crons, result.error);
     }
     return;
   }
@@ -284,6 +354,22 @@ async function runAndDeliver(
   }
 }
 
+/** Wake-ups that carry a finished result: worth showing to a running turn. */
+export function isResultWakeUp(systemEvent: string): boolean {
+  const kind = classifyEvent(systemEvent);
+  return kind === "agent-done" || kind === "team-done" || kind === "bg-job-done";
+}
+
+/** How a finished result is shown to a turn that is still running. */
+export function resultNote(systemEvent: string): string {
+  return [
+    "[SYSTEM — a background result arrived while you're working]",
+    systemEvent,
+    "",
+    "If the person is waiting on this, tell them with send_message before your next tool call, then carry on with your current task. It will not be shown to you again when this turn ends.",
+  ].join("\n");
+}
+
 function classifyEvent(systemEvent: string): string {
   if (systemEvent.startsWith("Self-poke:")) return "poke";
   if (systemEvent.startsWith("[Retry")) return "retry";
@@ -295,22 +381,23 @@ function classifyEvent(systemEvent: string): string {
   return "scheduled";
 }
 
-export function scheduleRetry(job: CronJob, crons: CronStore): void {
+export function scheduleRetry(job: CronJob, crons: CronStore, error = ""): void {
   const { attempt, base } = parseRetryMeta(job.systemEvent);
   const next = attempt + 1;
-  if (next > MAX_RETRIES) {
+  const plan = retryPlan(next, error);
+  if (next > plan.max) {
     log.error("cron", "retries exhausted — giving up", {
       job: job.id,
-      max: MAX_RETRIES,
+      max: plan.max,
     });
     return;
   }
-  const retryEvent = `[Retry ${next}/${MAX_RETRIES}] ${base}`;
+  const retryEvent = `[Retry ${next}/${plan.max}] ${base}`;
   try {
     const retryJob = crons.create({
       sessionKey: job.sessionKey,
       systemEvent: retryEvent,
-      schedule: { kind: "once", atMs: Date.now() + RETRY_DELAY_MS },
+      schedule: { kind: "once", atMs: Date.now() + plan.delayMs },
       // The same text under a retry prefix, so it keeps its author.
       harnessWritten: job.harnessWritten,
     });

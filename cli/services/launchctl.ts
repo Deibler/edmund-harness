@@ -129,3 +129,19 @@ export function killLocalPids(svc: Svc): number {
   }
   return pids.length;
 }
+
+const KITCHEN_HOST_LABEL = "com.edmund-harness.kitchen-host";
+
+/**
+ * Restart the kitchen host when its launchd job is installed. It serves the
+ * kitchen sites and Edmund's shelf (src/shelf/) behind the one named tunnel,
+ * so a harness change to either needs it restarted too. Returns null when the
+ * job is not installed on this machine.
+ */
+export function restartKitchenHostIfLoaded(): { ok: boolean; out: string } | null {
+  const r = spawnSync("launchctl", ["print", `${domain()}/${KITCHEN_HOST_LABEL}`], {
+    encoding: "utf8",
+  });
+  if (r.status !== 0) return null;
+  return runService("kitchen-host", "restart");
+}

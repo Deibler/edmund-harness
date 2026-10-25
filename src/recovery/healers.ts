@@ -47,6 +47,7 @@ export const HEALERS: Record<FailureClass, Healer | null> = {
   invalid_tool_schema: null, // static server code — only a code fix + restart helps
   empty_content_block: null, // no structural fix yet; classified for visibility
   thread_refused: healRefusedThread,
+  auth_expired: null, // only a human logging in fixes it; the operator alert says so
   transient_api: null, // wait + retry, no structural fix
   send_failed: healSendFailed,
   unknown: null,
