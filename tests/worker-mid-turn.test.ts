@@ -6,11 +6,12 @@
  * misses the turn becomes a turn of its own after the result.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { midTurnNote, showToRunningTurn, takeSeenMidTurn } from "../src/claude/mid-turn.ts";
 import { Worker } from "../src/claude/worker.ts";
+import { isResultWakeUp, resultNote } from "../src/cron/fire.ts";
 import type { InboundMessage } from "../src/imessage/types.ts";
 
 const bin = mkdtempSync(join(tmpdir(), "fake-claude-midturn-"));
@@ -142,6 +143,64 @@ describe("a message written to a running turn", () => {
     } finally {
       await w.shutdown("test done");
     }
+  });
+});
+
+describe("a caller can learn whether its message joined", () => {
+  test("told true when the CLI echoes it into the turn", async () => {
+    const { w } = worker();
+    try {
+      const { started, done } = turnWithTool(w, "the long job");
+      await started;
+      const joined = new Promise<boolean>((resolve) => {
+        expect(w.inject("Agent finished: report ready", resolve).ok).toBe(true);
+      });
+      expect(await joined).toBe(true);
+      const r = await done;
+      expect(r.ok && r.reply).toBe("done; saw: Agent finished: report ready");
+    } finally {
+      await w.shutdown("test done");
+    }
+  });
+
+  test("told false, once, when the turn ends without it", async () => {
+    const { w } = worker(["--late"]);
+    try {
+      const { started, done } = turnWithTool(w, "the long job");
+      await started;
+      const calls: boolean[] = [];
+      expect(w.inject("Agent finished: report ready", (j) => calls.push(j)).ok).toBe(true);
+      await done;
+      await Bun.sleep(50);
+      expect(calls).toEqual([false]);
+    } finally {
+      await w.shutdown("test done");
+    }
+  });
+});
+
+describe("a finished result is shown to a running turn first", () => {
+  test("result wake-ups are recognised; ordinary scheduled events are not", () => {
+    expect(isResultWakeUp("A sub-agent you spawned has finished.\n\nreport")).toBe(true);
+    expect(isResultWakeUp("Background tool job finished (status: done).")).toBe(true);
+    expect(isResultWakeUp("An agent team has finished its work.")).toBe(true);
+    expect(isResultWakeUp("Daily game: build today's puzzle")).toBe(false);
+    expect(isResultWakeUp("Self-poke: check the build")).toBe(false);
+  });
+
+  test("the note carries the result and says how to pass it on", () => {
+    const note = resultNote("Background tool job finished (status: done).\nsummary here");
+    expect(note).toContain("summary here");
+    expect(note).toContain("send_message before your next tool call");
+  });
+
+  test("a result that joins is not fired again; one that cannot, fires as before", async () => {
+    const src = readFileSync(join(import.meta.dir, "..", "src/cron/fire.ts"), "utf8");
+    const joinAt = src.indexOf("if (isResultWakeUp(job.systemEvent))");
+    const lockAt = src.indexOf("await locks.withLock(job.sessionKey, async () => {\n    await runAndDeliver(");
+    expect(joinAt).toBeGreaterThan(0);
+    expect(joinAt).toBeLessThan(lockAt);
+    expect(src).toContain('log.info("cron", "result joined the running turn"');
   });
 });
 

@@ -79,6 +79,15 @@ export function injectIntoRunningTurn(sessionKey: SessionKey, text: string): Inj
   return workerPool?.inject(sessionKey, text) ?? { ok: false, reason: "no worker pool" };
 }
 
+/** Show a message to the session's running turn and resolve true only once
+ *  it joined that turn (see WorkerPool.injectAndConfirm). */
+export function injectIntoRunningTurnAndConfirm(
+  sessionKey: SessionKey,
+  text: string,
+): Promise<boolean> {
+  return workerPool?.injectAndConfirm(sessionKey, text) ?? Promise.resolve(false);
+}
+
 /** Probe: is a worker currently bound to this session? Used by compaction
  *  to defer JSONL rewrites while a live worker has the file open. */
 function hasResidentWorker(sessionKey: SessionKey): boolean {

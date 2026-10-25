@@ -309,6 +309,20 @@ export class WorkerPool {
     return entry.worker.inject(text);
   }
 
+  /**
+   * Show a message to the running turn and wait to learn whether it joined:
+   * true once the CLI echoes it into the conversation, false when it could
+   * not be written or the turn ended (or the worker died) first.
+   */
+  injectAndConfirm(sessionKey: string, text: string): Promise<boolean> {
+    const entry = this.entries.get(sessionKey);
+    if (!entry?.busy) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const r = entry.worker.inject(text, resolve);
+      if (!r.ok) resolve(false);
+    });
+  }
+
   /** Evict the entry for one session (e.g. after a healer cleared its session id). */
   async evict(sessionKey: string, reason: string): Promise<void> {
     const entry = this.entries.get(sessionKey);

@@ -302,6 +302,10 @@ export class Worker {
     /** Messages written mid-turn by uuid, and whether each was echoed (joined
      *  the conversation) before the result. */
     injected: Map<string, boolean>;
+    /** Callers waiting to learn whether their injected message joined. Each
+     *  is told exactly once: at the echo (true), or at the result or the
+     *  worker's death (false). */
+    joinWaiters: Map<string, (joined: boolean) => void>;
   } | null = null;
   /** The session id observed on the FIRST init event. Subsequent events
    *  must match it; if they don't, the worker is poisoned and must be
@@ -478,6 +482,7 @@ export class Worker {
         echoed: false,
         toolsInFlight: new Set(),
         injected: new Map(),
+        joinWaiters: new Map(),
       };
       if (payload.signal) {
         const onAbort = () => this.die(`turn interrupted: ${abortReason(payload.signal!)}`);
@@ -508,7 +513,7 @@ export class Worker {
    * its final reply, and the message would become a CLI turn of its own that
    * nothing here is waiting for.
    */
-  inject(text: string): InjectResult {
+  inject(text: string, onSettled?: (joined: boolean) => void): InjectResult {
     if (this.deadReason !== null) return { ok: false, reason: "worker dead" };
     const p = this.pending;
     if (!p) return { ok: false, reason: "no turn running" };
@@ -526,7 +531,21 @@ export class Worker {
       return { ok: false, reason: `stdin write failed: ${(err as Error).message}` };
     }
     p.injected.set(uuid, false);
+    if (onSettled) p.joinWaiters.set(uuid, onSettled);
     return { ok: true, uuid };
+  }
+
+  /** Tell every caller still waiting on an injected message that it did not
+   *  join (the turn ended or the worker died first). */
+  private settleJoinWaiters(): void {
+    const p = this.pending;
+    if (!p) return;
+    for (const [uuid, cb] of p.joinWaiters) {
+      p.joinWaiters.delete(uuid);
+      try {
+        cb(false);
+      } catch {}
+    }
   }
 
   /**
@@ -640,6 +659,7 @@ export class Worker {
     // previous code nulled pending first, which made finish bail without
     // resolving the outer Promise, causing pool.run() to hang forever and
     // breaking the cold-start collision fallback (and any other die() path).
+    this.settleJoinWaiters();
     if (this.pending) {
       this.pending.resolve({
         ok: false,
@@ -777,6 +797,13 @@ export class Worker {
       }
       if (evt.isReplay && evt.uuid && this.pending.injected.has(evt.uuid)) {
         this.pending.injected.set(evt.uuid, true);
+        const waiter = this.pending.joinWaiters.get(evt.uuid);
+        if (waiter) {
+          this.pending.joinWaiters.delete(evt.uuid);
+          try {
+            waiter(true);
+          } catch {}
+        }
         return;
       }
       for (const b of evt.message.content) {
@@ -819,6 +846,7 @@ export class Worker {
       // message is still parked, so the turn's end-of-turn pass answers it.
       const missedMidTurn = p.injected.size - seenMidTurn.length;
       if (missedMidTurn > 0) queueMicrotask(() => this.retireAfterMissedMidTurn(missedMidTurn));
+      this.settleJoinWaiters();
       if (evt.is_error) {
         const detail = evt.result?.trim() || "claude returned error";
         log.error("claude-worker", "result error", {

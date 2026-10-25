@@ -5,6 +5,7 @@ import {
   isRetryable,
 } from "../alerts/operator-alert.ts";
 import { parseInboundDepth } from "../bridge/relay.ts";
+import { injectIntoRunningTurnAndConfirm } from "../claude/runner.ts";
 import { deliverReply } from "../channels/deliver.ts";
 import type { Config } from "../config/config.ts";
 import type { GhostPrefsStore } from "../ghost/prefs.ts";
@@ -69,7 +70,28 @@ export async function fireJob(
   crons: CronStore,
   ghostPrefs: GhostPrefsStore,
   recentThread: RecentThread,
+  showToRunningTurn: (sessionKey: string, text: string) => Promise<boolean> = injectIntoRunningTurnAndConfirm,
 ): Promise<void> {
+  // A finished result for a chat whose turn is still running joins that turn
+  // at its next tool step instead of waiting for the lock: sub-agent results
+  // waited a p90 of 49 minutes and background-job results 28 behind turns
+  // that were already running in the same chat (30 days to 2026-10-25). If it
+  // cannot join (no turn, no tool step, the turn ended first), it fires as
+  // its own turn exactly as before.
+  if (isResultWakeUp(job.systemEvent)) {
+    const joined = await showToRunningTurn(job.sessionKey, resultNote(job.systemEvent)).catch(
+      () => false,
+    );
+    if (joined) {
+      log.info("cron", "result joined the running turn", {
+        job: job.id,
+        session: job.sessionKey,
+        kind: classifyEvent(job.systemEvent),
+      });
+      return;
+    }
+  }
+
   // Brown-nose route: cron rows enqueued by the ghost have a tagged
   // systemEvent. They use a different envelope shape (no "scheduled
   // event" framing), recheck budgets, and respect the global
@@ -302,6 +324,22 @@ async function runAndDeliver(
       dur: humanMs(Date.now() - started),
     });
   }
+}
+
+/** Wake-ups that carry a finished result: worth showing to a running turn. */
+export function isResultWakeUp(systemEvent: string): boolean {
+  const kind = classifyEvent(systemEvent);
+  return kind === "agent-done" || kind === "team-done" || kind === "bg-job-done";
+}
+
+/** How a finished result is shown to a turn that is still running. */
+export function resultNote(systemEvent: string): string {
+  return [
+    "[SYSTEM — a background result arrived while you're working]",
+    systemEvent,
+    "",
+    "If the person is waiting on this, tell them with send_message before your next tool call, then carry on with your current task. It will not be shown to you again when this turn ends.",
+  ].join("\n");
 }
 
 function classifyEvent(systemEvent: string): string {
