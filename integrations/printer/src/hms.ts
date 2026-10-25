@@ -10,8 +10,10 @@ import { atomicWriteFileSync } from "../../../src/util/atomic-write.ts";
  * four hex digits (0300_0100_0001_0007). Device errors (`print_error`, one
  * integer) are what stops or fails a job, written as two groups (0300_400C).
  * The text comes from Bambu's query service for this printer model, bundled
- * in data/hms-en.json and refreshed weekly into the data dir, so a new
- * firmware's codes arrive without a release.
+ * in assets/hms-en.json and refreshed weekly into the data dir, so a new
+ * firmware's codes arrive without a release. (Not under a `data/` directory:
+ * the repo ignores every one, and a bundled file there never reaches a
+ * checkout.)
  */
 
 export type ErrorDb = { ver?: number; hms: Record<string, string>; errors: Record<string, string> };
@@ -26,7 +28,8 @@ export type DecodedError = {
   known: boolean;
 };
 
-const BUNDLED = join(import.meta.dir, "..", "data", "hms-en.json");
+const BUNDLED = join(import.meta.dir, "..", "assets", "hms-en.json");
+const EMPTY: ErrorDb = { hms: {}, errors: {} };
 const REFRESH_MS = 7 * 24 * 3600_000;
 
 const SEVERITY: Record<number, DecodedError["severity"]> = {
@@ -57,6 +60,9 @@ function refreshedPath(dataDir: string): string {
 export function loadErrorDb(dataDir?: string): ErrorDb {
   const fresh = dataDir ? refreshedPath(dataDir) : "";
   const path = fresh && existsSync(fresh) ? fresh : BUNDLED;
+  // Without any catalogue, codes still decode (as unknown) instead of the
+  // printer runtime failing to start.
+  if (!existsSync(path)) return EMPTY;
   const mtime = statSync(path).mtimeMs;
   if (cached && cached.path === path && cached.mtime === mtime) return cached.db;
   const db = JSON.parse(readFileSync(path, "utf8")) as ErrorDb;

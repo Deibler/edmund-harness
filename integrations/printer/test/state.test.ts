@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { SAME_COLOR, colorDistance, colorName } from "../src/color.ts";
 import { planFilaments, swapInstructions, trayFingerprint } from "../src/filament.ts";
 import {
@@ -144,6 +147,14 @@ describe("Bambu's error text", () => {
     const e = lookupCode("7F7F_7F7F_7F7F_7F7F", db)!;
     expect(e.known).toBe(false);
     expect(e.text).toContain("Not in Bambu's list");
+  });
+
+  test("the bundled list ships with the code (no ignore rule hides it from a checkout)", () => {
+    // It once sat under a data/ directory, which .gitignore drops everywhere:
+    // green on the machine that had the file, red on every fresh checkout.
+    const path = join(import.meta.dir, "..", "assets", "hms-en.json");
+    expect(existsSync(path)).toBe(true);
+    expect(spawnSync("git", ["check-ignore", "-q", path]).status).toBe(1);
   });
 
   test("the bundled list is the full catalogue", () => {

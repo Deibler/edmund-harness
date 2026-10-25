@@ -114,7 +114,7 @@ the model cache over port 6000 and sends `project_file` with
 - `data/printer/jobs/<id>/`: plate render, final photo, timelapse.
 - `data/printer/frames/`: camera frames (kept a day).
 - `data/printer/hms-en.json`: Bambu's error text, refreshed weekly
-  (falls back to `data/hms-en.json` here).
+  (falls back to `assets/hms-en.json` here).
 - `data/printer/runtime.json`: the runtime's loopback port and secret.
 - `data/web-mounts.json`: `/print/` -> the runtime's port, for the kitchen host.
 
