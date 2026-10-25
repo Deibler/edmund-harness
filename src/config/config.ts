@@ -389,12 +389,24 @@ export const ConfigSchema = z.object({
       image_model: z.string().default("gpt-image-1"),
       tts_voice: z.string().default("nova"),
       stt_model: z.string().default("whisper-1"),
+      /**
+       * Local speech-to-text with whisper.cpp, tried before any hosted
+       * backend: a ggml model file and the `whisper-cli` binary. A relative
+       * model path resolves against the data dir. When the model file or the
+       * binary is missing, transcription falls back to the hosted backend.
+       * Hosted STT failed 30 times in one week when its prepaid balance ran
+       * low; local transcription of a 9 s voice note takes under a second.
+       */
+      local_stt_model: z.string().default("models/ggml-small.en.bin"),
+      whisper_cli: z.string().default("whisper-cli"),
     })
     .default({
       image_provider: "openai",
       image_model: "gpt-image-1",
       tts_voice: "nova",
       stt_model: "whisper-1",
+      local_stt_model: "models/ggml-small.en.bin",
+      whisper_cli: "whisper-cli",
     }),
   /**
    * `[sms]` — outbound/inbound SMS through Twilio.

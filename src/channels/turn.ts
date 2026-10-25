@@ -35,7 +35,7 @@ import { TypingSession } from "../imessage/typing.ts";
 import type { MirrorEnvelopeBlockFn } from "../integrations/contracts.ts";
 import { integrationExport } from "../integrations/optional.ts";
 import { isTranscribableMedia, isVideoPath } from "../media/media-kind.ts";
-import { AUTO_TRANSCRIBE_MAX_DURATION_S } from "../media/transcribe.ts";
+import { AUTO_TRANSCRIBE_MAX_DURATION_S, sttBackend } from "../media/transcribe.ts";
 import { describeVideo } from "../media/video-probe.ts";
 import type { AutoRecallResult } from "../memory/auto-recall.ts";
 import { type ModelBackend, backendForModel, transitionModelSession } from "../model/backend.ts";
@@ -167,13 +167,18 @@ function turnNeedsRecentMedia(
  * The group re-gate after transcription. A turn goes ahead when the name is in
  * any message's text or voice transcript, or when a message was let in
  * without it because the address check judged it to be for the assistant.
+ * A voice note that could not be transcribed may have said the name, so it
+ * goes ahead too and the model decides: dropping it silently missed anyone
+ * who said "Edmund, ..." out loud while transcription was down.
  */
 export function passesGroupRegate(
   messages: InboundMessage[],
   transcripts: Iterable<string>,
   names: string[],
+  untranscribed = 0,
 ): boolean {
   if (messages.some((m) => m.unnamedWake)) return true;
+  if (untranscribed > 0) return true;
   return isAssistantMentioned([...messages.map((m) => m.text), ...transcripts].join("\n"), names);
 }
 
@@ -878,9 +883,13 @@ async function handleBatchInner(
     // Transcribe takes the ORIGINAL attachment paths (var/folders/...), not
     // the sandbox copies — so it doesn't depend on copyReceivedAttachments
     // finishing first. Same for prefetchLinks (reads message text only).
-    const emptyEnrichment = { transcripts: new Map<string, string>(), probes: new Map() };
+    const emptyEnrichment = {
+      transcripts: new Map<string, string>(),
+      probes: new Map(),
+      failed: [] as string[],
+    };
     const mediaEnrichPromise =
-      config.behavior.transcribe_inbound_audio && (config.keys.openrouter || config.keys.openai)
+      config.behavior.transcribe_inbound_audio && sttBackend(config) !== null
         ? (() => {
             const seeded = new Set<string>();
             for (const m of cleaned) {
@@ -1043,7 +1052,14 @@ async function handleBatchInner(
     // cost vs. the latency win of parallelism, and the prefetch cache makes
     // it a freebie next time anyway.)
     if (isGroup) {
-      if (!passesGroupRegate(messages, transcripts.values(), sessionNames)) {
+      if (
+        !passesGroupRegate(
+          messages,
+          transcripts.values(),
+          sessionNames,
+          mediaEnrichment.failed.length,
+        )
+      ) {
         if (process.env.DEBUG) {
           console.log(`[gate] post-transcribe skip ${key}: no mention in text or transcripts`);
         }

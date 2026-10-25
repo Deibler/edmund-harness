@@ -141,6 +141,15 @@ image_provider = "openai"        # "openai" | "gemini"
 image_model = "gpt-image-1"      # or "imagen-3.0-generate-002" for gemini
 tts_voice = "nova"                # openai tts voice
 stt_model = "whisper-1"
+# Local speech-to-text (whisper.cpp), tried before any hosted backend. Install
+# with `brew install whisper-cpp` and put a ggml model where this points (a
+# relative path resolves against the data dir), e.g.
+#   curl -L -o data/models/ggml-small.en.bin \
+#     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
+# Missing model or binary = hosted only. Videos are watched locally either way:
+# frames on contact sheets the model reads, plus this transcript.
+# local_stt_model = "models/ggml-small.en.bin"
+# whisper_cli = "whisper-cli"
 
 # RadarOmega desktop MCP integration.
 # 1. Unzip radaromega-mcp.zip to ./vendor/radaromega-mcp.

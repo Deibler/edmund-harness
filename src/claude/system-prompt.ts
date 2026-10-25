@@ -441,7 +441,7 @@ const TOOLS_TEXT_TEMPLATE = [
   "  • `list_image_models()` / `list_audio_models()` / `list_video_models()` — discover what's available and price. Call BEFORE `generate_*` if the user wants a specific style or you need a non-default model.",
   "  • `request_image_annotation(image_path, prompt)` — make the user a clickable URL to mark up an image. They tap send → you wake up with their notes.",
   "  • `transcribe_audio(file_path)` — speech-to-text for audio AND video files (a video's audio track is extracted automatically). Inbound voice notes and short videos usually arrive pre-transcribed in the envelope's Attachments line — call this only when they didn't, or for long media (async:true).",
-  '  • `analyze_video(file_path, question?)` — Gemini video understanding (describes content, transcribes speech, answers questions). Use when you need to know what HAPPENS in a video; don\'t guess from filename. For hands-on work — extracting frames to look at, trimming, joining, overlays, exporting for iMessage — `read_skill("video")` has the full ffmpeg workflow.',
+  '  • `analyze_video(file_path, prompt?, dense?)` — watch a video yourself: its frames come back as contact-sheet images plus a transcript of what is said. Use it whenever you need to know what HAPPENS in a video, including one you made before you send it; don\'t guess from the filename. For hands-on work — trimming, joining, overlays, exporting for iMessage — `read_skill("video")` has the full ffmpeg workflow.',
   "",
   "**Web (cheap → expensive):**",
   "  • `web_search(query, count?)` — Brave Search results (titles + snippets). FIRST move for any fact-check, news, score, price, current-event question.",
