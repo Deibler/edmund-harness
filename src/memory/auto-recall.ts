@@ -51,14 +51,17 @@ const SELF_RECALL_LIMIT = 2;
 const SKILL_SUGGEST_LIMIT = 1;
 const SKILL_MIN_SCORE = 0.55;
 
-function isLiveProfileChunk(ref: string): boolean {
+export function isLiveProfileChunk(ref: string): boolean {
   return (
     (ref.startsWith("person:") && !ref.startsWith("person:archive/")) ||
     (ref.startsWith("group:") && !ref.startsWith("group:archive/")) ||
     // Live SOUL.md is already injected into every system prompt; recalling it
     // would spend the block on text the model is currently reading. Only the
-    // ARCHIVE is worth surfacing.
-    (ref.startsWith("self:") && !ref.startsWith("self:archive/"))
+    // live file: its archive and the domain notes (`self:domains/`) are in no
+    // prompt, so recall is the only way they reach a reply. Until 2026-10-25
+    // this excluded every `self:` row but the archive, and none of the 246
+    // lessons written in the preceding 30 days ever surfaced.
+    /^self:SOUL\.md#/.test(ref)
   );
 }
 

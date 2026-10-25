@@ -23,6 +23,7 @@ import { log } from "../util/log.ts";
 import { chunkMarkdownDoc, chunkPlainText } from "./chunker.ts";
 import type { EmbedProvider } from "./embed-provider.ts";
 import { type AttachmentInfo, buildEnrichedText } from "./enrich.ts";
+import { lessonForRecall } from "../persona/domains.ts";
 import { type IndexRow, type VectorStore, normalize } from "./vector-store.ts";
 
 /** Bound on chunks indexed per sandbox file (~17KB of text) — coverage
@@ -486,22 +487,29 @@ export class Indexer {
   private async indexSelfFiles(): Promise<number> {
     if (!this.selfFilesDir || !existsSync(this.selfFilesDir)) return 0;
     const watermark = this.store.getWatermark("self.mtime");
+    // Domain files are indexed through lessonForRecall (no source names).
+    // Rows written before that carry the names, so re-index every domain file
+    // once, keyed by this marker.
+    const domainsRedacted = this.store.getWatermark("self.domains.sources_stripped") >= 1;
     // SOUL.md and its archive, plus persona/domains/*.md — what Edmund knows
     // about SUBJECTS rather than people. Both are global for the same reason:
     // they are true in every conversation, not one of them.
     const files = [
       ...listProfileDir(this.selfFilesDir).filter((f) => /(^|\/)SOUL\.md$/.test(f.name)),
-      ...listProfileDir(join(this.selfFilesDir, "domains")).map((f) => ({
-        ...f,
-        name: `domains/${f.name}`,
-      })),
-    ].filter((f) => f.mtime > watermark);
-    if (files.length === 0) return 0;
+      ...listProfileDir(join(this.selfFilesDir, "domains"))
+        .map((f) => ({ ...f, name: `domains/${f.name}` }))
+        .filter((f) => !domainsRedacted || f.mtime > watermark),
+    ].filter((f) => f.name.startsWith("domains/") || f.mtime > watermark);
+    if (files.length === 0) {
+      if (!domainsRedacted) this.store.setWatermark("self.domains.sources_stripped", 1);
+      return 0;
+    }
 
     let indexed = 0;
     let maxMtime = watermark;
     for (const f of files) {
-      const body = readFileSync(f.path, "utf8");
+      const raw = readFileSync(f.path, "utf8");
+      const body = f.name.startsWith("domains/") ? lessonForRecall(raw) : raw;
       const chunks = chunkMarkdownDoc(docTitle(body, f.name), body);
       const refPrefix = `self:${f.name}#`;
       try {
@@ -536,6 +544,7 @@ export class Indexer {
       }
     }
     this.store.setWatermark("self.mtime", maxMtime);
+    if (!domainsRedacted) this.store.setWatermark("self.domains.sources_stripped", 1);
     return indexed;
   }
 
