@@ -32,6 +32,9 @@ export type PendingEntry = {
    *  replayed message would meet the group re-gate as un-named and be
    *  dropped. */
   unnamedWake?: UnnamedWake;
+  /** Set when the message was also shown to the running turn (see
+   *  src/claude/mid-turn.ts): the uuid it was written under. */
+  midTurnUuid?: string;
 };
 
 function pendingPath(dataDir: string, sessionKey: string): string {
@@ -44,14 +47,33 @@ function pendingPath(dataDir: string, sessionKey: string): string {
  * Called from the main watcher when a new message arrives for a session
  * that's currently locked (i.e. Claude is already running for it).
  */
-export function writePending(sessionKey: string, msg: InboundMessage, dataDir: string): void {
+export function writePending(
+  sessionKey: string,
+  msg: InboundMessage,
+  dataDir: string,
+  midTurnUuid?: string,
+): void {
   try {
     const path = pendingPath(dataDir, sessionKey);
     mkdirSync(join(dataDir, "pending"), { recursive: true });
-    appendFileSync(path, `${JSON.stringify(toPendingEntry(msg))}\n`);
+    const entry: PendingEntry = { ...toPendingEntry(msg), ...(midTurnUuid ? { midTurnUuid } : {}) };
+    appendFileSync(path, `${JSON.stringify(entry)}\n`);
   } catch (err) {
     console.warn("[session-queue] writePending failed:", err);
   }
+}
+
+/** Parked entries split by whether the running turn was shown them mid-turn
+ *  and saw them (src/claude/mid-turn.ts). */
+export function splitSeenMidTurn(
+  entries: PendingEntry[],
+  seen: ReadonlySet<string>,
+): { seen: PendingEntry[]; rest: PendingEntry[] } {
+  const out = { seen: [] as PendingEntry[], rest: [] as PendingEntry[] };
+  for (const e of entries) {
+    (e.midTurnUuid && seen.has(e.midTurnUuid) ? out.seen : out.rest).push(e);
+  }
+  return out;
 }
 
 /** Serialize an inbound message to the parked-entry shape. Shared by the
@@ -133,6 +155,7 @@ function normalizeEntry(raw: Record<string, unknown>): PendingEntry | null {
     chatGuid: typeof raw.chatGuid === "string" ? raw.chatGuid : "",
     isGroup: typeof raw.isGroup === "boolean" ? raw.isGroup : false,
     ...(isUnnamedWake(raw.unnamedWake) ? { unnamedWake: raw.unnamedWake } : {}),
+    ...(typeof raw.midTurnUuid === "string" ? { midTurnUuid: raw.midTurnUuid } : {}),
   };
 }
 

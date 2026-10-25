@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { DEBUG, humanCost, humanCount, humanMs, log, shortSession, snippet } from "../util/log.ts";
 import { type IterationUsage, contextTokens, iterationContextTokens } from "./auto-compact.ts";
+import { type InjectResult, recordSeenMidTurn } from "./mid-turn.ts";
 
 /**
  * A resident `claude -p --input-format stream-json --output-format stream-json`
@@ -183,6 +184,8 @@ export type WorkerResult =
       /** This CLI process was started with --resume, so its running total
        *  began from the session's earlier spend. */
       resumedProcess: boolean;
+      /** uuids of messages written mid-turn (inject) that joined this turn. */
+      seenMidTurn: string[];
     }
   | { ok: false; error: string; claudeSessionId: string | undefined; durationMs: number };
 
@@ -292,6 +295,13 @@ export class Worker {
      *  arrived: a result before the echo may belong to another turn. */
     turnUuid: string | null;
     echoed: boolean;
+    /** Top-level tool calls whose results have not come back. While one is
+     *  out, the CLI will make another request, and a message written now
+     *  joins the turn there. */
+    toolsInFlight: Set<string>;
+    /** Messages written mid-turn by uuid, and whether each was echoed (joined
+     *  the conversation) before the result. */
+    injected: Map<string, boolean>;
   } | null = null;
   /** The session id observed on the FIRST init event. Subsequent events
    *  must match it; if they don't, the worker is poisoned and must be
@@ -466,6 +476,8 @@ export class Worker {
         textBlockNeedsSeparator: false,
         turnUuid: stamped.uuid,
         echoed: false,
+        toolsInFlight: new Set(),
+        injected: new Map(),
       };
       if (payload.signal) {
         const onAbort = () => this.die(`turn interrupted: ${abortReason(payload.signal!)}`);
@@ -487,6 +499,34 @@ export class Worker {
         },
       );
     });
+  }
+
+  /**
+   * Show a message to the running turn (see mid-turn.ts). Written only while
+   * a tool step is in flight: the CLI then makes another request and the
+   * message joins the turn there. With none out, the model may be writing
+   * its final reply, and the message would become a CLI turn of its own that
+   * nothing here is waiting for.
+   */
+  inject(text: string): InjectResult {
+    if (this.deadReason !== null) return { ok: false, reason: "worker dead" };
+    const p = this.pending;
+    if (!p) return { ok: false, reason: "no turn running" };
+    if (p.turnUuid === null) return { ok: false, reason: "turn is not stream-json" };
+    if (p.toolsInFlight.size === 0) return { ok: false, reason: "no tool step in flight" };
+    const uuid = crypto.randomUUID();
+    const event = {
+      type: "user",
+      uuid,
+      message: { role: "user", content: [{ type: "text", text }] },
+    };
+    try {
+      this.proc.stdin.write(`${JSON.stringify(event)}\n`);
+    } catch (err) {
+      return { ok: false, reason: `stdin write failed: ${(err as Error).message}` };
+    }
+    p.injected.set(uuid, false);
+    return { ok: true, uuid };
   }
 
   /**
@@ -711,6 +751,7 @@ export class Worker {
         if (b.type === "tool_use") {
           this.pending.toolUses++;
           const tu = b as { name?: string; id?: string; input?: unknown };
+          if (!evt.parent_tool_use_id && tu.id) this.pending.toolsInFlight.add(tu.id);
           // Tool name in the message text (not a field) so the log viewer's
           // event column reads "tool_use Bash" instead of a bare "tool_use"
           // with the name buried in the field tail.
@@ -734,8 +775,14 @@ export class Worker {
         this.pending.echoed = true;
         return;
       }
+      if (evt.isReplay && evt.uuid && this.pending.injected.has(evt.uuid)) {
+        this.pending.injected.set(evt.uuid, true);
+        return;
+      }
       for (const b of evt.message.content) {
         if (b.type === "tool_result") {
+          const id = (b as { tool_use_id?: string }).tool_use_id;
+          if (id) this.pending.toolsInFlight.delete(id);
           this.setActivity("thinking");
           if (!DEBUG) continue;
           const tr = b as { tool_use_id?: string; is_error?: boolean; content?: unknown };
@@ -764,6 +811,14 @@ export class Worker {
       this.setTyping(false);
       const p = this.pending;
       const dur = Date.now() - p.startedAt;
+      const seenMidTurn = [...p.injected].filter(([, joined]) => joined).map(([u]) => u);
+      // A message written mid-turn that is not echoed by now did not join this
+      // turn: the CLI will run it as a turn of its own once this one ends, and
+      // nothing is waiting for that turn's result (the next turn would take it
+      // as its own). Retire the worker as soon as this turn is settled. The
+      // message is still parked, so the turn's end-of-turn pass answers it.
+      const missedMidTurn = p.injected.size - seenMidTurn.length;
+      if (missedMidTurn > 0) queueMicrotask(() => this.retireAfterMissedMidTurn(missedMidTurn));
       if (evt.is_error) {
         const detail = evt.result?.trim() || "claude returned error";
         log.error("claude-worker", "result error", {
@@ -781,6 +836,7 @@ export class Worker {
         });
         return;
       }
+      if (seenMidTurn.length > 0) recordSeenMidTurn(this.sessionKey, seenMidTurn);
       const reply = (evt.result ?? p.lastAssistantText).trim();
       const ctxTokens =
         p.maxCallContextTokens > 0 ? p.maxCallContextTokens : contextTokens(evt.usage);
@@ -802,8 +858,21 @@ export class Worker {
         contextTokens: ctxTokens,
         totalCostUsd: evt.total_cost_usd,
         resumedProcess: this.resumedProcess,
+        seenMidTurn,
       });
     }
+  }
+
+  private retireAfterMissedMidTurn(missed: number): void {
+    log.warn(
+      "claude-worker",
+      "a message shown mid-turn arrived as the turn ended; retiring the worker",
+      {
+        session: this.sessionKey,
+        missed,
+      },
+    );
+    this.die("mid-turn message missed its turn");
   }
 
   /**

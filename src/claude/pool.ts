@@ -1,4 +1,5 @@
 import { humanMs, log } from "../util/log.ts";
+import type { InjectResult } from "./mid-turn.ts";
 import { Worker, type WorkerResult, type WorkerSpawnArgs, type WorkerTurn } from "./worker.ts";
 
 /**
@@ -298,6 +299,14 @@ export class WorkerPool {
     } finally {
       entry.busy = false;
     }
+  }
+
+  /** Show a message to the session's running turn, if one is running here
+   *  (see mid-turn.ts). */
+  inject(sessionKey: string, text: string): InjectResult {
+    const entry = this.entries.get(sessionKey);
+    if (!entry?.busy) return { ok: false, reason: "no warm turn running" };
+    return entry.worker.inject(text);
   }
 
   /** Evict the entry for one session (e.g. after a healer cleared its session id). */

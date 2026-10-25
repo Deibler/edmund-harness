@@ -23,6 +23,7 @@ import { type IterationUsage, contextTokens, iterationContextTokens } from "./au
 import { ISOLATED_SETTINGS_ARGS, PROMPT_SNAPSHOT_ARGS } from "./direct-env.ts";
 import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
 import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
+import type { InjectResult } from "./mid-turn.ts";
 import { personaFingerprint } from "./persona.ts";
 import { WorkerPool } from "./pool.ts";
 import {
@@ -70,6 +71,12 @@ export async function shutdownWorkerPool(): Promise<void> {
   if (!workerPool) return;
   await workerPool.stop();
   workerPool = null;
+}
+
+/** Show a message to the session's running turn (see mid-turn.ts). Only a
+ *  pool worker can take one; any other turn keeps it parked for its end. */
+export function injectIntoRunningTurn(sessionKey: SessionKey, text: string): InjectResult {
+  return workerPool?.inject(sessionKey, text) ?? { ok: false, reason: "no worker pool" };
 }
 
 /** Probe: is a worker currently bound to this session? Used by compaction

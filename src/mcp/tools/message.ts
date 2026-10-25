@@ -307,7 +307,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
     {
       name: "check_incoming",
       description:
-        "Returns any messages that arrived in this chat SINCE this turn started — follow-ups queued while you're already working. Call this before beginning any long task (>10s: image gen, video, research, agent spawn) and at natural breakpoints during one, to see if the user added context or pivoted — so you can adjust, cancel inflight agents, or ack before burning time. (Blunt cancels — a bare 'stop'/'never mind' — abort your turn harness-side before you could even peek; this tool is for the softer follow-ups that don't.) Peeking does NOT consume them: when this turn ends you'll get one more pass with these message(s) + the reply you drafted, so you can fold everything into a single coherent response (or keep your draft). If a follow-up is queued and your remaining work is >30s, prefer handoff_current_work over making them wait. Returns 'no pending messages' if nothing is queued.",
+        "Returns any messages that arrived in this chat SINCE this turn started — follow-ups queued while you're already working. Most are also shown to you on their own at your next step ('[SYSTEM — a new message arrived while you're working]'); a photo or file is not, so call this at natural breakpoints of a long task to catch those, and before beginning one (>10s: image gen, video, research, agent spawn) to see if the user added context or pivoted. (Blunt cancels — a bare 'stop'/'never mind' — abort your turn harness-side before you could even peek; this tool is for the softer follow-ups that don't.) Peeking does NOT consume them: when this turn ends you'll get one more pass with these message(s) + the reply you drafted, so you can fold everything into a single coherent response (or keep your draft). If a follow-up is queued and your remaining work is >30s, prefer handoff_current_work over making them wait. Returns 'no pending messages' if nothing is queued.",
       inputSchema: z.object({}),
       handler: async () => {
         const entries = peekPending(ctx.sessionKey, ctx.dataDir);
@@ -318,7 +318,8 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           const ts = new Date(e.timestampMs).toLocaleTimeString();
           const text = e.text ?? "(no text)";
           const atts = e.attachments.length > 0 ? ` [+${e.attachments.length} attachment(s)]` : "";
-          return `[${ts}] ${e.fromHandle}: ${text}${atts}`;
+          const shown = e.midTurnUuid ? " [already shown to you mid-turn]" : "";
+          return `[${ts}] ${e.fromHandle}: ${text}${atts}${shown}`;
         });
         console.log(`[check_incoming] ${ctx.sessionKey} found ${entries.length} pending`);
         return { content: [{ type: "text", text: lines.join("\n") }] };

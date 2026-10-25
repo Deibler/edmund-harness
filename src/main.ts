@@ -26,9 +26,11 @@ import { wakeThread } from "./channels/history.ts";
 import { SessionPipeline } from "./channels/pipeline.ts";
 import { handleBatch, shouldAccept } from "./channels/turn.ts";
 import { checkLoadout, formatLoadoutReport } from "./claude/loadout-check.ts";
+import { showToRunningTurn } from "./claude/mid-turn.ts";
 import {
   flushWorkerPool,
   getWorkerPoolStats,
+  injectIntoRunningTurn,
   isWorkerPoolBusy,
   shutdownWorkerPool,
 } from "./claude/runner.ts";
@@ -1032,14 +1034,25 @@ async function main() {
     // message before the older backlog.
     if (catchUp?.absorb(key, msg)) return;
     if (activeSessions.has(key)) {
-      writePending(key, msg, config.paths.data_dir);
+      const bargeIn = isBargeIn(msg.text);
+      // Shown to the running turn at its next tool step, so the model can
+      // answer it now instead of when the turn ends (mid-turn.ts). Parked as
+      // well: the turn's end drops it if the model saw it, and answers it if
+      // not or if the turn failed.
+      const shown = bargeIn
+        ? null
+        : showToRunningTurn(key, msg, {
+            label: (handle) => contacts.label(handle),
+            inject: injectIntoRunningTurn,
+          });
+      writePending(key, msg, config.paths.data_dir, shown ?? undefined);
       // Barge-in: a clear cancel/redirect aborts the in-flight turn NOW
       // instead of letting doomed work finish (or a slow tool chain run
       // minutes past a "stop"). The abort path disposes the old batch
       // (ack-covered — user superseded it) and handleBatch's finally
       // re-enqueues this parked message as its own fresh turn, so the
       // model answers the cancel/pivot in seconds.
-      if (isBargeIn(msg.text)) {
+      if (bargeIn) {
         const controller = turnControllers.get(key);
         if (controller && !controller.signal.aborted) {
           console.log(
