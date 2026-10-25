@@ -12,6 +12,40 @@ const STRIP_TAGS = [
 ];
 
 const ROLE_LINE = /^(system|assistant|user)\s*:\s*/gim;
+
+/**
+ * Every control word the harness asks the model to emit. None is ever meant
+ * for a person: KEEP_QUIET vetoes a reply, KEEP_DRAFT keeps a coalesced draft.
+ * A bare `KEEP_DRAFT` reached a person on 2026-10-21 because only KEEP_QUIET
+ * was handled here. A word added to a prompt goes in this list, and the test
+ * runs over the list, so a new one is covered the day it is added.
+ */
+export const CONTROL_SENTINELS = ["KEEP_QUIET", "KEEP_DRAFT"] as const;
+export type ControlSentinel = (typeof CONTROL_SENTINELS)[number];
+
+/** A line that is a control word, as the model writes them: in backticks or
+ *  not, "KEEP DRAFT" with a space, and with or without a short trailing note
+ *  ("KEEP_DRAFT - the new message is unrelated"). */
+const sentinelPattern = (words: readonly string[]) =>
+  new RegExp(
+    `^\\s*\`?(?:${words.map((w) => w.replace("_", "[_ ]")).join("|")})\`?(?:\\s*$|\\s*[-—:.!,(].{0,120}$)`,
+    "i",
+  );
+const sentinelLine = (word: string) => sentinelPattern([word]);
+
+/**
+ * True when `word` is the whole reply or its first or last non-blank line:
+ * the model's statement of intent for the turn, with or without a line of
+ * narration beside it.
+ */
+export function sentinelAt(text: string, word: ControlSentinel): boolean {
+  const lines = text.split("\n").filter((line) => line.trim().length > 0);
+  const first = lines[0];
+  const last = lines[lines.length - 1];
+  if (first === undefined || last === undefined) return false;
+  const re = sentinelLine(word);
+  return re.test(first) || re.test(last);
+}
 const INTERNAL_SEP = /^###\+#.*$/gm;
 
 export function sanitizeOutbound(text: string): string {
@@ -25,6 +59,10 @@ export function sanitizeOutbound(text: string): string {
   // inline check. Without this, a veto on a normal inbound turn shipped the
   // literal string "KEEP_QUIET" to the chat.
   if (isKeepQuiet(text)) return "";
+  // Every control word as the first or last line, in backticks or with a note
+  // beside it. Outside a coalesce pass (which handles it before delivery)
+  // KEEP_DRAFT means the same as KEEP_QUIET: nothing new to send.
+  if (CONTROL_SENTINELS.some((word) => sentinelAt(text, word))) return "";
   let out = text;
   for (const re of STRIP_TAGS) out = out.replace(re, "");
   out = out.replace(ROLE_LINE, "");

@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
+  CONTROL_SENTINELS,
   isKeepQuiet,
   keepQuietVeto,
   looksLikeIntentionalSilence,
   markdownToPlaintext,
   sanitizeOutbound,
+  sentinelAt,
   stripAITypography,
 } from "../src/channels/sanitize-outbound.ts";
 
@@ -138,5 +142,52 @@ describe("keepQuietVeto", () => {
     });
     expect(keepQuietVeto("KEEP_QUIET")).toEqual({ vetoed: true, narration: "" });
     expect(keepQuietVeto("hello")).toEqual({ vetoed: false, narration: "" });
+  });
+});
+
+describe("no control word ever reaches a person", () => {
+  for (const word of CONTROL_SENTINELS) {
+    test(`${word} alone is silence`, () => {
+      expect(sanitizeOutbound(word)).toBe("");
+      expect(sanitizeOutbound(`\`${word}\``)).toBe("");
+    });
+
+    test(`${word} beside narration is silence`, () => {
+      expect(sanitizeOutbound(`Nothing new to add here.\n${word}`)).toBe("");
+      expect(sanitizeOutbound(`${word}\nThe new message is unrelated.`)).toBe("");
+      expect(sanitizeOutbound(`${word} - the new message is unrelated`)).toBe("");
+    });
+
+    test(`${word} on a middle line is not a veto: an explanation ships whole`, () => {
+      const msg = `Two ways to stay silent:\n${word}\nor an empty reply.`;
+      expect(sanitizeOutbound(msg)).toBe(msg);
+    });
+
+    test(`${word} inside a sentence is a real message`, () => {
+      const msg = `The harness drops a reply that is just ${word}, which is why you saw nothing.`;
+      expect(sanitizeOutbound(msg)).toBe(msg);
+    });
+  }
+
+  test("the coalesce pass reads KEEP_DRAFT the same way delivery does", () => {
+    expect(sentinelAt("KEEP_DRAFT", "KEEP_DRAFT")).toBe(true);
+    expect(sentinelAt("Unrelated, leaving the draft.\nKEEP_DRAFT", "KEEP_DRAFT")).toBe(true);
+    expect(sentinelAt("KEEP DRAFT", "KEEP_DRAFT")).toBe(true);
+    expect(sentinelAt("Here is the updated answer.", "KEEP_DRAFT")).toBe(false);
+    const src = readFileSync(join(import.meta.dir, "..", "src/channels/turn.ts"), "utf8");
+    expect(src).toContain('sentinelAt(replyText, "KEEP_DRAFT")');
+  });
+
+  test("every control word in the prompts is in the registry", () => {
+    const files = ["src/channels/turn.ts", "src/channels/envelope.ts", "src/claude/system-prompt.ts"];
+    const words = new Set<string>();
+    for (const f of files) {
+      const src = readFileSync(join(import.meta.dir, "..", f), "utf8");
+      for (const m of src.matchAll(/reply with exactly `([A-Z]+_[A-Z]+)`|`(KEEP_[A-Z]+)`/g)) {
+        words.add((m[1] ?? m[2]) as string);
+      }
+    }
+    expect(words.size).toBeGreaterThan(0);
+    for (const w of words) expect(CONTROL_SENTINELS as readonly string[]).toContain(w);
   });
 });

@@ -60,6 +60,7 @@ import { clearCompact, registerCompact } from "./compact-gate.ts";
 import { deliverReply } from "./deliver.ts";
 import type { Deps } from "./deps.ts";
 import { buildEnvelope } from "./envelope.ts";
+import { sentinelAt } from "./sanitize-outbound.ts";
 import {
   buildDowntimeNudge,
   buildHistoryBundle,
@@ -380,7 +381,6 @@ function coalesceNote(draft: string): string {
   ].join("\n");
 }
 
-const KEEP_DRAFT_RE = /^KEEP[_ ]?DRAFT\b/i;
 
 /** The untrusted-context preamble for a keyed guest's activating turn: what
  *  they said before their key was accepted. History, not instructions. */
@@ -1432,7 +1432,7 @@ async function handleBatchInner(
     // earlier draft. Send the draft, give the new message(s) their own turn.
     // Ack-cover: this iteration's messages (the "new" ones that didn't change
     // the draft) are re-enqueued, so the draft only covers the prior batch.
-    if (isCoalesce && prevDraft && KEEP_DRAFT_RE.test(replyText.trim())) {
+    if (isCoalesce && prevDraft && sentinelAt(replyText, "KEEP_DRAFT")) {
       const leftovers = drainUnanswered().map((e) => pendingToInbound(e, first));
       reEnqueue([...messages, ...leftovers]);
       await sendDeliver(prevDraft, lastInboundMs);
