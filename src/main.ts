@@ -25,6 +25,8 @@ import type { Deps } from "./channels/deps.ts";
 import { wakeThread } from "./channels/history.ts";
 import { SessionPipeline } from "./channels/pipeline.ts";
 import { handleBatch, shouldAccept } from "./channels/turn.ts";
+import { startCliWatch } from "./claude/cli-canary.ts";
+import { backendForModel } from "./model/backend.ts";
 import { checkLoadout, formatLoadoutReport } from "./claude/loadout-check.ts";
 import { showToRunningTurn } from "./claude/mid-turn.ts";
 import {
@@ -336,6 +338,11 @@ async function main() {
   const evalTimer = setInterval(evalTick, 6 * 3_600_000);
   evalTimer.unref?.();
   setTimeout(evalTick, 2 * 60_000).unref?.();
+  // The Claude CLI updates underneath on purpose; a canary on each new
+  // version alerts the operator if the update broke a path Edmund relies on.
+  if (backendForModel(config.claude.model) === "claude") {
+    startCliWatch({ dataDir: config.paths.data_dir, model: config.claude.model, alert });
+  }
   const locks = new SessionLocks({
     // Liveness lease, not a wall-clock cap: the Claude worker heartbeats
     // the lock on every stream event, so an actively-working turn (however

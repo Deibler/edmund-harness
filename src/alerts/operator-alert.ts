@@ -161,7 +161,10 @@ export function isOperatorActionable(error: string): boolean {
     e.includes("enoent") || // missing binary / path
     e.includes("executable not found") ||
     e.includes("eacces") ||
-    e.includes("not allowed")
+    e.includes("not allowed") ||
+    // A CLI update renamed or dropped a flag the harness passes: every spawn
+    // fails the same way until the harness is changed to match.
+    /unknown option|unrecognized option|unknown argument/.test(e)
   );
 }
 
