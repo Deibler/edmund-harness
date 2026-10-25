@@ -10,6 +10,7 @@
  *   - fire outside the chat's allowed hours → names the next window opening
  */
 
+import { homeWallClockMs } from "../util/clock.ts";
 import { nextActiveStartMs } from "./budget.ts";
 
 export type TimeGuard = {
@@ -48,4 +49,18 @@ export function validateFireTime(
     }
   }
   return null;
+}
+
+/**
+ * 'YYYY-MM-DD HH:MM' (Eastern wall clock) to epoch ms, or null if malformed.
+ * The model hand-computing epoch ms is how a safety check-in meant for
+ * 6:15 pm was queued for 7:15 pm on 2026-10-24: it used Eastern Standard
+ * Time a week before daylight saving ended. The conversion belongs in code.
+ */
+export function parseEasternWallClock(text: string): number | null {
+  const m = text.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number) as [number, number, number, number, number];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return null;
+  return homeWallClockMs(y, mo, d, h, mi);
 }

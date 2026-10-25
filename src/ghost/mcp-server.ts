@@ -17,7 +17,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { protectStdout } from "../mcp/stdio-safety.ts";
-import { type TimeGuard, validateFireTime } from "./mcp-server-validate.ts";
+import { type TimeGuard, parseEasternWallClock, validateFireTime } from "./mcp-server-validate.ts";
 
 const DECISION_PATH = process.env.GHOST_DECISION_PATH;
 
@@ -55,11 +55,17 @@ server.tool(
       .describe(
         "act:false only — hours before this chat should be looked at again. Set it whenever your reason implies nothing changes until the user acts ('ball in their court', 'they're away'). Any new inbound voids it early.",
       ),
+    fire_at_local: z
+      .string()
+      .optional()
+      .describe(
+        "act:true — PREFERRED way to say when: the wall-clock time in Eastern as 'YYYY-MM-DD HH:MM' (e.g. '2026-10-24 18:15'). The harness converts it, daylight saving included. Overrides fire_at_ms. Must fall inside the active-hours window.",
+      ),
     fire_at_ms: z
       .number()
       .optional()
       .describe(
-        "act:true — unix-ms when the main model should be invoked. Omit for 'now'. COMPUTE AS now(epoch-ms) + offset using the TIME_CONTEXT anchors — never build an absolute epoch from a calendar date (that has landed a year in the past). Must fall inside the active-hours window.",
+        "act:true — unix-ms when the main model should be invoked, if you did not give fire_at_local. Omit both for 'now'. COMPUTE AS now(epoch-ms) + offset using the TIME_CONTEXT anchors — never build an absolute epoch from a calendar date (that has landed a year in the past). Hand-computed epochs have also landed an hour off around daylight saving: prefer fire_at_local.",
       ),
     brief: z
       .string()
@@ -67,7 +73,12 @@ server.tool(
       .describe(
         "act:true — the paragraph the main model wakes up with: the moment, the why-now, the specific hook, the suggested move shape. Reference any files you staged.",
       ),
-    tags: z.array(z.string()).optional().describe("act:true — short telemetry labels."),
+    tags: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'act:true — short labels. Use "safety-followup" for a check-in after someone said they are in crisis, severely depressed or unsafe: it fires at exactly the time you set, never later, and without the settings footer.',
+      ),
     expires_at_ms: z
       .number()
       .optional()
@@ -100,8 +111,24 @@ server.tool(
         isError: true,
       };
     }
+    let fireAtMs = args.fire_at_ms;
+    if (args.act && args.fire_at_local) {
+      const parsed = parseEasternWallClock(args.fire_at_local);
+      if (parsed === null) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `fire_at_local "${args.fire_at_local}" is not 'YYYY-MM-DD HH:MM'. Retry in that shape (Eastern wall-clock time).`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      fireAtMs = parsed;
+    }
     if (args.act) {
-      const timeErr = validateFireTime(args.fire_at_ms, args.expires_at_ms, Date.now(), TIME_GUARD);
+      const timeErr = validateFireTime(fireAtMs, args.expires_at_ms, Date.now(), TIME_GUARD);
       if (timeErr) {
         return { content: [{ type: "text" as const, text: timeErr }], isError: true };
       }
@@ -111,7 +138,7 @@ server.tool(
       act: args.act,
       reason: args.reason,
       snoozeHours: args.snooze_hours,
-      fireAtMs: args.fire_at_ms,
+      fireAtMs,
       brief: args.brief,
       tags: args.tags,
       expiresAtMs: args.expires_at_ms,

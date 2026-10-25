@@ -90,9 +90,13 @@ export function enqueueBrownNoseFire(args: {
     };
   }
 
-  const jitterMs = args.noJitter
-    ? 0
-    : randomMinutes(cfg.schedule_jitter_min_minutes, cfg.schedule_jitter_max_minutes);
+  // A safety follow-up fires at the time it was set for: jitter exists to
+  // keep chats from firing in lockstep, and a check-in after someone said
+  // they were severely depressed must not drift half an hour for that.
+  const jitterMs =
+    args.noJitter || isSafetyFollowup(args.decision.tags)
+      ? 0
+      : randomMinutes(cfg.schedule_jitter_min_minutes, cfg.schedule_jitter_max_minutes);
   let jitteredFireAtMs = args.decision.fireAtMs + jitterMs;
 
   // Active-hours clamp. The ghost is told the window but sometimes picks
@@ -210,4 +214,13 @@ function randomMinutes(min: number, max: number): number {
   if (max <= min) return min * 60_000;
   const minutes = min + Math.random() * (max - min);
   return Math.round(minutes * 60_000);
+}
+
+/**
+ * A check-in after someone said they were in crisis, severely depressed or
+ * unsafe. It fires exactly on time and without the "I reached out on my own,
+ * tune it here" footer, which read as a form letter on 2026-10-24.
+ */
+export function isSafetyFollowup(tags: readonly string[] | undefined): boolean {
+  return (tags ?? []).some((t) => /safety|crisis|wellbeing|well-being/i.test(t));
 }

@@ -4,14 +4,15 @@
  * nextActiveStartMs window helper.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
 import { checkActiveHours, nextActiveStartMs } from "../src/ghost/budget.ts";
 import { DEFAULT_ACTIVE_HOURS_DM } from "../src/ghost/prefs.ts";
-import { enqueueBrownNoseFire } from "../src/proactive/queue.ts";
+import { parseEasternWallClock } from "../src/ghost/mcp-server-validate.ts";
+import { enqueueBrownNoseFire, isSafetyFollowup } from "../src/proactive/queue.ts";
 import type { SessionKey } from "../src/sessions/key.ts";
 
 // A weekday at 08:00 ET (before the 09:00 DM window opens) and the same
@@ -370,5 +371,82 @@ describe("CronStore.deferMidFire", () => {
     crons.cancel(job.id);
     expect(crons.deferMidFire(job.id, Date.now() + 60_000)).toBe(false);
     expect(crons.listActive().length).toBe(0);
+  });
+});
+
+describe("a safety follow-up fires when it was set for", () => {
+  let dir: string;
+  let crons: CronStore;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "edmund-bn-safety-"));
+    crons = new CronStore(dir);
+  });
+  afterEach(() => {
+    crons.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Jitter set wide so a dropped exemption cannot pass by luck.
+  const config = {
+    brown_nose: { schedule_jitter_min_minutes: 30, schedule_jitter_max_minutes: 35 },
+  } as unknown as Config;
+  const at = Date.now() + 2 * 3_600_000;
+  const decision = (tags: string[]) => ({
+    act: true as const,
+    tickAtMs: Date.now(),
+    fireAtMs: at,
+    brief: "check in",
+    tags,
+    expiresAtMs: at + 24 * 3_600_000,
+    confidence: "medium" as const,
+  });
+
+  test("a safety tag gets no jitter", () => {
+    const res = enqueueBrownNoseFire({
+      sessionKey: "dm:+15555550101" as SessionKey,
+      decision: decision(["wellbeing", "safety-followup"]),
+      config,
+      crons,
+    });
+    expect(res.enqueued).toBe(true);
+    if (res.enqueued) expect(res.jitteredFireAtMs).toBe(at);
+  });
+
+  test("an ordinary fire still gets jitter", () => {
+    const res = enqueueBrownNoseFire({
+      sessionKey: "dm:+15555550102" as SessionKey,
+      decision: decision(["weekend"]),
+      config,
+      crons,
+    });
+    expect(res.enqueued).toBe(true);
+    if (res.enqueued) expect(res.jitteredFireAtMs - at).toBeGreaterThanOrEqual(30 * 60_000);
+  });
+
+  test("which tags count", () => {
+    expect(isSafetyFollowup(["safety-followup"])).toBe(true);
+    expect(isSafetyFollowup(["wellbeing"])).toBe(true);
+    expect(isSafetyFollowup(["crisis"])).toBe(true);
+    expect(isSafetyFollowup(["weekend", "weather"])).toBe(false);
+    expect(isSafetyFollowup(undefined)).toBe(false);
+  });
+
+  test("the fire leaves the settings footer off a safety follow-up", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "src/proactive/fire.ts"), "utf8");
+    expect(src).toContain("if (!isSafetyFollowup(payload.tags)) {");
+  });
+});
+
+describe("the proactive model says when in wall-clock time", () => {
+  test("Eastern daylight time before the change, standard after", () => {
+    // 2026-10-24 18:15 EDT is 22:15 UTC; the hand-computed fire said 23:15.
+    expect(parseEasternWallClock("2026-10-24 18:15")).toBe(Date.UTC(2026, 9, 24, 22, 15));
+    expect(parseEasternWallClock("2026-11-02 18:15")).toBe(Date.UTC(2026, 10, 2, 23, 15));
+  });
+
+  test("malformed times are refused, not guessed", () => {
+    expect(parseEasternWallClock("6:15pm Saturday")).toBeNull();
+    expect(parseEasternWallClock("2026-13-01 10:00")).toBeNull();
+    expect(parseEasternWallClock("2026-10-24 25:00")).toBeNull();
   });
 });
