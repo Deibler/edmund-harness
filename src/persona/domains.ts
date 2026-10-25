@@ -82,8 +82,8 @@ const HANDLE_RE = /\+?\d[\d\s().-]{8,}\d|[\w.+-]+@[\w-]+\.[\w.]+/;
 /**
  * The text recall indexes for a domain file: the same lessons without the
  * "who it came from" suffix on each Outcome line. Domain notes surface in any
- * conversation, and the source names the person a lesson came from ("Kayla's
- * cow ornament fix"); the lesson is the subject knowledge, the source is
+ * conversation, and the source often names the person a lesson came from; the
+ * lesson is the subject knowledge, the source is
  * provenance for whoever audits the file. 149 of the first 214 lessons
  * carried one.
  */

@@ -113,7 +113,7 @@ adding a note that contradicts it:
   (enough of it to match that one line; the date prefix may be left off).
 - "new": the corrected note for "section", or null to retire the line.
 Deadlines: list a dated commitment only when the exchange states the date
-outright, either the person's own deadline ("TEACH application due Nov 13",
+outright, either the person's own deadline ("grant application due Nov 13",
 "rent renewal by the 1st") or something the assistant promised by a day ("I'll
 have the compliance reply ready Thursday"). "deliverable" names the thing to
 draft (the reply, the form answers, the message to their director), not "a

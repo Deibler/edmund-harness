@@ -94,6 +94,19 @@ times in a row, a lock held silently past its lease, the daily credits
 liability check. They are deduplicated per signature within
 `min_interval_minutes`. The dashboard Alerts page lists and mutes them.
 
+An expired Claude login alerts at once with the fix (`claude`, then `/login`),
+and scheduled jobs that failed on it retry on a doubling schedule for about
+eight hours. A Claude CLI update that fails the canary alerts too.
+
+## Weekly review
+
+`edmund review [--days 7] [--sample 40]` writes `data/reviews/<date>.md`: DM
+reply times, DMs unanswered after a day, every correction people sent,
+control words that reached a person, background failures from the log, and a
+sample of real exchanges to mark pass or fail with the first thing that went
+wrong. Reading it is the loop that keeps quality from drifting; the counts
+alone prove nothing.
+
 ## Backup
 
 Nothing stateful is in git. Copy these directories:

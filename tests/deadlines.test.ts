@@ -18,7 +18,7 @@ describe("a dated commitment gets a turn that drafts it", () => {
       JSON.stringify({
         notes: [],
         deadlines: [
-          { what: "TEACH application", due: "2026-11-13", deliverable: "the form answers" },
+          { what: "grant application", due: "2026-11-13", deliverable: "the form answers" },
           { what: "something soon", due: "next week", deliverable: "x" },
         ],
         full_rewrite: null,
@@ -27,14 +27,14 @@ describe("a dated commitment gets a turn that drafts it", () => {
       ["open-items"],
     );
     expect(parsed?.deadlines).toEqual([
-      { what: "TEACH application", due: "2026-11-13", deliverable: "the form answers" },
+      { what: "grant application", due: "2026-11-13", deliverable: "the form answers" },
     ]);
   });
 
   test("scheduled for 10:00 Eastern the day before, once", () => {
     const store = new CronStore(dir);
     try {
-      const d = [{ what: "TEACH application", due: "2026-11-13", deliverable: "the form answers" }];
+      const d = [{ what: "grant application", due: "2026-11-13", deliverable: "the form answers" }];
       expect(scheduleDeadlines(store, session, d, now)).toBe(1);
       expect(scheduleDeadlines(store, session, d, now)).toBe(0);
       const jobs = store

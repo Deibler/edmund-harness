@@ -37,6 +37,20 @@ The whole file is injected into every DM turn with that person as an
 `About <name>` block. Guests never get a person file, and group turns get the
 group file instead.
 
+A correction replaces the line it corrects. The maintainer names existing
+lines a conversation shows are wrong, outdated or finished (`supersede`);
+each one that matches exactly one line is moved to the archive marked as
+superseded, and its replacement, if any, is appended. When something ends (a
+death, a job, a treatment), every line that assumes it continues is retired.
+
+A dated commitment the maintainer finds (the person's own deadline, or
+something promised by a day) gets a turn the day before that drafts the
+deliverable, once per commitment.
+
+The size gate runs only after a due consolidation succeeded: if the rules pass
+fails, archiving waits, so observations never leave the prompt before a
+principle carries them.
+
 ### The maintainer
 
 `src/persona/maintainer.ts` runs one to two minutes after a delivered reply,
@@ -96,7 +110,10 @@ place to put a sentence, and the archiver keeps it small.
 `remember_about_subject` writes a lesson about a subject rather than a person
 into `persona/domains/<slug>.md`. Domain notes are never injected; they reach
 a turn only through recall. That makes them the right place for things worth
-knowing but not worth paying for on every message.
+knowing but not worth paying for on every message. Recall indexes them without the
+"who it came from" suffix on each outcome line, and the tool refuses phone
+numbers and email addresses, because a lesson can surface in any
+conversation.
 
 ## Recall
 
