@@ -610,8 +610,17 @@ async function main() {
   const scheduler = new Scheduler({
     store: crons,
     onFire: (job) =>
-      fireJob(job, config, state, echoes, alert, locks, crons, ghostPrefs, (key, guid, sinceMs) =>
-        wakeThread(key, guid, deps, sinceMs),
+      fireJob(
+        job,
+        config,
+        state,
+        echoes,
+        alert,
+        locks,
+        crons,
+        ghostPrefs,
+        (key, guid, sinceMs) => wakeThread(key, guid, deps, sinceMs),
+        { chatDb },
       ),
   });
   scheduler.start();

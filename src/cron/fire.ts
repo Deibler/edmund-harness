@@ -6,6 +6,7 @@ import {
 } from "../alerts/operator-alert.ts";
 import { parseInboundDepth } from "../bridge/relay.ts";
 import { injectIntoRunningTurnAndConfirm } from "../claude/runner.ts";
+import type { ChatDb } from "../imessage/db.ts";
 import { deliverReply } from "../channels/deliver.ts";
 import type { Config } from "../config/config.ts";
 import type { GhostPrefsStore } from "../ghost/prefs.ts";
@@ -21,6 +22,7 @@ import type { StateStore } from "../sessions/store.ts";
 import { recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { envelopeStamp } from "../util/clock.ts";
 import { humanMs, log, snippet } from "../util/log.ts";
+import { fireReceptions, receptionBlock } from "./reception.ts";
 import { inboundRetryAlreadyAnswered } from "./retry-marker.ts";
 import type { CronStore } from "./store.ts";
 import type { CronJob } from "./types.ts";
@@ -70,8 +72,14 @@ export async function fireJob(
   crons: CronStore,
   ghostPrefs: GhostPrefsStore,
   recentThread: RecentThread,
-  showToRunningTurn: (sessionKey: string, text: string) => Promise<boolean> = injectIntoRunningTurnAndConfirm,
+  opts: {
+    /** Show a finished result to the session's running turn; true once it joined. */
+    showToRunningTurn?: (sessionKey: string, text: string) => Promise<boolean>;
+    /** chat.db, so a recurring job can see how its last sends landed. */
+    chatDb?: ChatDb;
+  } = {},
 ): Promise<void> {
+  const showToRunningTurn = opts.showToRunningTurn ?? injectIntoRunningTurnAndConfirm;
   // A finished result for a chat whose turn is still running joins that turn
   // at its next tool step instead of waiting for the lock: sub-agent results
   // waited a p90 of 49 minutes and background-job results 28 behind turns
@@ -162,6 +170,7 @@ export async function fireJob(
       session.chatGuid,
       () => locks.touch(job.sessionKey),
       recentThread,
+      opts.chatDb,
     );
   });
 }
@@ -176,19 +185,33 @@ async function runAndDeliver(
   chatGuid: string,
   onHeartbeat: (() => void) | undefined,
   recentThread: RecentThread,
+  chatDb?: ChatDb,
 ): Promise<void> {
   const now = Date.now();
   const latenessMs = now - job.nextFireMs;
   const latenessNote = latenessMs > 90_000 ? ` · ${Math.round(latenessMs / 60_000)}m late` : "";
   const thread = wakeThreadBlock(job.sessionKey, chatGuid, config, state, recentThread);
+  const kind = classifyEvent(job.systemEvent);
+  // A recurring job sees how its last sends landed (cron/reception.ts).
+  const recurring = job.schedule.kind !== "once" && kind === "scheduled";
+  let reception: string | null = null;
+  if (recurring && chatDb) {
+    try {
+      reception = receptionBlock(
+        fireReceptions(chatDb, chatGuid, crons.recentFireWindows(job.id, 6), now),
+      );
+    } catch (err) {
+      log.warn("cron", "reception lookup failed", { job: job.id, err: (err as Error).message });
+    }
+  }
   const envelope = [
     scheduledEventHeader(job.nextFireMs, now, latenessNote),
     "",
     job.systemEvent,
+    ...(reception ? ["", reception] : []),
     ...(thread ? ["", thread] : []),
   ].join("\n");
 
-  const kind = classifyEvent(job.systemEvent);
   log.info("cron", `fire ${kind}`, {
     job: job.id,
     session: job.sessionKey,
@@ -226,6 +249,11 @@ async function runAndDeliver(
     durMs: Date.now() - started,
     contextTokens: result.ok ? (result.contextTokens ?? null) : null,
   });
+  if (recurring && result.ok) {
+    try {
+      crons.recordFireWindow(job.id, job.sessionKey, started, Date.now());
+    } catch {}
+  }
   if (!result.ok) {
     log.error("cron", `fire failed ${kind}`, {
       job: job.id,

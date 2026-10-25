@@ -62,6 +62,33 @@ export class CronStore {
     } catch {
       // Column already exists.
     }
+    // When each scheduled fire ran, so the next fire can look up in chat.db
+    // what it sent and whether anyone answered (see cron/reception.ts).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS job_fires (
+        job_id TEXT NOT NULL,
+        session_key TEXT NOT NULL,
+        started_ms INTEGER NOT NULL,
+        ended_ms INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS job_fires_job_idx ON job_fires(job_id, started_ms);
+    `);
+  }
+
+  recordFireWindow(jobId: string, sessionKey: string, startedMs: number, endedMs: number): void {
+    this.db
+      .query("INSERT INTO job_fires (job_id, session_key, started_ms, ended_ms) VALUES (?, ?, ?, ?)")
+      .run(jobId, sessionKey, startedMs, endedMs);
+  }
+
+  /** The job's most recent fire windows, oldest first. */
+  recentFireWindows(jobId: string, limit: number): Array<{ startedMs: number; endedMs: number }> {
+    const rows = this.db
+      .query(
+        "SELECT started_ms, ended_ms FROM job_fires WHERE job_id = ? ORDER BY started_ms DESC LIMIT ?",
+      )
+      .all(jobId, limit) as Array<{ started_ms: number; ended_ms: number }>;
+    return rows.reverse().map((r) => ({ startedMs: r.started_ms, endedMs: r.ended_ms }));
   }
 
   create(input: JobInput): CronJob {
