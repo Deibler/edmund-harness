@@ -328,6 +328,20 @@ describe("runner loadout derivation", () => {
       tier: "keyed-guest",
       campaignKey: "opensesame2026",
       campaignContextPath: "campaigns/example.md",
+      loadout: "guest",
+    });
+  });
+
+  test("an allowlisted campaign derives the allowlisted loadout and keeps its context", () => {
+    const c = cfg({ dataDir: dir, campaigns: [{ loadout: "allowlisted" }] });
+    const runnerStore = new GuestStore(dir);
+    runnerStore.activate(GUEST, "opensesame2026", NOW);
+    runnerStore.close();
+    expect(deriveGuestLoadout(`imessage:dm:${GUEST}`, c, NOW)).toEqual({
+      tier: "keyed-guest",
+      campaignKey: "opensesame2026",
+      campaignContextPath: "campaigns/example.md",
+      loadout: "allowlisted",
     });
   });
 

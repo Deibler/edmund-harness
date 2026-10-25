@@ -298,23 +298,29 @@ export function imessageActionTools(ctx: ToolContext): ToolDef[] {
     tools.push({
       name: "create_chat",
       description:
-        "Start a BRAND-NEW iMessage conversation — a 1:1 if you pass one handle, a group if you pass several — with an optional name and an optional first message. The handles are phone numbers or emails. Use only when explicitly asked to start a new chat with specific people.",
+        "Start a BRAND-NEW iMessage conversation — a 1:1 if you pass one handle, a group if you pass several — and send its first message. The handles are phone numbers or emails. The person asking is NOT added automatically: include their handle if they should be in it. The others only see the conversation once the first message goes out, which is why `text` is required. If a conversation with exactly these people already exists, the message goes into that one. Use only when explicitly asked to start a new chat with specific people.",
       inputSchema: z.object({
         handles: z
           .array(z.string().min(1))
           .min(1)
-          .describe("Phone numbers / emails of participants."),
+          .describe("Phone numbers / emails of participants, other than yourself."),
         name: z
           .string()
           .optional()
           .describe("Group display name (only meaningful with 2+ handles)."),
-        text: z.string().optional().describe("Optional first message to send into the new chat."),
+        text: z
+          .string()
+          .min(1)
+          .describe("The first message, which is what makes the chat appear for everyone."),
       }),
       handler: async (args) => {
         console.log(`[create_chat] ${ctx.sessionKey} → [${args.handles.join(", ")}]`);
+        const res = await createChat({ handles: args.handles, name: args.name, text: args.text });
         return finish(
-          createChat({ handles: args.handles, name: args.name, text: args.text }),
-          `created chat with ${args.handles.join(", ")}`,
+          res,
+          res.ok
+            ? `created chat with ${args.handles.join(", ")} and sent the first message (chat ${res.chatGuid})`
+            : "",
           "create_chat",
         );
       },

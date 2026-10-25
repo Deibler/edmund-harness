@@ -39,6 +39,12 @@ describe("the Chrome section", () => {
     }
   });
 
+  test("a campaign guest on the allowlisted loadout is told how Chrome arrives", () => {
+    const p = prompt({ guestTier: "keyed-guest", guestLoadout: "allowlisted" });
+    expect(p).toContain("**Loaded on demand.**");
+    expect(p).not.toContain("No browser in this session");
+  });
+
   test("the RadarOmega switch still works alongside it", () => {
     expect(prompt({ radarOmegaEnabled: false })).not.toContain("RadarOmega — THE weather source");
     expect(prompt({ radarOmegaEnabled: false })).not.toContain("%%RADAROMEGA%%");

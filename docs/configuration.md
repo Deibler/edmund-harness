@@ -89,6 +89,7 @@ Off by default. See [recovery.md](recovery.md) for what a guest can do.
 | `expires` | none | ISO date after which the key is inert and replies stop |
 | `max_spend_usd` | none | Lifetime cap through the spend ledger |
 | `max_messages_per_day` | none | Daily cap |
+| `loadout` | `"guest"` | `"guest"`: the reduced guest tool surface. `"allowlisted"`: the tools an allowlisted DM gets under `[security]` (`contact_tier`, `model_host_access`), browser included. Expiry, caps and the campaign context still apply |
 
 ### `[mcp_servers]`
 

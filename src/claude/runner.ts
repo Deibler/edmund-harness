@@ -23,6 +23,7 @@ import { type IterationUsage, contextTokens, iterationContextTokens } from "./au
 import { ISOLATED_SETTINGS_ARGS, PROMPT_SNAPSHOT_ARGS } from "./direct-env.ts";
 import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
 import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
+import type { InjectResult } from "./mid-turn.ts";
 import { personaFingerprint } from "./persona.ts";
 import { WorkerPool } from "./pool.ts";
 import {
@@ -70,6 +71,12 @@ export async function shutdownWorkerPool(): Promise<void> {
   if (!workerPool) return;
   await workerPool.stop();
   workerPool = null;
+}
+
+/** Show a message to the session's running turn (see mid-turn.ts). Only a
+ *  pool worker can take one; any other turn keeps it parked for its end. */
+export function injectIntoRunningTurn(sessionKey: SessionKey, text: string): InjectResult {
+  return workerPool?.inject(sessionKey, text) ?? { ok: false, reason: "no worker pool" };
 }
 
 /** Probe: is a worker currently bound to this session? Used by compaction
@@ -201,13 +208,16 @@ export type RunInput = {
    * loadout: core MCP server only (no integrations/radaromega/browser),
    * EDMUND_SESSION_TIER in the tool env (the MCP server registers a
    * reduced tool set), filesystem built-ins disallowed, and — for keyed
-   * guests — the campaign context appended to the system prompt.
+   * guests — the campaign context appended to the system prompt. A
+   * campaign with loadout "allowlisted" keeps the campaign context but runs
+   * with the allowlisted DM loadout.
    * Undefined = full loadout, byte-identical to before guest access.
    */
   guest?: {
     tier: "keyed-guest" | "vouched";
     campaignKey: string | null;
     campaignContextPath: string | null;
+    loadout: "guest" | "allowlisted";
   };
 };
 
@@ -332,7 +342,7 @@ export async function runClaude(
   }
   // Guest sessions never get the chrome-devtools loadout, whatever the
   // envelope looks like — their mcp config is the core server alone.
-  const isGuest = input.guest != null;
+  const isGuest = input.guest != null && input.guest.loadout !== "allowlisted";
   if (isGuest) needsBrowser = false;
   // Trading sessions always get the trading loadout (Robinhood tools), which
   // takes precedence over the browser heuristic.
@@ -428,7 +438,7 @@ export async function runClaude(
     input.sessionKey,
     input.sandboxPath,
     input.inboundDepth ?? 0,
-    input.guest?.tier ?? null,
+    isGuest ? (input.guest?.tier ?? null) : null,
   );
   const timeoutMs = config.claude.timeout_seconds * 1000;
   const stdinPayload = useStreamJsonInput
@@ -727,7 +737,7 @@ async function runViaPool(args: {
     // Guest tier + campaign are spawn-time properties (mcp config, tool
     // env, system prompt). A handle promoted guest→allowlisted — or a
     // campaign swap — must recycle the worker, not inherit the old loadout.
-    `guest=${input.guest ? `${input.guest.tier}:${input.guest.campaignKey ?? ""}` : "0"}`,
+    `guest=${input.guest ? `${input.guest.tier}:${input.guest.loadout}:${input.guest.campaignKey ?? ""}` : "0"}`,
     // A flip of [security].model_host_access must respawn: the disallowed
     // tool list is fixed at spawn time.
     `host=${baseArgs[baseArgs.indexOf("--disallowedTools") + 1] ?? "?"}`,

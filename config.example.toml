@@ -72,6 +72,8 @@ enabled = false
 # expires = "2026-11-01"                # optional; past this the key is inert AND replies stop
 # max_spend_usd = 25                    # optional lifetime cap via the spend ledger
 # max_messages_per_day = 40             # optional per-campaign daily cap
+# loadout = "guest"                     # "guest": the reduced guest tools; "allowlisted": what an
+#                                       # allowlisted DM gets ([security]); caps and context still apply
 
 # How the assistant is addressed in groups.
 [identity]

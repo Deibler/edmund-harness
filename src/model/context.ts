@@ -19,6 +19,7 @@ type PromptInput = {
   guest?: {
     tier: "keyed-guest" | "vouched";
     campaignContextPath: string | null;
+    loadout: "guest" | "allowlisted";
   };
 };
 
@@ -30,7 +31,7 @@ export function buildRunSystemPrompt(
 ): string {
   const isGroup = isGroupSession(input.sessionKey);
   const isTrading = isTradingSession(input.sessionKey);
-  const isGuest = input.guest != null;
+  const isGuest = input.guest != null && input.guest.loadout !== "allowlisted";
   return buildSystemPrompt({
     senderLabel: input.senderLabel,
     senderHandle: input.senderHandle,
@@ -49,6 +50,7 @@ export function buildRunSystemPrompt(
     radarOmegaEnabled: intSettings.radaromega(config).enabled,
     orchestrator: orchestrator ? { key: orchestrator.key, name: orchestrator.name } : null,
     guestTier: input.guest?.tier ?? null,
+    guestLoadout: input.guest?.loadout ?? null,
     campaignContextPath: input.guest?.campaignContextPath ?? null,
     isTrading,
     tradingConfig: isTrading

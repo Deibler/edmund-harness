@@ -108,6 +108,11 @@ export const ConfigSchema = z.object({
         max_spend_usd: z.number().positive().optional(),
         /** Per-campaign daily message ceiling. */
         max_messages_per_day: z.number().int().positive().optional(),
+        /** What this campaign's keyed guests can use. "guest": the reduced
+         *  guest surface. "allowlisted": the loadout an allowlisted DM gets
+         *  ([security] contact_tier and model_host_access); caps, expiry and
+         *  the campaign context still apply. */
+        loadout: z.enum(["guest", "allowlisted"]).default("guest"),
       }),
     )
     .superRefine((campaigns, ctx) => {

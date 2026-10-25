@@ -2,13 +2,16 @@ import { isOperatorActionable, isRetryable } from "../alerts/operator-alert.ts";
 import { type Offer, confirmDelivery, pickOffer } from "../announce/offer.ts";
 import { isSessionStale } from "../boot/banner.ts";
 import {
+  type PendingEntry,
   clearPending,
   drainPending,
   peekPending,
   pendingToInbound,
+  splitSeenMidTurn,
 } from "../bridge/session-queue.ts";
 import { contextTokens, shouldCompact } from "../claude/auto-compact.ts";
 import { envelopeNeedsBrowser } from "../claude/mcp-config.ts";
+import { takeSeenMidTurn } from "../claude/mid-turn.ts";
 import { compactWarmSession } from "../claude/runner.ts";
 import type { Config } from "../config/config.ts";
 import { cancelInboundRetries } from "../cron/retry-marker.ts";
@@ -835,6 +838,21 @@ async function handleBatchInner(
   let foldedMax = Math.max(...batch.map((m) => m.rowId));
   let prevFoldedMax = foldedMax;
 
+  // Parked messages a run of this turn was shown mid-turn and saw
+  // (mid-turn.ts). The model answered them then, or folded them into this
+  // reply, so they get no follow-up pass and no turn of their own, and their
+  // acks go now. Only the success paths drain through here: a failed turn
+  // leaves them parked, and handleBatch re-queues them.
+  const seenMidTurn = new Set<string>();
+  const drainUnanswered = (): PendingEntry[] => {
+    const { seen, rest } = splitSeenMidTurn(drainPending(key, config.paths.data_dir), seenMidTurn);
+    for (const e of seen) state.deleteInboundAck(e.rowId);
+    if (seen.length > 0) {
+      console.log(`[mid-turn] ${shortSession(key)} ${seen.length} message(s) seen within the turn`);
+    }
+    return rest;
+  };
+
   for (let iter = 0; iter < MAX_COALESCE_ITERS; iter++) {
     const isCoalesce = prevDraft !== null;
     const last = messages[messages.length - 1]!;
@@ -1244,12 +1262,15 @@ async function handleBatchInner(
               tier: guest.tier,
               campaignKey: guest.campaign?.key ?? null,
               campaignContextPath: guest.campaign?.context ?? null,
+              loadout: guest.campaign?.loadout ?? "guest",
             }
           : undefined,
       },
       config,
       state,
     );
+    const seenNow = takeSeenMidTurn(key);
+    if (result.ok) for (const u of seenNow) seenMidTurn.add(u);
     // Model time is over either way — a notice after this point would race
     // the actual reply (or land after an error branch already spoke).
     cancelLivenessTyping();
@@ -1376,7 +1397,7 @@ async function handleBatchInner(
       if (mirrorTurn) await deps.mirrorLifecycle?.onSettled(modelTurn.id, "tool-only");
       maybeAutoCompact();
       // Anything parked during this turn still needs a turn of its own.
-      reEnqueue(drainPending(key, config.paths.data_dir).map((e) => pendingToInbound(e, first)));
+      reEnqueue(drainUnanswered().map((e) => pendingToInbound(e, first)));
       ackCover.max = foldedMax;
       return;
     }
@@ -1396,9 +1417,7 @@ async function handleBatchInner(
     // Ack-cover: this iteration's messages (the "new" ones that didn't change
     // the draft) are re-enqueued, so the draft only covers the prior batch.
     if (isCoalesce && prevDraft && KEEP_DRAFT_RE.test(replyText.trim())) {
-      const leftovers = drainPending(key, config.paths.data_dir).map((e) =>
-        pendingToInbound(e, first),
-      );
+      const leftovers = drainUnanswered().map((e) => pendingToInbound(e, first));
       reEnqueue([...messages, ...leftovers]);
       await sendDeliver(prevDraft, lastInboundMs);
       // No compact trip here on purpose: this path ALWAYS re-enqueues at
@@ -1412,7 +1431,7 @@ async function handleBatchInner(
     // draft + the new message(s) folded in — unless we've hit the iteration
     // cap, in which case deliver now and let the rest become the next turn.
     if (config.behavior.coalesce_pending && iter + 1 < MAX_COALESCE_ITERS) {
-      const parked = drainPending(key, config.paths.data_dir);
+      const parked = drainUnanswered();
       if (parked.length > 0) {
         prevDraft = replyText;
         prevFoldedMax = foldedMax;
@@ -1438,7 +1457,7 @@ async function handleBatchInner(
     // If we bailed out of coalescing at the iteration cap, anything still
     // parked becomes the next turn.
     if (config.behavior.coalesce_pending) {
-      reEnqueue(drainPending(key, config.paths.data_dir).map((e) => pendingToInbound(e, first)));
+      reEnqueue(drainUnanswered().map((e) => pendingToInbound(e, first)));
     }
     ackCover.max = foldedMax;
     return;
