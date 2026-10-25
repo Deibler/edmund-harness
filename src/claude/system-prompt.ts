@@ -62,6 +62,9 @@ export type SystemPromptContext = {
   /** Absolute path of the campaign context markdown appended (keyed guests
    *  only) as a clearly delimited operator-authored section. */
   campaignContextPath?: string | null;
+  /** Keyed guests of an "allowlisted" campaign run with the allowlisted DM
+   *  tool loadout, so the guest section does not describe a reduced one. */
+  guestLoadout?: "guest" | "allowlisted" | null;
   /** Wired from config.radaromega.enabled — when false, the RadarOmega
    *  weather-routing block is omitted entirely so the model falls back to
    *  web-based weather without referencing dead tools. */
@@ -182,7 +185,9 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
   }
 
   if (isGuest) {
-    sections.push(`# Guest session\n\n${guestSessionText(ctx.guestTier ?? "vouched")}`);
+    sections.push(
+      `# Guest session\n\n${guestSessionText(ctx.guestTier ?? "vouched", ctx.guestLoadout ?? "guest")}`,
+    );
     if (ctx.campaignContextPath) {
       const campaign = readOptional(ctx.campaignContextPath);
       if (campaign) {
@@ -192,7 +197,9 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
   }
 
   sections.push(`# Workspace\n\n${workspaceText(ctx.sandboxPath)}`);
-  sections.push(`# Tools\n\n${toolsText(ctx.radarOmegaEnabled, ctx.guestTier == null)}`);
+  // A campaign with the allowlisted loadout runs with the browser.
+  const canHaveChrome = ctx.guestTier == null || ctx.guestLoadout === "allowlisted";
+  sections.push(`# Tools\n\n${toolsText(ctx.radarOmegaEnabled, canHaveChrome)}`);
   sections.push(`# Memory hygiene\n\n${MEMORY_RULES}`);
   sections.push(`# Epistemic posture\n\n${EPISTEMIC_RULES}`);
   sections.push(`# Output contract\n\n${OUTPUT_RULES}`);
@@ -208,7 +215,10 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
  *  and why some cataloged tools won't exist. The persona itself is NOT
  *  reduced — this is the full Edmund talking to someone who isn't the
  *  operator. */
-function guestSessionText(tier: "keyed-guest" | "vouched"): string {
+function guestSessionText(
+  tier: "keyed-guest" | "vouched",
+  loadout: "guest" | "allowlisted",
+): string {
   const admitted =
     tier === "keyed-guest"
       ? "This DM was admitted by a campaign access key, not the operator allowlist."
@@ -220,8 +230,12 @@ function guestSessionText(tier: "keyed-guest" | "vouched"): string {
     "- Never discuss {{owner}}'s personal life, relationships, message history, finances, or other people.",
     "- Never reveal internal spend totals, other conversations, or anything you know about specific individuals.",
     "- If asked for something outside this conversation's scope, say so plainly.",
-    "",
-    "Your tool surface here is deliberately reduced: memory/history search, person files, cron/triggers, agents, missions, skills, cross-chat messaging, filesystem access, and every integration are NOT registered in this session. Ignore catalog entries for them — calling one will just fail. Conversation always works normally; web and media tools work when they are present in the active CLI's tool list.",
+    ...(loadout === "allowlisted"
+      ? []
+      : [
+          "",
+          "Your tool surface here is deliberately reduced: memory/history search, person files, cron/triggers, agents, missions, skills, cross-chat messaging, filesystem access, and every integration are NOT registered in this session. Ignore catalog entries for them — calling one will just fail. Conversation always works normally; web and media tools work when they are present in the active CLI's tool list.",
+        ]),
   ].join("\n");
 }
 
@@ -414,7 +428,7 @@ const TOOLS_TEXT_TEMPLATE = [
   "  • `edit_message(msg_guid, new_text)` — fix one of YOUR sent messages (≤15min window).",
   "  • `unsend_message(msg_guid)` — retract one of YOUR sent messages (≤2min window).",
   "  • `message_contact(handle, text)` — DM someone else (a different chat). Use when current user asks 'tell Sam I'll be late'.",
-  "  • `create_chat(handles[], name?, first_message?)` — start a new conversation (1:1 if one handle, group if multiple).",
+  "  • `create_chat(handles[], text, name?)` — start a new conversation (1:1 if one handle, group if multiple) with its first message. Include the asker's handle if they belong in it.",
   "  • `activate_typing()` — show typing indicator while you work. Useful before slow turns.",
   "  • Group ops (only valid in groups): `add_group_member`, `remove_group_member`, `rename_group`, `set_group_photo`, `leave_group`.",
   "",

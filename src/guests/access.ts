@@ -110,6 +110,7 @@ export type GuestLoadout = {
   tier: GuestTier;
   campaignKey: string | null;
   campaignContextPath: string | null;
+  loadout: GuestCampaign["loadout"];
 };
 
 /**
@@ -137,6 +138,7 @@ export function deriveGuestLoadout(
     tier: turn.tier,
     campaignKey: turn.campaign?.key ?? null,
     campaignContextPath: turn.campaign?.context ?? null,
+    loadout: turn.campaign?.loadout ?? "guest",
   };
 }
 

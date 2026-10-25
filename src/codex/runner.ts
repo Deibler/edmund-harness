@@ -220,7 +220,7 @@ export async function runCodex(
   }
   const fresh = input.freshSession === true || personaChanged;
 
-  const isGuest = input.guest != null;
+  const isGuest = input.guest != null && input.guest.loadout !== "allowlisted";
   const configs = ensureMcpConfig(config);
   const needsBrowser = !isGuest && (input.browserHint ?? envelopeNeedsBrowser(input.envelope));
   const mcpConfig = isGuest
@@ -257,7 +257,7 @@ export async function runCodex(
     input.sessionKey,
     input.sandboxPath,
     input.inboundDepth ?? 0,
-    input.guest?.tier ?? null,
+    isGuest ? (input.guest?.tier ?? null) : null,
   );
   if (isGuest) scrubGuestSecrets(env);
   const timeoutMs = config.claude.timeout_seconds * 1000;

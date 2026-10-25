@@ -66,15 +66,19 @@ export function leaveGroup(args: { chatGuid: string }): Promise<SendResult> {
 /**
  * Start a new conversation — 1:1 with one handle, a group with several.
  *
- * The first message is sent separately, addressed to the chat that was just
- * created, so it goes out through the same send path as everything else and
- * inherits its retry and idempotency behaviour.
+ * The first message is required. IMCore mints the chat on this Mac only, and
+ * nobody else sees it until a message goes out, so a create with nothing sent
+ * reported success for a group that did not exist on anyone's phone.
+ *
+ * The message is sent separately, addressed to the chat that was just created,
+ * so it goes out through the same send path as everything else and inherits
+ * its retry, idempotency and landing checks.
  */
 export async function createChat(args: {
   handles: string[];
   name?: string;
-  text?: string;
-}): Promise<SendResult> {
+  text: string;
+}): Promise<{ ok: true; chatGuid: string } | { ok: false; error: string }> {
   let chat: { guid?: string };
   try {
     chat = ((await invoke("createChat", {
@@ -85,14 +89,14 @@ export async function createChat(args: {
     return { ok: false, error: describeError(error) };
   }
 
-  if (!args.text) return { ok: true };
   if (!chat.guid) {
     return { ok: false, error: "chat created but Messages did not return its identifier" };
   }
-  return sendMessage({
+  const sent = await sendMessage({
     to: chat.guid,
     chatGuid: chat.guid,
     isGroup: args.handles.length > 1,
     text: args.text,
   });
+  return sent.ok ? { ok: true, chatGuid: chat.guid } : sent;
 }

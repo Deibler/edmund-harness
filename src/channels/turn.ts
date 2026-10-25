@@ -1262,6 +1262,7 @@ async function handleBatchInner(
               tier: guest.tier,
               campaignKey: guest.campaign?.key ?? null,
               campaignContextPath: guest.campaign?.context ?? null,
+              loadout: guest.campaign?.loadout ?? "guest",
             }
           : undefined,
       },
