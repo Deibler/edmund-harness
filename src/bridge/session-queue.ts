@@ -164,7 +164,7 @@ function isUnnamedWake(v: unknown): v is UnnamedWake {
   return (
     !!w &&
     typeof w === "object" &&
-    ["reply-to-assistant", "after-assistant", "name-like"].includes(w.reason) &&
+    ["reply-to-assistant", "after-assistant", "name-like", "answers-question"].includes(w.reason) &&
     typeof w.addressed === "number" &&
     typeof w.wantsReply === "number" &&
     (w.streak === undefined || (Number.isInteger(w.streak) && w.streak >= 1))

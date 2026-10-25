@@ -129,7 +129,9 @@ export function describeUnnamedWake(w: UnnamedWake): string {
       ? "it's a swipe-reply to one of your messages"
       : w.reason === "name-like"
         ? "it has a word close to your name"
-        : "it came in a few minutes after you last spoke";
+        : w.reason === "answers-question"
+          ? "it may be the answer to the question you last asked here"
+          : "it came in a few minutes after you last spoke";
   const scores = `said to you ${w.addressed.toFixed(2)}, wants a reply ${w.wantsReply.toFixed(2)}`;
   const run =
     w.streak && w.streak >= 2
