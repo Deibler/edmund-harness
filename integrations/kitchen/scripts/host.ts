@@ -22,6 +22,7 @@ import {
   route,
   writeStatus,
 } from "../src/host.ts";
+import { serveShelf } from "../../../src/shelf/serve.ts";
 import { dataDir, hostPort, loadKitchenSettings, siteOrigin } from "../src/settings.ts";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
@@ -38,6 +39,9 @@ const origin =
     ? process.env.KITCHEN_SITE_ORIGIN || null
     : siteOrigin();
 const routerPort = Number(process.env.KITCHEN_HOST_PORT) || hostPort();
+/** Edmund's shelf (src/shelf/): permanent links for what he hands people,
+ *  served under this host because it is the one named tunnel on the machine. */
+const shelfDir = process.env.EDMUND_SHELF_DIR || join(ROOT, "data", "shelf");
 const server = join(ROOT, "skills", "instant-share", "scripts", "secure_server.py");
 const shareConfig = join(baseDir(), "host-share");
 mkdirSync(shareConfig, { recursive: true, mode: 0o700 });
@@ -177,6 +181,8 @@ Bun.serve({
   port: routerPort,
   async fetch(req) {
     const url = new URL(req.url);
+    const shelf = serveShelf(req, shelfDir);
+    if (shelf) return shelf;
     const h = route(url, current);
     if (!h) return new Response("Not found", { status: 404 });
     const headers = new Headers(req.headers);

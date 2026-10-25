@@ -135,6 +135,12 @@ stripe_webhook_secret = ""     # whsec_… from the webhook endpoint's settings
 account_id = ""
 api_token  = ""
 
+# Permanent links for what Edmund hands people ("shelve" tool). Served by the
+# kitchen host at <origin>/shelf/<token>/, so origin is the public URL of its
+# named tunnel. Empty = no shelf; the tool says so.
+# [shelf]
+# origin = "https://kitchen.example.com"
+
 # Tool defaults.
 [tools]
 image_provider = "openai"        # "openai" | "gemini"

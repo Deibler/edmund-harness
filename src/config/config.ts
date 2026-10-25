@@ -383,6 +383,13 @@ export const ConfigSchema = z.object({
       stripe_publishable: "",
       stripe_webhook_secret: "",
     }),
+  /**
+   * `[shelf]` — permanent links for what Edmund hands people (src/shelf/).
+   * `origin` is the public base the kitchen host's named tunnel serves, e.g.
+   * "https://kitchen.example.com"; files are served at <origin>/shelf/<token>/.
+   * Empty = no shelf: the `shelve` tool says so instead of returning a link.
+   */
+  shelf: z.object({ origin: z.string().default("") }).default({ origin: "" }),
   tools: z
     .object({
       image_provider: z.enum(["openai", "gemini"]).default("openai"),

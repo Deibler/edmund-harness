@@ -13,7 +13,8 @@ import { prettyName, resolveTargets } from "../services/target.ts";
 import { fail, info, ok, section } from "../ui.ts";
 
 export async function restartCommand(p: Parsed): Promise<void> {
-  for (const svc of resolveTargets(p)) {
+  const targets = resolveTargets(p);
+  for (const svc of targets) {
     section(`restart ${prettyName(svc)}`);
     const st = ctl.svcState(svc);
     if (!st.loaded) {
@@ -36,5 +37,15 @@ export async function restartCommand(p: Parsed): Promise<void> {
     // pre-kickstart instance didn't exit cleanly and is still squatting.
     await new Promise((resolve) => setTimeout(resolve, 600));
     await preflight(svc);
+  }
+  // A plain `edmund restart` also brings up the kitchen host (kitchen sites
+  // and the shelf), when it is installed here.
+  if (targets.includes("harness") && targets.includes("dashboard")) {
+    const r = ctl.restartKitchenHostIfLoaded();
+    if (r) {
+      section("restart kitchen host");
+      if (r.ok) ok("restarted.");
+      else fail(r.out || "kitchen host restart failed");
+    }
   }
 }

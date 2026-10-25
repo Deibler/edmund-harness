@@ -25,6 +25,7 @@ import { historyTools } from "./tools/history.ts";
 import { imessageActionTools } from "./tools/imessage-actions.ts";
 import { memoryTools } from "./tools/memory.ts";
 import { messageTools } from "./tools/message.ts";
+import { shelfTools } from "./tools/shelf.ts";
 import { missionTools } from "./tools/missions.ts";
 import { personTools } from "./tools/person.ts";
 import { semanticRecallTools } from "./tools/semantic-recall.ts";
@@ -215,6 +216,7 @@ function assembleByTier(ctx: ToolContext): ToolDef[] {
     ...voiceTools(ctx),
     ...videoTools(ctx),
     ...messageTools(ctx),
+    ...(guest ? [] : shelfTools(ctx)),
     // send_message/send_attachment/react above are this-chat scoped and stay.
     // The cross-chat and shared-surface actions (create_chat, group
     // management, edit/unsend) go with the rest of the imessage actions.
