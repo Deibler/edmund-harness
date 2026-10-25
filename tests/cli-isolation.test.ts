@@ -53,6 +53,24 @@ describe("oneShotArgv", () => {
     expect(effortArg(oneShotArgv(base, undefined))).toEqual([]);
   });
 
+  test("satellite calls never inherit the turn effort", () => {
+    const effortArg = (argv: string[]) =>
+      argv.flatMap((a, i) => (a === "--effort" ? [argv[i + 1]] : []));
+    const saved = { turn: process.env.EDMUND_EFFORT, bg: process.env.EDMUND_BACKGROUND_EFFORT };
+    try {
+      process.env.EDMUND_EFFORT = "xhigh";
+      delete process.env.EDMUND_BACKGROUND_EFFORT;
+      expect(effortArg(oneShotArgv(base))).toEqual([]);
+      process.env.EDMUND_BACKGROUND_EFFORT = "low";
+      expect(effortArg(oneShotArgv(base))).toEqual(["low"]);
+    } finally {
+      if (saved.turn === undefined) delete process.env.EDMUND_EFFORT;
+      else process.env.EDMUND_EFFORT = saved.turn;
+      if (saved.bg === undefined) delete process.env.EDMUND_BACKGROUND_EFFORT;
+      else process.env.EDMUND_BACKGROUND_EFFORT = saved.bg;
+    }
+  });
+
   test("a caller with its own MCP config keeps its tool choice", () => {
     const argv = oneShotArgv([...base, "--mcp-config", "{}", "--strict-mcp-config"]);
     expect(toolsArg(argv)).toEqual([]);

@@ -109,9 +109,29 @@ export class OperatorAlert {
     // in daemon.log if the operator needs it.
     const err = params.error.replace(/\s+/g, " ").trim();
     lines.push("", err.length > 400 ? `${err.slice(0, 400)}…` : err);
+    if (isAuthFailure(params.error)) {
+      lines.push(
+        "",
+        "Every conversation is down until the login is fixed: run `claude` in Terminal and /login. Scheduled jobs keep retrying for about 8 hours.",
+      );
+    }
     lines.push("", "(auto-alert, daemon.log has full detail)");
     return lines.join("\n");
   }
+}
+
+/**
+ * The CLI's login is gone: every turn for everyone fails the same way until
+ * a human logs in again. The CLI's wording changed under the matcher below
+ * ("Failed to authenticate: OAuth session expired and could not be
+ * refreshed" contains neither "authentication" nor "401"), so the three
+ * outages it caused (2026-08-25, 09-23 and 10-23, 206 failed calls) raised
+ * no alert and their scheduled jobs gave up after 15 minutes of retries.
+ */
+export function isAuthFailure(error: string): boolean {
+  return /failed to authenticate|oauth[^.\n]{0,40}expired|login expired|please run \/login|not logged in|authentication_error|invalid (?:api key|authentication credentials)/i.test(
+    error,
+  );
 }
 
 /**
@@ -120,6 +140,7 @@ export class OperatorAlert {
  * human attention; per-turn timeouts on a single YouTube summary don't.
  */
 export function isOperatorActionable(error: string): boolean {
+  if (isAuthFailure(error)) return true;
   const e = error.toLowerCase();
   return (
     e.includes("401") ||

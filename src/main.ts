@@ -135,6 +135,13 @@ async function main() {
   // agent tree uses the same effort level as the main session.
   process.env.EDMUND_EFFORT = config.claude.effort;
   process.env.EDMUND_AGENT_EFFORT = config.claude.agent_effort ?? config.claude.effort;
+  // Satellite one-shots (maintainer, ghost, judge, curator) have their own
+  // knob and never inherit the turn effort; see [claude] background_effort.
+  if (config.claude.background_effort) {
+    process.env.EDMUND_BACKGROUND_EFFORT = config.claude.background_effort;
+  } else {
+    delete process.env.EDMUND_BACKGROUND_EFFORT;
+  }
   if (config.claude.context_window_tokens) {
     process.env.EDMUND_CONTEXT_WINDOW_TOKENS = String(config.claude.context_window_tokens);
   } else {

@@ -1,4 +1,9 @@
-import { type OperatorAlert, isOperatorActionable, isRetryable } from "../alerts/operator-alert.ts";
+import {
+  type OperatorAlert,
+  isAuthFailure,
+  isOperatorActionable,
+  isRetryable,
+} from "../alerts/operator-alert.ts";
 import { parseInboundDepth } from "../bridge/relay.ts";
 import { deliverReply } from "../channels/deliver.ts";
 import type { Config } from "../config/config.ts";
@@ -22,6 +27,21 @@ import { type RecentThread, wakeThreadBlock } from "./wake-thread.ts";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 5 * 60 * 1000;
+/** An expired login lasts until a human logs in again: 63 minutes on
+ *  2026-10-23, about 15 hours on 08-25. Three retries five minutes apart gave
+ *  up after a quarter of an hour, and 33 scheduled jobs were lost that way.
+ *  Doubling from five minutes to a two-hour ceiling covers about 8.5 hours. */
+const AUTH_MAX_RETRIES = 8;
+const AUTH_RETRY_CEILING_MS = 2 * 60 * 60 * 1000;
+
+/** How many retries a failure gets and how long to wait before this one. */
+export function retryPlan(attempt: number, error: string): { max: number; delayMs: number } {
+  if (!isAuthFailure(error)) return { max: MAX_RETRIES, delayMs: RETRY_DELAY_MS };
+  return {
+    max: AUTH_MAX_RETRIES,
+    delayMs: Math.min(RETRY_DELAY_MS * 2 ** Math.max(0, attempt - 1), AUTH_RETRY_CEILING_MS),
+  };
+}
 
 /**
  * Fire a cron job: resume the session, tell the model the event happened,
@@ -198,7 +218,7 @@ async function runAndDeliver(
       });
     }
     if (isRetryable(result.error)) {
-      scheduleRetry(job, crons);
+      scheduleRetry(job, crons, result.error);
     }
     return;
   }
@@ -295,22 +315,23 @@ function classifyEvent(systemEvent: string): string {
   return "scheduled";
 }
 
-export function scheduleRetry(job: CronJob, crons: CronStore): void {
+export function scheduleRetry(job: CronJob, crons: CronStore, error = ""): void {
   const { attempt, base } = parseRetryMeta(job.systemEvent);
   const next = attempt + 1;
-  if (next > MAX_RETRIES) {
+  const plan = retryPlan(next, error);
+  if (next > plan.max) {
     log.error("cron", "retries exhausted — giving up", {
       job: job.id,
-      max: MAX_RETRIES,
+      max: plan.max,
     });
     return;
   }
-  const retryEvent = `[Retry ${next}/${MAX_RETRIES}] ${base}`;
+  const retryEvent = `[Retry ${next}/${plan.max}] ${base}`;
   try {
     const retryJob = crons.create({
       sessionKey: job.sessionKey,
       systemEvent: retryEvent,
-      schedule: { kind: "once", atMs: Date.now() + RETRY_DELAY_MS },
+      schedule: { kind: "once", atMs: Date.now() + plan.delayMs },
       // The same text under a retry prefix, so it keeps its author.
       harnessWritten: job.harnessWritten,
     });

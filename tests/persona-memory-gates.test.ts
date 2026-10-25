@@ -25,7 +25,12 @@ import {
   countObservations,
   shouldConsolidate,
 } from "../src/persona/consolidate.ts";
-import { applyFullRewrite, judgmentModel, settleMaintenance } from "../src/persona/maintainer.ts";
+import {
+  applyFullRewrite,
+  consolidateThenArchive,
+  judgmentModel,
+  settleMaintenance,
+} from "../src/persona/maintainer.ts";
 import {
   principlesDerivedAt,
   readPrinciples,
@@ -554,10 +559,64 @@ describe("consolidation has its own model", () => {
 
   test("both consolidation calls go through it", () => {
     const src = readFileSync(join(import.meta.dir, "..", "src/persona/maintainer.ts"), "utf8");
-    expect(src.match(/spawnMaintainerModel\(judgmentModel\(cfg\)/g)?.length).toBe(2);
+    expect(src.match(/spawnMaintainerModel\(\s*judgmentModel\(cfg\)/g)?.length).toBe(2);
     expect(
       src.match(/shouldConsolidate\(before\.body, archivedObservationCount\(before\.path\)\)/g)
         ?.length,
     ).toBe(2);
+  });
+});
+
+describe("the size gate waits for current rules", () => {
+  const run = async (due: boolean, consolidate: () => Promise<{ ok: boolean; reason?: string }>) => {
+    const calls: string[] = [];
+    const outcome = await consolidateThenArchive({
+      subject: "dm:test",
+      due,
+      consolidate: async () => {
+        calls.push("consolidate");
+        return consolidate();
+      },
+      archive: () => {
+        calls.push("archive");
+      },
+    });
+    return { outcome, calls };
+  };
+
+  test("a due consolidation that succeeds is followed by the sweep", async () => {
+    expect(await run(true, async () => ({ ok: true }))).toEqual({
+      outcome: "archived",
+      calls: ["consolidate", "archive"],
+    });
+  });
+
+  test("a due consolidation that fails holds the sweep", async () => {
+    expect(await run(true, async () => ({ ok: false, reason: "model call failed" }))).toEqual({
+      outcome: "held",
+      calls: ["consolidate"],
+    });
+  });
+
+  test("a due consolidation that throws holds the sweep", async () => {
+    const r = await run(true, async () => {
+      throw new Error("timeout");
+    });
+    expect(r).toEqual({ outcome: "held", calls: ["consolidate"] });
+  });
+
+  test("with nothing due, the sweep runs and nothing is consolidated", async () => {
+    expect(await run(false, async () => ({ ok: true }))).toEqual({
+      outcome: "archived",
+      calls: ["archive"],
+    });
+  });
+
+  test("both maintainer paths go through it, with the longer timeout", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "src/persona/maintainer.ts"), "utf8");
+    expect(src.match(/await consolidateThenArchive\(\{/g)?.length).toBe(2);
+    expect(src.match(/CONSOLIDATION_TIMEOUT_MS,\n/g)?.length).toBe(2);
+    expect(src.match(/archivePersonFile\(/g)?.length).toBe(1);
+    expect(src.match(/archiveGroupFile\(/g)?.length).toBe(1);
   });
 });

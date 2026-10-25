@@ -238,6 +238,16 @@ export const ConfigSchema = z.object({
       /** Detached-agent effort. Omitted = inherit the main effort. */
       agent_effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
       /**
+       * Effort for the satellite one-shot calls: the person maintainer and
+       * its consolidation pass, the ghost, the eval judge, the skill
+       * curator, catch-up summaries and the research planner. Omitted = no
+       * effort flag, so each model runs at the CLI's own default. These calls
+       * never inherit `effort`: when they did (2026-10-23 to 10-25), the
+       * Haiku note pass thought about twice as long, averaged 41 s instead of
+       * 11 s, and hit its 90 s timeout on 24 of 106 calls.
+       */
+      background_effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+      /**
        * Claude-only resident worker pool. When enabled, the daemon keeps `claude -p
        * --input-format stream-json` subprocesses warm per session and reuses
        * them across turns — eliminates the ~500-1500 ms Node/CLI cold start

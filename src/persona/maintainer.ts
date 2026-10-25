@@ -49,6 +49,10 @@ import { type PersonSection, appendPersonNote } from "./write-note.ts";
  */
 
 const MAINTAINER_TIMEOUT_MS = 90_000;
+/** The consolidation pass reads the whole file plus its archived observations
+ *  and runs on the judgment model (Opus); 90 s timed out 13 of its first 20
+ *  calls. It runs off the reply path, so waiting longer costs nobody. */
+const CONSOLIDATION_TIMEOUT_MS = 300_000;
 
 const DM_SECTIONS: PersonSection[] = [
   "who-they-are",
@@ -240,37 +244,38 @@ async function runDmMaintenance(args: {
   // persist and are revised across passes, so knowledge earned from an
   // observation survives that observation leaving the live file, and the
   // evidence dates still resolve because the archive is recall-indexed.
-  try {
-    const before = readPersonFile(handle);
-    if (before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path))) {
-      await consolidatePerson(handle, (system, user) =>
-        spawnMaintainerModel(judgmentModel(cfg), system, user, {
-          dataDir: deps.config.paths.data_dir,
-          sessionKey,
-        }),
+  const before = readPersonFile(handle);
+  await consolidateThenArchive({
+    subject: `dm:${shortHandle(handle)}`,
+    due: Boolean(
+      before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path)),
+    ),
+    consolidate: () =>
+      consolidatePerson(handle, (system, user) =>
+        spawnMaintainerModel(
+          judgmentModel(cfg),
+          system,
+          user,
+          { dataDir: deps.config.paths.data_dir, sessionKey },
+          CONSOLIDATION_TIMEOUT_MS,
+        ),
+      ),
+    // Size gate, AFTER consolidation. Once the file has principles, "Our
+    // Dynamic" joins the archivable sections — that section is the principles
+    // in undistilled form ("he pings until answered", "his cut ships"), so
+    // keeping both live pays twice for the same knowledge. It stays exempt
+    // until the rules actually exist. `Who They Are` is never archived:
+    // identity, medical history and methodology are not something a rule
+    // encodes.
+    archive: () => {
+      const body = readPersonFile(handle)?.body ?? "";
+      archivePersonFile(
+        basename(personFilePath(handle)),
+        undefined,
+        personArchivableSections(body),
       );
-    }
-  } catch (err) {
-    // Never fail maintenance over consolidation; the log is still correct.
-    log.warn("persona-consolidate", "pass failed", { err: (err as Error).message });
-  }
-
-  // Size gate, AFTER consolidation. Once the file has principles, "Our
-  // Dynamic" joins the archivable sections — that section is the principles in
-  // undistilled form ("he pings until answered", "his cut ships"), so keeping
-  // both live pays twice for the same knowledge. It stays exempt until the
-  // rules actually exist. `Who They Are` is never archived: identity, medical
-  // history and methodology are not something a rule encodes.
-  try {
-    const body = readPersonFile(handle)?.body ?? "";
-    archivePersonFile(
-      basename(personFilePath(handle)),
-      undefined,
-      personArchivableSections(body),
-    );
-  } catch (err) {
-    log.warn("maintainer", "archive sweep failed", { handle, err: (err as Error).message });
-  }
+    },
+  });
   log.info("maintainer", `dm:${shortHandle(handle)} → +${applied} notes`, {
     reason: parsed.reason,
   });
@@ -370,35 +375,31 @@ async function runGroupMaintenance(args: {
   // doctrine — turning a drift into a personality. The group prompt separates
   // how the room works from how Edmund behaves in it, and asks him to correct
   // his own drift rather than ratify it.
-  try {
-    const before = readGroupFile(chatGuid);
-    if (before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path))) {
-      await consolidatePerson(
+  const before = readGroupFile(chatGuid);
+  await consolidateThenArchive({
+    subject: `group:${shortGuid(chatGuid)}`,
+    due: Boolean(
+      before?.body && shouldConsolidate(before.body, archivedObservationCount(before.path)),
+    ),
+    consolidate: () =>
+      consolidatePerson(
         chatGuid,
         (system, user) =>
-          spawnMaintainerModel(judgmentModel(cfg), system, user, {
-            dataDir: deps.config.paths.data_dir,
-            sessionKey,
-          }),
+          spawnMaintainerModel(
+            judgmentModel(cfg),
+            system,
+            user,
+            { dataDir: deps.config.paths.data_dir, sessionKey },
+            CONSOLIDATION_TIMEOUT_MS,
+          ),
         GROUP_CONSOLIDATION_PROMPT,
         groupFilePath,
         "group",
-      );
-    }
-  } catch (err) {
-    log.warn("persona-consolidate", "group pass failed", { err: (err as Error).message });
-  }
-
-  // Same size gate as person files: aged Group Dynamic / Shared History
-  // bullets move to the append-only archive once the file is oversized.
-  try {
-    archiveGroupFile(basename(groupFilePath(chatGuid)));
-  } catch (err) {
-    log.warn("maintainer", "group archive sweep failed", {
-      chatGuid,
-      err: (err as Error).message,
-    });
-  }
+      ),
+    // Same size gate as person files: aged Group Dynamic / Shared History
+    // bullets move to the append-only archive once the file is oversized.
+    archive: () => archiveGroupFile(basename(groupFilePath(chatGuid))),
+  });
   log.info("maintainer", `group:${shortGuid(chatGuid)} → +${applied} notes`, {
     reason: parsed.reason,
   });
@@ -565,12 +566,57 @@ export function judgmentModel(cfg: Config["people_maintainer"]): string {
   return cfg.consolidation_model || cfg.model;
 }
 
+/**
+ * Consolidate, then run the size gate, and run the gate only when the rules
+ * are current. The archiver moves observations out of the prompt on the
+ * understanding that a principle now carries what they taught. When a due
+ * consolidation fails, that is not true: from 2026-10-23 every consolidation
+ * of the operator's file timed out while the archiver kept moving 20+ newer
+ * observations out, and a vet's name left another person's live file the
+ * same way. A held sweep only delays the size gate; the next successful pass
+ * releases it.
+ */
+export async function consolidateThenArchive(steps: {
+  subject: string;
+  due: boolean;
+  consolidate: () => Promise<{ ok: boolean; reason?: string }>;
+  archive: () => void;
+}): Promise<"archived" | "held"> {
+  if (steps.due) {
+    let failure: string | null = null;
+    try {
+      const result = await steps.consolidate();
+      if (!result.ok) failure = result.reason ?? "not ok";
+    } catch (err) {
+      failure = (err as Error).message;
+    }
+    if (failure !== null) {
+      // Never fail maintenance over consolidation; the log is still correct.
+      log.warn("persona-consolidate", "pass failed, archive held", {
+        subject: steps.subject,
+        reason: failure,
+      });
+      return "held";
+    }
+  }
+  try {
+    steps.archive();
+  } catch (err) {
+    log.warn("maintainer", "archive sweep failed", {
+      subject: steps.subject,
+      err: (err as Error).message,
+    });
+  }
+  return "archived";
+}
+
 /** One maintainer model call, spend-accounted (subsystem "maintainer"). */
 async function spawnMaintainerModel(
   model: string,
   systemPrompt: string,
   userPrompt: string,
   spend: { dataDir: string; sessionKey: string },
+  timeoutMs = MAINTAINER_TIMEOUT_MS,
 ): Promise<string | null> {
   const r = await runModelOneShot({
     args: [
@@ -582,7 +628,7 @@ async function spawnMaintainerModel(
       systemPrompt,
     ],
     input: userPrompt,
-    timeoutMs: MAINTAINER_TIMEOUT_MS,
+    timeoutMs,
   });
   recordSpend(spend.dataDir, {
     sessionKey: spend.sessionKey,
@@ -592,7 +638,11 @@ async function spawnMaintainerModel(
     durMs: r.durationMs,
   });
   if (!r.ok) {
-    log.warn("persona-maintainer", "model call failed", { err: r.error ?? "unknown" });
+    log.warn("persona-maintainer", "model call failed", {
+      session: spend.sessionKey,
+      model,
+      err: r.error ?? "unknown",
+    });
     return null;
   }
   return r.text;
