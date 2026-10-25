@@ -15,6 +15,7 @@ import {
   archiveGroupFile,
   archivePersonFile,
   archiveRewriteDrops,
+  archiveSupersededLines,
   archivedObservationCount,
   personArchivableSections,
   reconcileRewrite,
@@ -98,12 +99,27 @@ Output ONE valid JSON object — nothing else, no prose, no markdown fences.
 Schema:
 {
   "notes": [{ "section": "<slug>", "note": "<short prose>" }, ...],
+  "supersede": [{ "old": "<existing line, quoted exactly>", "section": "<slug>", "new": "<corrected note>" | null }, ...],
   "full_rewrite": null | "<full new markdown body>",
   "reason": "<one-line explanation, for the maintainer log>"
 }
 
+Corrections REPLACE, they do not stack. When the exchange shows an existing
+line is wrong, outdated or no longer true, put it in "supersede" instead of
+adding a note that contradicts it:
+- "old": the existing line's text, quoted exactly as it appears in the file
+  (enough of it to match that one line; the date prefix may be left off).
+- "new": the corrected note for "section", or null to retire the line.
+Supersede when someone corrects a fact (dates, names, numbers), a
+recommendation was retracted, a plan was cancelled or done, or an open item
+resolved. When something ENDS (a death, a job, a club, a trip, a treatment),
+retire every line that assumes it continues: medication courses, reminders,
+"ask about" items, jokes about them. A stale line in the file is repeated as
+fact on every later turn; one that contradicts its own correction lower down
+has already produced a résumé with the wrong dates.
+
 Conservatism is the default:
-- If the exchange added nothing durable, return {"notes": [], "full_rewrite": null, "reason": "nothing new worth noting"}. That is the correct output most of the time.
+- If the exchange added nothing durable, return {"notes": [], "supersede": [], "full_rewrite": null, "reason": "nothing new worth noting"}. That is the correct output most of the time.
 - A note must be DURABLE — true after this conversation ends. "They love sourdough" is durable; "they're hungry right now" is not.
 - A note must be GROUNDED — visible in the recent exchange. Do not invent or infer from absence.
 - A note must be NEW — read the current file carefully. If the same fact (or a near-paraphrase) is already there, do not re-add. The append path is de-duped by exact text but you should also catch semantic dupes.
@@ -221,8 +237,14 @@ async function runDmMaintenance(args: {
     };
   }
 
+  const replacements = applySupersessions(
+    parsed.supersede,
+    () => readPersonFile(handle),
+    (body) => writePersonFile({ handle, displayName, body }),
+    `dm:${shortHandle(handle)}`,
+  );
   let applied = 0;
-  for (const n of parsed.notes) {
+  for (const n of [...replacements, ...parsed.notes]) {
     try {
       appendPersonNote({
         handle,
@@ -351,8 +373,14 @@ async function runGroupMaintenance(args: {
     };
   }
 
+  const replacements = applySupersessions(
+    parsed.supersede,
+    () => readGroupFile(chatGuid),
+    (body) => writeGroupFile({ chatGuid, displayName, body }),
+    `group:${shortGuid(chatGuid)}`,
+  );
   let applied = 0;
-  for (const n of parsed.notes) {
+  for (const n of [...replacements, ...parsed.notes]) {
     try {
       appendGroupNote({
         chatGuid,
@@ -446,11 +474,14 @@ function buildPrompt(args: {
   ].join("\n");
 }
 
-function parseOutput(
+export type Supersession = { old: string; section: string; replacement: string | null };
+
+export function parseOutput(
   raw: string,
   validSections: string[],
 ): {
   notes: Array<{ section: string; note: string }>;
+  supersede: Supersession[];
   fullRewrite: string | null;
   reason: string;
 } | null {
@@ -483,10 +514,21 @@ function parseOutput(
     }
     notes.push({ section, note });
   }
+  const supersede: Supersession[] = [];
+  for (const x of Array.isArray(o.supersede) ? o.supersede : []) {
+    if (!x || typeof x !== "object") continue;
+    const xx = x as Record<string, unknown>;
+    const oldText = typeof xx.old === "string" ? xx.old.trim() : "";
+    if (oldText.length < 8) continue;
+    const section = typeof xx.section === "string" ? xx.section : "";
+    const replacement = typeof xx.new === "string" && xx.new.trim() ? xx.new.trim() : null;
+    if (replacement && !validSections.includes(section)) continue;
+    supersede.push({ old: oldText, section, replacement });
+  }
   const fullRewrite =
     typeof o.full_rewrite === "string" && o.full_rewrite.trim().length > 0 ? o.full_rewrite : null;
   const reason = typeof o.reason === "string" ? o.reason : "";
-  return { notes, fullRewrite, reason };
+  return { notes, supersede, fullRewrite, reason };
 }
 
 /**
@@ -518,6 +560,63 @@ export function settleMaintenance(
   }
   io.stamp();
   return { kind: "append" };
+}
+
+/**
+ * Take superseded lines out of a body. Each `old` must match exactly one
+ * bullet line (whitespace-insensitive, date prefix optional); anything that
+ * matches none or several is left alone and reported, because removing the
+ * wrong line is worse than leaving a stale one. Pure: the caller writes.
+ */
+export function removeSuperseded(
+  body: string,
+  items: Supersession[],
+): { body: string; removed: string[]; matched: Supersession[]; unmatched: string[] } {
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  const lines = body.split("\n");
+  const removed: string[] = [];
+  const matched: Supersession[] = [];
+  const unmatched: string[] = [];
+  const drop = new Set<number>();
+  for (const item of items) {
+    const needle = norm(item.old.replace(/^-\s*/, ""));
+    const hits = lines
+      .map((l, i) => ({ l, i }))
+      .filter(({ l, i }) => !drop.has(i) && /^\s*-\s/.test(l) && norm(l).includes(needle));
+    if (hits.length !== 1) {
+      unmatched.push(item.old);
+      continue;
+    }
+    drop.add(hits[0]!.i);
+    removed.push(hits[0]!.l);
+    matched.push(item);
+  }
+  return { body: lines.filter((_, i) => !drop.has(i)).join("\n"), removed, matched, unmatched };
+}
+
+/**
+ * Apply supersessions to a live file: re-read it, remove the matched lines,
+ * archive them as superseded, write. Returns the replacement notes to append
+ * through the normal path.
+ */
+function applySupersessions(
+  items: Supersession[],
+  read: () => { path: string; body: string } | null,
+  write: (body: string) => void,
+  label: string,
+): Array<{ section: string; note: string }> {
+  if (items.length === 0) return [];
+  const current = read();
+  if (!current) return [];
+  const { body, removed, matched, unmatched } = removeSuperseded(current.body, items);
+  if (removed.length > 0) {
+    archiveSupersededLines(current.path, current.body, removed);
+    write(body);
+  }
+  log.info("maintainer", `${label} → superseded ${removed.length}`, {
+    unmatched: unmatched.length,
+  });
+  return matched.flatMap((i) => (i.replacement ? [{ section: i.section, note: i.replacement }] : []));
 }
 
 /**

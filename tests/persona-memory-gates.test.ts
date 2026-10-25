@@ -14,6 +14,7 @@ import {
   archivePathFor,
   archivePersonFile,
   archiveRewriteDrops,
+  archiveSupersededLines,
   archivedObservationCount,
   reconcileRewrite,
 } from "../src/persona/archive.ts";
@@ -29,6 +30,8 @@ import {
   applyFullRewrite,
   consolidateThenArchive,
   judgmentModel,
+  parseOutput,
+  removeSuperseded,
   settleMaintenance,
 } from "../src/persona/maintainer.ts";
 import {
@@ -618,5 +621,95 @@ describe("the size gate waits for current rules", () => {
     expect(src.match(/CONSOLIDATION_TIMEOUT_MS,\n/g)?.length).toBe(2);
     expect(src.match(/archivePersonFile\(/g)?.length).toBe(1);
     expect(src.match(/archiveGroupFile\(/g)?.length).toBe(1);
+  });
+});
+
+describe("a correction replaces the line it corrects", () => {
+  const body = [
+    "# Pat",
+    "",
+    "## Who They Are",
+    "- 2026-09-01: Worked at Acme Electric from 2019 to 2023.",
+    "- 2026-09-02: Has a dog named Rex.",
+    "",
+    "## Open Items",
+    "- 2026-10-01: Check whether Rex's prednisone course is still running.",
+    "- 2026-10-02: Recommended the fast charger at the Route 30 station.",
+  ].join("\n");
+
+  test("the model's output carries supersessions", () => {
+    const parsed = parseOutput(
+      JSON.stringify({
+        notes: [],
+        supersede: [
+          {
+            old: "Worked at Acme Electric from 2019 to 2023.",
+            section: "who-they-are",
+            new: "Worked at Acme Electric from 2020 to 2024 (corrected by them).",
+          },
+          { old: "Check whether Rex's prednisone course is still running.", new: null },
+          { old: "short", new: null },
+        ],
+        full_rewrite: null,
+        reason: "corrections",
+      }),
+      ["who-they-are", "open-items"],
+    );
+    expect(parsed?.supersede).toHaveLength(2);
+    expect(parsed?.supersede[1]?.replacement).toBeNull();
+  });
+
+  test("matched lines leave the body; their replacement comes back to append", () => {
+    const out = removeSuperseded(body, [
+      {
+        old: "Worked at Acme Electric from 2019 to 2023.",
+        section: "who-they-are",
+        replacement: "Worked at Acme Electric from 2020 to 2024.",
+      },
+      { old: "Check whether Rex's prednisone course", section: "", replacement: null },
+    ]);
+    expect(out.body).not.toContain("2019 to 2023");
+    expect(out.body).not.toContain("prednisone");
+    expect(out.body).toContain("Has a dog named Rex.");
+    expect(out.removed).toHaveLength(2);
+    expect(out.matched.map((m) => m.replacement)).toEqual([
+      "Worked at Acme Electric from 2020 to 2024.",
+      null,
+    ]);
+    expect(out.unmatched).toEqual([]);
+  });
+
+  test("a quote that matches no line, or several, removes nothing", () => {
+    const out = removeSuperseded(body, [
+      { old: "Lives in Denver with three cats", section: "", replacement: null },
+      { old: "2026-10-0", section: "", replacement: null },
+    ]);
+    expect(out.body).toBe(body);
+    expect(out.unmatched).toHaveLength(2);
+  });
+
+  test("a superseded line is kept in the archive, marked as such", () => {
+    const d = mkdtempSync(join(tmpdir(), "supersede-"));
+    try {
+      const live = join(d, "pat.md");
+      writeFileSync(live, body);
+      const n = archiveSupersededLines(live, body, [
+        "- 2026-09-01: Worked at Acme Electric from 2019 to 2023.",
+      ]);
+      expect(n).toBe(1);
+      const archived = readFileSync(archivePathFor(live), "utf8");
+      expect(archived).toContain("Worked at Acme Electric from 2019 to 2023.");
+      expect(archived).toContain("superseded");
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("both maintainer paths apply supersessions before appending", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "src/persona/maintainer.ts"), "utf8");
+    expect(src.match(/const replacements = applySupersessions\(/g)?.length).toBe(2);
+    expect(src.match(/for \(const n of \[\.\.\.replacements, \.\.\.parsed\.notes\]\)/g)?.length).toBe(
+      2,
+    );
   });
 });
