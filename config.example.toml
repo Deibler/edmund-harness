@@ -215,6 +215,11 @@ config_file = "./integrations/integrations-config.yaml"
 # page_origin = ""              # empty uses [shelf] origin
 # approval_ttl_hours = 12
 # auto_progress = [25, 50, 75]
+# send_via = "auto"             # how starts reach the printer: "bambu_connect" (Bambu's desktop app,
+#                               # signed in once; the printer stays in cloud mode with Bambu Handy),
+#                               # "lan" (needs Developer Mode, which means LAN Only Mode), or "auto":
+#                               # the LAN when Developer Mode is on, else Bambu Connect
+# bambu_connect_app = "/Applications/Bambu Connect.app"
 
 [kitchen]
 enabled = true

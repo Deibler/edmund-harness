@@ -29,6 +29,10 @@ const APPROVE =
 const DECLINE =
   /\b(no|nope|nah|don'?t|do not|not yet|not now|wait|hold|hold off|stop|cancel|later|hang on|negative|keep going|leave it)\b|👎|❌/u;
 const HEDGE = /\b(but|first|after|once|until|when|if|unless|before|instead)\b|\?/;
+/** For a plate check: saying the plate is clear is the yes; saying something is on it is the no. */
+const PLATE_YES =
+  /\b(all clear|it'?s clear|looks clear|clear|empty|clean|all good|good to go|nothing on it)\b/g;
+const PLATE_NO = /\b(not|isn'?t|aren'?t|something|stuff|still|there'?s an?)\b/;
 
 /** A plain yes or no to the ask, or null when the reply is not a decision. */
 export function classifyReply(text: string, action: ApprovalAction): Verdict | null {
@@ -36,9 +40,14 @@ export function classifyReply(text: string, action: ApprovalAction): Verdict | n
   if (!t) return null;
   if (t.split(/\s+/).length > 12) return null;
   if (HEDGE.test(t)) return null;
-  // For a cancel, "cancel it" and "stop" are the yes.
+  if (action === "plate" && PLATE_NO.test(t)) return "decline";
+  // For a cancel, "cancel it" and "stop" are the yes; for a plate check, "clear".
   const stripped =
-    action === "cancel" ? t.replace(/\b(cancel|stop|kill)( it| the print)?\b/g, " yes ") : t;
+    action === "cancel"
+      ? t.replace(/\b(cancel|stop|kill)( it| the print)?\b/g, " yes ")
+      : action === "plate"
+        ? t.replace(PLATE_YES, " yes ")
+        : t;
   const yes = APPROVE.test(stripped);
   const no = DECLINE.test(stripped);
   if (yes && !no) return "approve";

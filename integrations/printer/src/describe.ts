@@ -1,5 +1,6 @@
 import { colorDistance, colorName } from "./color.ts";
 import { type Plan, describeNeed, describeTray, swapInstructions } from "./filament.ts";
+import type { SendRoute } from "./gate.ts";
 import { type ErrorDb, decodeDeviceError, decodeHms, describeError, wikiLink } from "./hms.ts";
 import { type PrinterState, type Tray, isActive } from "./report.ts";
 import type { Approval, Job, Watch } from "./store.ts";
@@ -17,10 +18,24 @@ export function trayLine(t: Tray): string {
   return `${describeTray(t)}, ${extra.join(", ")}`;
 }
 
+function routeLine(r: { route: SendRoute | null; problem: string } | undefined): string {
+  if (!r) return "";
+  if (r.route === "lan") return "Starts go over the LAN (Developer Mode is on).";
+  if (r.route === "bambu_connect")
+    return "Starts go through Bambu Connect on the Mac, so the printer stays in cloud mode and Bambu Handy keeps working.";
+  return `Edmund cannot start prints right now: ${r.problem}`;
+}
+
 export function describeStatus(
   st: PrinterState,
   db: ErrorDb,
-  extra: { name: string; via: string; modules?: Array<Record<string, unknown>> },
+  extra: {
+    name: string;
+    via: string;
+    modules?: Array<Record<string, unknown>>;
+    /** How a start would reach the printer now (gate.chooseRoute). */
+    route?: { route: SendRoute | null; problem: string };
+  },
 ): string {
   const out: string[] = [];
   out.push(`${extra.name}: ${statusLine(st)}.`);
@@ -54,7 +69,7 @@ export function describeStatus(
     for (const e of errors) out.push(`  ${describeError(e)} Help: ${wikiLink(e)}`);
   } else out.push("No errors.");
   out.push(
-    `Lights: chamber ${st.lights.chamber_light ?? "?"}. Camera stream: ${st.liveview ? "on" : "off (turn on LAN Only Liveview in the printer's network settings to see it)"}. Developer Mode: ${st.developerMode === null ? "unknown" : st.developerMode ? "on (Edmund can start prints)" : "off (Edmund can read everything, but the printer will not take a print, cancel or resume from Edmund until it is on)"}.`,
+    `Lights: chamber ${st.lights.chamber_light ?? "?"}. Camera stream: ${st.liveview ? "on" : "off (turn on LAN Only Liveview in the printer's network settings to see it)"}. ${routeLine(extra.route)}`,
   );
   if (st.storage.timelapseFreeKb !== null) {
     out.push(

@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
+import { MAX_TRIANGLES, type MeshReport, countTriangles, printableMeshes } from "./mesh.ts";
 import {
   type Profile,
   applyOverrides,
@@ -66,6 +67,8 @@ export type SliceRequest = {
 };
 
 export type SliceReport = {
+  /** How much mesh went in and how much the print file carries, and any simplifying done. */
+  mesh?: MeshReport;
   /** What the slicer warned about, as Bambu Studio would show it (overhangs needing support, and so on). */
   warnings: string[];
   /** What stopped it, if anything. */
@@ -435,6 +438,9 @@ export async function slice(req: SliceRequest): Promise<SliceResult> {
 
   const work = mkdtempSync(join(tmpdir(), "edmund-slice-"));
   try {
+    // Far more triangles than a nozzle can print make a print file too big
+    // to send; thin them here, where every model passes (mesh.ts).
+    const meshes = await printableMeshes({ model: req.model, parts: req.parts }, work);
     const files = {
       machine: join(work, "machine.json"),
       process: join(work, "process.json"),
@@ -445,7 +451,7 @@ export async function slice(req: SliceRequest): Promise<SliceResult> {
     filamentProfiles.forEach((f, i) => writeFileSync(files.filaments[i]!, JSON.stringify(f)));
 
     let assembleList: string | undefined;
-    if (req.parts?.length) {
+    if (meshes.parts?.length) {
       assembleList = join(work, "assemble.json");
       writeFileSync(
         assembleList,
@@ -455,7 +461,7 @@ export async function slice(req: SliceRequest): Promise<SliceResult> {
               plate_name: req.name,
               need_arrange: true,
               plate_params: { curr_bed_type: bed.studio },
-              objects: req.parts.map((p) => ({
+              objects: meshes.parts.map((p) => ({
                 path: resolve(p.path),
                 count: 1,
                 filaments: [p.filament],
@@ -478,7 +484,7 @@ export async function slice(req: SliceRequest): Promise<SliceResult> {
       outDir,
       outName,
       mode,
-      model: req.model ? resolve(req.model) : undefined,
+      model: meshes.model ? resolve(meshes.model) : undefined,
       assembleList,
       copies: req.copies,
       orient: req.orient,
@@ -516,8 +522,17 @@ export async function slice(req: SliceRequest): Promise<SliceResult> {
     const ignored = gcode ? notApplied(overrides, parseConfigBlock(gcode.toString("utf8"))) : [];
     const fromLog = parseSlicerLog(readFileSync(logPath, "utf8"));
     const fromJson = readResultJson(outDir);
+    // The file itself is the record of how much mesh went to the printer.
+    const sentTriangles = countTriangles(file);
+    const meshWarnings =
+      sentTriangles !== null && sentTriangles > MAX_TRIANGLES * 1.5
+        ? [
+            `The print file still carries ${sentTriangles.toLocaleString("en-US")} triangles (painted with color groups, or a finely meshed STEP), which can stall sending it. Re-export the model with coarser detail.`,
+          ]
+        : [];
     const report: SliceReport = {
-      warnings: [...new Set([...fromLog.warnings, ...(fromJson.warnings ?? [])])],
+      mesh: { ...meshes.report, after: sentTriangles ?? meshes.report.after },
+      warnings: [...new Set([...fromLog.warnings, ...(fromJson.warnings ?? []), ...meshWarnings])],
       errors: fromLog.errors,
       featureTimes: fromJson.featureTimes ?? {},
       filamentChanges: fromJson.filamentChanges ?? 0,

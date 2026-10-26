@@ -1,0 +1,168 @@
+{
+ "path": "",
+ "role": "AXApplication",
+ "title": "Bambu Connect",
+ "children": [
+  {
+   "path": "0",
+   "role": "AXWindow",
+   "subrole": "AXStandardWindow",
+   "title": "Bambu Connect (Beta)",
+   "children": [
+    {
+     "path": "0.0",
+     "role": "AXGroup",
+     "children": [
+      {
+       "path": "0.0.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.0.0.0",
+         "role": "AXGroup",
+         "children": [
+          {
+           "path": "0.0.0.0.0",
+           "role": "AXGroup",
+           "children": [
+            {
+             "path": "0.0.0.0.0.0",
+             "role": "AXWebArea",
+             "title": "Bambu Connect (Beta)",
+             "children": [
+              {
+               "path": "0.0.0.0.0.0.0",
+               "role": "AXGroup",
+               "subrole": "AXApplicationDialog",
+               "title": "Import file",
+               "children": [
+                {
+                 "id": "semi-modal-title",
+                 "path": "0.0.0.0.0.0.0.0",
+                 "role": "AXHeading",
+                 "title": "Import file",
+                 "value": "5",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.0.0",
+                   "role": "AXStaticText",
+                   "value": "Import file"
+                  }
+                 ]
+                },
+                {
+                 "desc": "close",
+                 "path": "0.0.0.0.0.0.0.1",
+                 "role": "AXButton",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.1.0",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "desc": "close",
+                     "path": "0.0.0.0.0.0.0.1.0.0",
+                     "role": "AXImage"
+                    }
+                   ]
+                  }
+                 ]
+                },
+                {
+                 "id": "semi-modal-body",
+                 "path": "0.0.0.0.0.0.0.2",
+                 "role": "AXGroup",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.2.0",
+                   "role": "AXStaticText",
+                   "value": "You will import the file \"Cube_test\"."
+                  }
+                 ]
+                },
+                {
+                 "path": "0.0.0.0.0.0.0.3",
+                 "role": "AXGroup",
+                 "children": [
+                  {
+                   "desc": "cancel",
+                   "path": "0.0.0.0.0.0.0.3.0",
+                   "role": "AXButton",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.3.0.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.3.0.0.0",
+                       "role": "AXStaticText",
+                       "value": "Cancel"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "desc": "confirm",
+                   "path": "0.0.0.0.0.0.0.3.1",
+                   "role": "AXButton",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.3.1.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.3.1.0.0",
+                       "role": "AXStaticText",
+                       "value": "Import Gcode 3MF"
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.1",
+     "role": "AXButton",
+     "subrole": "AXCloseButton"
+    },
+    {
+     "help": "this button also has an action to zoom the window",
+     "path": "0.2",
+     "role": "AXButton",
+     "subrole": "AXFullScreenButton",
+     "children": [
+      {
+       "path": "0.2.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.2.0.0",
+         "role": "AXGroup"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.3",
+     "role": "AXButton",
+     "subrole": "AXMinimizeButton"
+    }
+   ]
+  }
+ ]
+}

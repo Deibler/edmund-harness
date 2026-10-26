@@ -30,7 +30,10 @@ A print starts only after the approver says yes in Messages.
   OK is recorded; the filament plan says which slot each color comes from
   and exactly what to load or swap; the ask goes to the approver (in the
   group if they are in it, else their DM); their reply is read from chat.db.
-- **A live page per print** at `<shelf origin>/print/<token>/`: camera,
+- **A live page per print** at `<shelf origin>/print/<token>/`: live video
+  (the camera's own H.264 passed through as HLS, 30 fps, with the system's
+  full-screen player on an iPhone), an interactive 3D view of the model on its
+  plate in its filament colors with what is still to print shown faintly,
   progress, time left, temperatures, filament, and at the end the photo and
   the timelapse.
 - **MakerWorld**: search, read a model's profiles and license, fetch photos
@@ -55,18 +58,27 @@ A print starts only after the approver says yes in Messages.
    connection pins. Approvers default to `[security] operator_handles`.
 2. `brew install --cask bambu-studio` (slicing) and `brew install ffmpeg`
    (camera).
-3. On the printer's screen, network settings:
-   - **LAN Only Liveview** on, for the camera and the live page's video.
-   - **LAN Only Mode**, then **Developer Mode**, for Edmund to start, cancel
-     or resume prints. Bambu's firmware rejects unsigned print commands
-     otherwise; Developer Mode is Bambu's supported way to allow local
-     control. LAN Only Mode turns off Bambu Handy and cloud printing. Without
-     it Edmund still reads, slices, previews, plans and asks; the approver
-     starts the print from the printer or Bambu Studio.
-4. MakerWorld downloads: in the approver's DM, Edmund runs `makerworld_login`
+3. On the printer's screen, network settings: **LAN Only Liveview** on, for
+   the camera and the live page's video. It does not need LAN Only Mode;
+   Bambu Handy keeps its camera.
+4. For Edmund to start prints, one of:
+   - **Bambu Connect** (`send_via = "auto"` or `"bambu_connect"`):
+     `brew install --cask bambu-connect`, open it once and sign in to the
+     Bambu account the printer is bound to. The printer stays in cloud mode,
+     so Bambu Handy, its notifications and cloud printing keep working. The
+     process that launches the daemon needs Accessibility permission (it
+     already does if `[computer_use]` works).
+   - **Developer Mode** (`send_via = "lan"`, or `"auto"` when it is on): LAN
+     Only Mode, then Developer Mode, on the printer. This turns Bambu Handy
+     and cloud printing off. Cancel and resume currently need this route.
+
+   Bambu's firmware rejects unsigned print commands from anything else.
+   Without either, Edmund still reads, slices, previews, plans and asks; the
+   approver starts the print from the printer or Bambu Studio.
+5. MakerWorld downloads: in the approver's DM, Edmund runs `makerworld_login`
    (Bambu emails a one-time code; no password is stored). The token is kept
    owner-readable in `data/printer/bambu-cloud.json` and lasts about a year.
-5. `edmund restart` starts the runtime and restarts the kitchen host, which
+6. `edmund restart` starts the runtime and restarts the kitchen host, which
    publishes `/print/` pages through its named tunnel.
 
 ## Safety model
@@ -78,11 +90,23 @@ A print starts only after the approver says yes in Messages.
 - **The start gate** (`src/gate.ts`, every condition break-tested):
   the conversation calling is the one that asked; an ask exists for this job;
   an approver's plain yes (or like on the ask) appears in chat.db after the
-  ask and within `approval_ttl_hours`; the printer is idle, fresh, in
-  Developer Mode, with no serious errors; every filament is loaded where the
-  approved plan put it (a re-slice or a new color voids the yes); Edmund took
-  a camera frame after the yes; and an independent model, told nothing about
-  the job, looked at a fresh frame and said the plate is CLEAR.
+  ask and within `approval_ttl_hours`; the printer is idle, fresh, reachable
+  by a route that can start it (Developer Mode, or Bambu Connect), with no
+  serious errors; every filament is loaded where the approved plan put it (a
+  re-slice or a new color voids the yes); Edmund took a camera frame after
+  the yes; and either an independent model, told nothing about the job,
+  looked at a fresh frame and said the plate is CLEAR, or (when it was
+  unsure) an approver answered yes to Edmund's photo of the plate, asked
+  after the print's yes, within the last 15 minutes.
+- **Bambu Connect** is driven through macOS Accessibility
+  (`native/connect.swift`, `src/connect.ts`): controls are found by role and
+  label, never by screen position, and only an allowlist inside the app's
+  window is ever pressed (never the system menu, logging the printer out, or
+  pause). Before Send, the send dialog is read and must show this printer
+  (its account name, looked up by serial), each filament from the slot the
+  plan chose (or a slot holding the same material and color), and the
+  configured timelapse; anything else cancels the dialog. Whether the print
+  then started is read from the printer, not from Bambu Connect.
 - **Cancel and resume** each need their own fresh yes. **Pause does not
   exist**: no tool offers it, the API refuses it, and the MQTT link throws on
   it.
@@ -94,9 +118,11 @@ A print starts only after the approver says yes in Messages.
 ```
 session tools (tools.ts) ── loopback API + secret ──> daemon runtime (src/runtime.ts)
    read-only fallback: direct MQTT / port 6000             │ one MQTT link (8883, TLS, CN pinned)
-                                                           │ camera (RTSPS 322 via ffmpeg, on demand)
+                                                           │ camera host (its own process): the one RTSPS 322 connection,
+                                                           │   HLS for /printcam/<token>/ and stills for everything else
                                                            │ file service (port 6000: uploads, timelapses)
                                                            │ chat.db (approvals), printer.db (jobs, watches)
+                                                           │ Bambu Connect (Accessibility helper) for starts in cloud mode
                                                            └ /print/<token>/ page, mounted on the kitchen host
 ```
 
@@ -104,15 +130,23 @@ Protocol notes, verified on this printer 2026-10-25: status and `system`
 commands (the chamber light) work in any mode; the P2S serves its file list,
 downloads and uploads on TLS port 6000 (not FTPS, which follows a USB stick);
 the camera is RTSPS on 322, not the P1's JPEG stream; `print.fun` bit 29 set
-means Developer Mode is off. Starting a print uploads the `.gcode.3mf` into
-the model cache over port 6000 and sends `project_file` with
-`brtc://emmc/<name>`, the same as Bambu Studio's LAN print.
+means Developer Mode is off. Starting a print over the LAN uploads the
+`.gcode.3mf` into the model cache over port 6000 and sends `project_file`
+with `brtc://emmc/<name>`, the same as Bambu Studio's LAN print. LAN Only
+Liveview turns the RTSPS stream on in cloud mode (`ipcam.rtsp_url` stops
+reading "disable"). Bambu Connect 2.5 exits when started with a debugging
+port; its accessibility tree carries every label and the DOM classes
+(`semi-radio-checked` marks the chosen option).
 
 ## Data
 
 - `data/printer/printer.db`: jobs, approvals, watches, events.
 - `data/printer/jobs/<id>/`: plate render, final photo, timelapse.
 - `data/printer/frames/`: camera frames (kept a day).
+- `data/printer/live/`: the stream's HLS segments, while someone watches.
+- `data/printer/live-tokens.json`: the pages the camera host may stream to.
+- `data/printer/jobs/<id>/viewer.json`, `viewer.bin`: the page's 3D view, built
+  by `scripts/viewer-model.ts` in its own process.
 - `data/printer/hms-en.json`: Bambu's error text, refreshed weekly
   (falls back to `assets/hms-en.json` here).
 - `data/printer/runtime.json`: the runtime's loopback port and secret.

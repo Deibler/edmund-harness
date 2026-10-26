@@ -55,7 +55,12 @@ export type Job = {
   timelapse: string;
 };
 
-export type ApprovalAction = "start" | "cancel" | "resume";
+/**
+ * What the approver is asked: to start a print, cancel or resume one, or
+ * (when Edmund's plate check is unsure) to confirm from a photo that the
+ * plate is clear.
+ */
+export type ApprovalAction = "start" | "cancel" | "resume" | "plate";
 export type ApprovalStatus = "pending" | "approved" | "declined" | "used" | "expired";
 
 export type Approval = {
@@ -76,6 +81,8 @@ export type Approval = {
   plan: Plan | null;
   /** The print this cancel or resume is about, by name, when there is no job. */
   target: string;
+  /** For a plate confirmation: the capture time (frame id) of the photo the approver was shown. */
+  frameMs: number | null;
 };
 
 export type WatchKind = "progress" | "layer" | "finish" | "state" | "error" | "filament";
@@ -146,7 +153,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decided_text TEXT NOT NULL DEFAULT '',
   trays TEXT NOT NULL DEFAULT '',
   plan TEXT NOT NULL DEFAULT '',
-  target TEXT NOT NULL DEFAULT ''
+  target TEXT NOT NULL DEFAULT '',
+  frame_ms INTEGER
 );
 CREATE TABLE IF NOT EXISTS watches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -235,6 +243,7 @@ function toApproval(r: Row): Approval {
     trays: String(r.trays),
     plan: json<Plan | null>(r.plan, null),
     target: String(r.target),
+    frameMs: r.frame_ms == null ? null : Number(r.frame_ms),
   };
 }
 
@@ -271,6 +280,12 @@ export class PrinterStore {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec(SCHEMA);
+    // Columns added after a table was first created.
+    const cols = (this.db.query("PRAGMA table_info(approvals)").all() as Row[]).map((c) =>
+      String(c.name),
+    );
+    if (!cols.includes("frame_ms"))
+      this.db.exec("ALTER TABLE approvals ADD COLUMN frame_ms INTEGER");
   }
 
   close(): void {
@@ -430,6 +445,7 @@ export class PrinterStore {
     trays: string;
     plan: Plan | null;
     target?: string;
+    frameMs?: number | null;
   }): Approval {
     // A new ask for the same job and action replaces any earlier one.
     this.db
@@ -440,8 +456,8 @@ export class PrinterStore {
       .run(a.action, a.jobId, a.jobId);
     const r = this.db
       .query(
-        `INSERT INTO approvals (job_id, action, chat_guid, session_key, asked_ms, ask_text, trays, plan, target)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO approvals (job_id, action, chat_guid, session_key, asked_ms, ask_text, trays, plan, target, frame_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         a.jobId,
@@ -453,6 +469,7 @@ export class PrinterStore {
         a.trays,
         a.plan ? JSON.stringify(a.plan) : "",
         a.target ?? "",
+        a.frameMs ?? null,
       ) as Row;
     return this.approval(Number(r.id))!;
   }

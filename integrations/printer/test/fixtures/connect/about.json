@@ -1,0 +1,247 @@
+{
+ "path": "",
+ "role": "AXApplication",
+ "title": "Bambu Connect",
+ "children": [
+  {
+   "path": "0",
+   "role": "AXWindow",
+   "subrole": "AXStandardWindow",
+   "title": "Bambu Connect (Beta)",
+   "children": [
+    {
+     "path": "0.0",
+     "role": "AXGroup",
+     "children": [
+      {
+       "path": "0.0.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.0.0.0",
+         "role": "AXGroup",
+         "children": [
+          {
+           "path": "0.0.0.0.0",
+           "role": "AXGroup",
+           "children": [
+            {
+             "path": "0.0.0.0.0.0",
+             "role": "AXWebArea",
+             "title": "Bambu Connect (Beta)",
+             "children": [
+              {
+               "path": "0.0.0.0.0.0.0",
+               "role": "AXGroup",
+               "subrole": "AXApplicationDialog",
+               "title": "About Printer",
+               "children": [
+                {
+                 "id": "semi-modal-title",
+                 "path": "0.0.0.0.0.0.0.0",
+                 "role": "AXHeading",
+                 "title": "About Printer",
+                 "value": "5",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.0.0",
+                   "role": "AXStaticText",
+                   "value": "About Printer"
+                  }
+                 ]
+                },
+                {
+                 "desc": "close",
+                 "path": "0.0.0.0.0.0.0.1",
+                 "role": "AXButton",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.1.0",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "desc": "close",
+                     "path": "0.0.0.0.0.0.0.1.0.0",
+                     "role": "AXImage"
+                    }
+                   ]
+                  }
+                 ]
+                },
+                {
+                 "id": "semi-modal-body",
+                 "path": "0.0.0.0.0.0.0.2",
+                 "role": "AXGroup",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.2.0",
+                   "role": "AXStaticText",
+                   "value": "Model"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.1",
+                   "role": "AXStaticText",
+                   "value": "Bambu Lab P2S"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.2",
+                   "role": "AXStaticText",
+                   "value": "Serial"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.3",
+                   "role": "AXStaticText",
+                   "value": "01P00A000000001"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.4",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.4.0",
+                     "role": "AXStaticText",
+                     "value": "Version"
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.2.4.1",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.4.1.0",
+                       "role": "AXStaticText",
+                       "value": "01.03.00.00"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.5",
+                   "role": "AXStaticText",
+                   "value": "Model"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.6",
+                   "role": "AXStaticText",
+                   "value": "Filament Buffer - for P2"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.7",
+                   "role": "AXStaticText",
+                   "value": "Serial"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.8",
+                   "role": "AXStaticText",
+                   "value": "01B00A000000002"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.9",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.9.0",
+                     "role": "AXStaticText",
+                     "value": "Version"
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.2.9.1",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.9.1.0",
+                       "role": "AXStaticText",
+                       "value": "01.01.16.19"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.10",
+                   "role": "AXStaticText",
+                   "value": "Model"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.11",
+                   "role": "AXStaticText",
+                   "value": "AMS 2 Pro (1)"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.12",
+                   "role": "AXStaticText",
+                   "value": "Serial"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.13",
+                   "role": "AXStaticText",
+                   "value": "01A00A000000003"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.14",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.14.0",
+                     "role": "AXStaticText",
+                     "value": "Version"
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.2.14.1",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.14.1.0",
+                       "role": "AXStaticText",
+                       "value": "05.00.22.22"
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.1",
+     "role": "AXButton",
+     "subrole": "AXCloseButton"
+    },
+    {
+     "help": "this button also has an action to zoom the window",
+     "path": "0.2",
+     "role": "AXButton",
+     "subrole": "AXFullScreenButton",
+     "children": [
+      {
+       "path": "0.2.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.2.0.0",
+         "role": "AXGroup"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.3",
+     "role": "AXButton",
+     "subrole": "AXMinimizeButton"
+    }
+   ]
+  }
+ ]
+}

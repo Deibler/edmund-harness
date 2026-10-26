@@ -1,0 +1,453 @@
+{
+ "path": "",
+ "role": "AXApplication",
+ "title": "Bambu Connect",
+ "children": [
+  {
+   "path": "0",
+   "role": "AXWindow",
+   "subrole": "AXStandardWindow",
+   "title": "Bambu Connect (Beta)",
+   "children": [
+    {
+     "path": "0.0",
+     "role": "AXGroup",
+     "children": [
+      {
+       "path": "0.0.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.0.0.0",
+         "role": "AXGroup",
+         "children": [
+          {
+           "path": "0.0.0.0.0",
+           "role": "AXGroup",
+           "children": [
+            {
+             "path": "0.0.0.0.0.0",
+             "role": "AXWebArea",
+             "title": "Bambu Connect (Beta)",
+             "children": [
+              {
+               "id": "root",
+               "path": "0.0.0.0.0.0.0",
+               "role": "AXGroup",
+               "children": [
+                {
+                 "path": "0.0.0.0.0.0.0.0",
+                 "role": "AXGroup",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.0.0",
+                   "role": "AXGroup",
+                   "subrole": "AXSectionHeader",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.0.0.0",
+                     "role": "AXGroup",
+                     "subrole": "AXLandmarkNavigation",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.0.0.0.0",
+                       "role": "AXStaticText",
+                       "value": "Bambu Connect"
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.0.0.1",
+                       "role": "AXStaticText",
+                       "value": "Beta"
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.0.0.2",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.0.0.2.0",
+                         "role": "AXGroup",
+                         "children": [
+                          {
+                           "path": "0.0.0.0.0.0.0.0.0.0.2.0.0",
+                           "role": "AXGroup",
+                           "children": [
+                            {
+                             "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0",
+                             "role": "AXMenu",
+                             "children": [
+                              {
+                               "class": "active",
+                               "desc": "Print",
+                               "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0.0",
+                               "role": "AXLink",
+                               "children": [
+                                {
+                                 "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0.0.0",
+                                 "role": "AXMenuItem",
+                                 "title": "Print"
+                                }
+                               ]
+                              },
+                              {
+                               "desc": "Devices",
+                               "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0.1",
+                               "role": "AXLink",
+                               "children": [
+                                {
+                                 "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0.1.0",
+                                 "role": "AXMenuItem",
+                                 "title": "Devices"
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.0.0.3",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.0.0.3.0",
+                         "role": "AXPopUpButton",
+                         "title": "user_0000 user_0000 chevron_down",
+                         "children": [
+                          {
+                           "path": "0.0.0.0.0.0.0.0.0.0.3.0.0",
+                           "role": "AXGroup",
+                           "children": [
+                            {
+                             "desc": "user_0000",
+                             "path": "0.0.0.0.0.0.0.0.0.0.3.0.0.0",
+                             "role": "AXImage"
+                            },
+                            {
+                             "path": "0.0.0.0.0.0.0.0.0.0.3.0.0.1",
+                             "role": "AXStaticText",
+                             "value": "user_0000"
+                            },
+                            {
+                             "desc": "chevron_down",
+                             "path": "0.0.0.0.0.0.0.0.0.0.3.0.0.2",
+                             "role": "AXImage"
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.0.1",
+                   "role": "AXGroup",
+                   "subrole": "AXLandmarkMain",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.0.1.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.0.0",
+                       "role": "AXTabGroup",
+                       "children": [
+                        {
+                         "id": "semiTabimport",
+                         "path": "0.0.0.0.0.0.0.0.1.0.0.0",
+                         "role": "AXRadioButton",
+                         "subrole": "AXTabButton",
+                         "title": "Import file",
+                         "value": "1"
+                        }
+                       ]
+                      },
+                      {
+                       "desc": "Import file",
+                       "id": "semiTabPanelimport",
+                       "path": "0.0.0.0.0.0.0.0.1.0.1",
+                       "role": "AXGroup",
+                       "subrole": "AXTabPanel"
+                      }
+                     ]
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.0.1.1",
+                     "role": "AXGroup",
+                     "subrole": "AXSectionHeader",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.1.0",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.1.0.0",
+                         "role": "AXButton",
+                         "title": "Import Gcode 3MF",
+                         "children": [
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.0.0.0",
+                           "role": "AXGroup",
+                           "children": [
+                            {
+                             "path": "0.0.0.0.0.0.0.0.1.1.0.0.0.0",
+                             "role": "AXStaticText",
+                             "value": "Import Gcode 3MF"
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.1.1",
+                       "role": "AXPopUpButton",
+                       "title": "Cube_test.3mf chevron_down",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.1.1.0",
+                         "role": "AXGroup",
+                         "children": [
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.1.0.0",
+                           "role": "AXStaticText",
+                           "value": "Cube_test.3mf"
+                          },
+                          {
+                           "desc": "chevron_down",
+                           "path": "0.0.0.0.0.0.0.0.1.1.1.0.1",
+                           "role": "AXImage"
+                          }
+                         ]
+                        }
+                       ]
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.1.2",
+                       "role": "AXButton",
+                       "title": "Print",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.1.2.0",
+                         "role": "AXGroup",
+                         "children": [
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.2.0.0",
+                           "role": "AXStaticText",
+                           "value": "Print"
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.0.1.2",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.2.0",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.2.0.0",
+                         "role": "AXGroup",
+                         "children": [
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.0.0",
+                           "role": "AXButton",
+                           "title": "1",
+                           "children": [
+                            {
+                             "path": "0.0.0.0.0.0.0.0.1.2.0.0.0.0",
+                             "role": "AXGroup",
+                             "children": [
+                              {
+                               "path": "0.0.0.0.0.0.0.0.1.2.0.0.0.0.0",
+                               "role": "AXGroup",
+                               "children": [
+                                {
+                                 "path": "0.0.0.0.0.0.0.0.1.2.0.0.0.0.0.0",
+                                 "role": "AXStaticText",
+                                 "value": "1"
+                                },
+                                {
+                                 "desc": "/AAjyYRvg1A8AYYYTv4d+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBR7wAB9h7vfsXWaAAAAABJRU5ErkJggg==",
+                                 "path": "0.0.0.0.0.0.0.0.1.2.0.0.0.0.0.1",
+                                 "role": "AXImage"
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        },
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.2.0.1",
+                         "role": "AXGroup",
+                         "children": [
+                          {
+                           "desc": "chevron_up",
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.0",
+                           "role": "AXImage"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.1",
+                           "role": "AXStaticText",
+                           "value": "Compatible Printer"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.2",
+                           "role": "AXStaticText",
+                           "value": ":"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.3",
+                           "role": "AXStaticText",
+                           "value": "P2S"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.4",
+                           "role": "AXStaticText",
+                           "value": "Bed type"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.5",
+                           "role": "AXStaticText",
+                           "value": ":"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.6",
+                           "role": "AXStaticText",
+                           "value": "Textured PEI Plate"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.7",
+                           "role": "AXStaticText",
+                           "value": "Filaments"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.8",
+                           "role": "AXStaticText",
+                           "value": ":"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.9",
+                           "role": "AXStaticText",
+                           "value": "PLA"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.10",
+                           "role": "AXStaticText",
+                           "value": "Nozzle Diameter"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.11",
+                           "role": "AXStaticText",
+                           "value": ":"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.12",
+                           "role": "AXStaticText",
+                           "value": "0.4"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.13",
+                           "role": "AXStaticText",
+                           "value": "Time"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.14",
+                           "role": "AXStaticText",
+                           "value": ":"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.15",
+                           "role": "AXStaticText",
+                           "value": "22m"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.16",
+                           "role": "AXStaticText",
+                           "value": "Weight"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.17",
+                           "role": "AXStaticText",
+                           "value": ":"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.18",
+                           "role": "AXStaticText",
+                           "value": "5.18"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.2.0.1.19",
+                           "role": "AXStaticText",
+                           "value": "g"
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.1",
+     "role": "AXButton",
+     "subrole": "AXCloseButton"
+    },
+    {
+     "help": "this button also has an action to zoom the window",
+     "path": "0.2",
+     "role": "AXButton",
+     "subrole": "AXFullScreenButton",
+     "children": [
+      {
+       "path": "0.2.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.2.0.0",
+         "role": "AXGroup"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.3",
+     "role": "AXButton",
+     "subrole": "AXMinimizeButton"
+    }
+   ]
+  }
+ ]
+}
