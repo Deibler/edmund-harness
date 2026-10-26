@@ -36,6 +36,8 @@ data/
 
 # ─── Per-conversation sandboxes (generated media, received images, transcripts) ───
 sandbox/
+# The root one may be a symlink to another disk, which "sandbox/" does not match.
+/sandbox
 
 # ─── Persona runtime data ───
 # Real-contact PII (people/, groups/), full chat-session transcripts

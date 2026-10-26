@@ -52,6 +52,22 @@ copies in the `sandbox/*/wt/` worktrees and vendored specs, and holds about
 (the ffprobe round-trip then fails). Measured 2026-09-23: 30 descriptors by
 path against 14,290 by filter.
 
+## `sandbox/` and `persona/sessions/` may be symlinks to another disk
+Keeping the old paths as symlinks keeps every absolute path in cron jobs,
+venvs, worktrees and the databases valid. Two things depend on it.
+
+First, Claude Code names a transcript folder after the cwd it sees, which is
+the *resolved* path (`-Volumes-<disk>-sandbox-…`, measured 2026-10-25). The
+harness reads the logical name. `ensureSessionLink` links both names to one
+folder; without that, every resume finds nothing and the conversation starts
+over.
+
+Second, the daemon refuses to boot when either link dangles
+(`src/boot/storage.ts`).
+
+When copying a sandbox, remember that Edmund mounts disk images *inside*
+sandbox folders. `rsync -a` walks into those mounts, so detach them first.
+
 ## Never relax the send-resolution guard
 `chat_mismatch` is a **true positive**. Tested by relaxing it: sends went to the
 note-to-self thread. It refuses because acting would reach the wrong person. If

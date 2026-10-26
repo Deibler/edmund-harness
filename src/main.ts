@@ -16,6 +16,7 @@ import {
   atomicStatusWriter,
   collectProcessTable,
 } from "./boot/resource-governor.ts";
+import { missingStorage } from "./boot/storage.ts";
 import { wireRecall } from "./boot/wire-recall.ts";
 import { wireRecovery } from "./boot/wire-recovery.ts";
 import { toPendingEntry, writePending } from "./bridge/session-queue.ts";
@@ -112,6 +113,10 @@ const CURSOR_KEY = "imessage_rowid";
 
 async function main() {
   const config = loadConfig();
+  {
+    const missing = missingStorage(process.cwd());
+    if (missing.length > 0) throw new Error(`storage disk not mounted: ${missing.join("; ")}`);
+  }
   // Private umask and a sweep of what is already on disk: databases, logs,
   // secrets and the persona directory are for this account only.
   {
