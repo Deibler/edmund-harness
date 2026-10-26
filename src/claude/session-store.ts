@@ -3,6 +3,7 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   symlinkSync,
@@ -24,17 +25,38 @@ import { join, resolve } from "node:path";
 
 const HOME_PROJECTS = join(homedir(), ".claude", "projects");
 
-export function ensureSessionLink(sandboxCwd: string, sessionsRoot: string): void {
+export function ensureSessionLink(
+  sandboxCwd: string,
+  sessionsRoot: string,
+  homeProjects: string = HOME_PROJECTS,
+): void {
   mkdirSync(sessionsRoot, { recursive: true });
-  const slug = encodeProjectDir(resolve(sandboxCwd));
-  const target = join(sessionsRoot, slug);
-  const link = join(HOME_PROJECTS, slug);
+  const logical = resolve(sandboxCwd);
+  const target = join(sessionsRoot, encodeProjectDir(logical));
   mkdirSync(target, { recursive: true });
-  mkdirSync(HOME_PROJECTS, { recursive: true });
+  mkdirSync(homeProjects, { recursive: true });
 
+  // Claude Code names the folder after the cwd it sees, which is the
+  // symlink-resolved path. When the sandbox lives on another disk behind a
+  // symlink that name differs from the logical one, so both lead to the
+  // same transcripts; otherwise a resume finds nothing and starts afresh.
+  const names = new Set([encodeProjectDir(logical)]);
+  try {
+    names.add(encodeProjectDir(realpathSync(logical)));
+  } catch {
+    // Sandbox not created yet; the next spawn adds the resolved name.
+  }
+  for (const name of names) linkTo(join(homeProjects, name), target);
+}
+
+function linkTo(link: string, target: string): void {
   if (!existsSync(link)) {
-    symlinkSync(target, link, "dir");
-    return;
+    try {
+      lstatSync(link);
+    } catch {
+      symlinkSync(target, link, "dir");
+      return;
+    }
   }
 
   const stats = lstatSync(link);
