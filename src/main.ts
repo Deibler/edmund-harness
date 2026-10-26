@@ -15,6 +15,7 @@ import {
   ResourceGovernor,
   atomicStatusWriter,
   collectProcessTable,
+  defaultFootprintReader,
 } from "./boot/resource-governor.ts";
 import { missingStorage } from "./boot/storage.ts";
 import { wireRecall } from "./boot/wire-recall.ts";
@@ -458,7 +459,10 @@ async function main() {
       isBusy: isWorkerPoolBusy,
       flushWorkers: flushWorkerPool,
       trimEmbeddings: trimTransformerEmbeddingWorkers,
-      collectMemory: () => process.memoryUsage(),
+      collectMemory: () => ({
+        ...process.memoryUsage(),
+        footprint: defaultFootprintReader()(process.pid),
+      }),
       gc: () => Bun.gc(true),
       requestRestart: () => {
         const timer = setTimeout(() => process.kill(process.pid, "SIGTERM"), 250);
