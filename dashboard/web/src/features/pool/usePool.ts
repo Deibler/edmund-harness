@@ -28,12 +28,20 @@ export type ResourceStatus = {
   busy: boolean;
   consecutiveHardSamples: number;
   limits: { softBytes: number; hardBytes: number; sustainedSamples: number };
-  daemon: { pid: number; rssBytes: number; heapUsedBytes: number; externalBytes: number };
+  daemon: {
+    pid: number;
+    rssBytes: number;
+    /** Absent from status files written before footprints were measured. */
+    footprintBytes?: number | null;
+    heapUsedBytes: number;
+    externalBytes: number;
+  };
   managed: {
     rssBytes: number;
+    footprintBytes?: number;
     processCount: number;
     byKindBytes: Record<string, number>;
-    largest: { pid: number; rssBytes: number; command: string } | null;
+    largest: { pid: number; rssBytes: number; footprintBytes?: number; command: string } | null;
   };
   action: string | null;
 };

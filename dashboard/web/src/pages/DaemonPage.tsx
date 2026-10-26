@@ -149,12 +149,16 @@ function ResourcePanel() {
                 <Badge tone={tone}>{s.pressure}</Badge>
               </div>
               <div>
-                <div className="text-xs text-muted">Managed RSS</div>
-                <div className="text-xl font-semibold">{mib(s.managed.rssBytes)}</div>
+                <div className="text-xs text-muted">Managed memory</div>
+                <div className="text-xl font-semibold">
+                  {mib(s.managed.footprintBytes ?? s.managed.rssBytes)}
+                </div>
               </div>
               <div>
-                <div className="text-xs text-muted">Daemon RSS</div>
-                <div className="text-xl font-semibold">{mib(s.daemon.rssBytes)}</div>
+                <div className="text-xs text-muted">Daemon memory</div>
+                <div className="text-xl font-semibold">
+                  {mib(s.daemon.footprintBytes ?? s.daemon.rssBytes)}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-muted">Soft / hard</div>
@@ -171,7 +175,7 @@ function ResourcePanel() {
               Snapshot {relativeTime(s.timestampMs)}
               {s.busy ? " · active turn protected" : " · idle cleanup allowed"}
               {s.managed.largest
-                ? ` · largest ${s.managed.largest.command} ${mib(s.managed.largest.rssBytes)}`
+                ? ` · largest ${s.managed.largest.command} ${mib(s.managed.largest.footprintBytes ?? s.managed.largest.rssBytes)}`
                 : ""}
             </div>
             {s.action ? <div className="rounded bg-muted/20 p-2 text-xs">{s.action}</div> : null}

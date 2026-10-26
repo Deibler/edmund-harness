@@ -1,3 +1,4 @@
+import { FFIType, dlopen, ptr } from "bun:ffi";
 import { execFile } from "node:child_process";
 import { renameSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
@@ -9,8 +10,46 @@ export type ProcessRow = {
   ppid: number;
   pgid: number;
   rssBytes: number;
+  /** Physical footprint, when the kernel would tell us. See readFootprint. */
+  footprintBytes?: number | null;
   command: string;
 };
+
+/** What the governor counts for a process: its footprint, else its RSS. */
+function memoryOf(row: ProcessRow): number {
+  return row.footprintBytes ?? row.rssBytes;
+}
+
+export type FootprintReader = (pid: number) => number | null;
+
+/**
+ * A process's physical footprint as the kernel accounts it, the number
+ * Activity Monitor and `footprint` show. RSS leaves out memory that has been
+ * compressed or swapped, which is exactly the memory a Mac under pressure is
+ * short of: on 2026-10-25 the daemon read 3 GB of RSS at a 10 GB footprint,
+ * so the soft limit never fired. RSS also counts shared library pages, which
+ * made an idle Claude worker look like 393 MB when it held 140 MB.
+ *
+ * Read with proc_pid_rusage (struct rusage_info_v0, ri_phys_footprint at byte
+ * 72). Null where that is unavailable: another user's process, a process that
+ * has exited, or a platform other than macOS.
+ */
+export function makeFootprintReader(): FootprintReader {
+  if (process.platform !== "darwin") return () => null;
+  try {
+    const lib = dlopen("/usr/lib/libSystem.B.dylib", {
+      proc_pid_rusage: { args: [FFIType.i32, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
+    });
+    const buf = new Uint8Array(96);
+    const view = new DataView(buf.buffer);
+    return (pid) =>
+      lib.symbols.proc_pid_rusage(pid, 0, ptr(buf)) === 0
+        ? Number(view.getBigUint64(72, true))
+        : null;
+  } catch {
+    return () => null;
+  }
+}
 
 export type ResourceStatus = {
   timestampMs: number;
@@ -21,14 +60,17 @@ export type ResourceStatus = {
   daemon: {
     pid: number;
     rssBytes: number;
+    footprintBytes: number | null;
     heapUsedBytes: number;
     externalBytes: number;
   };
   managed: {
     rssBytes: number;
+    /** Footprint where readable, else RSS: the number the limits apply to. */
+    footprintBytes: number;
     processCount: number;
     byKindBytes: Record<string, number>;
-    largest: { pid: number; rssBytes: number; command: string } | null;
+    largest: { pid: number; rssBytes: number; footprintBytes: number; command: string } | null;
   };
   action: string | null;
 };
@@ -48,7 +90,12 @@ export type ResourceGovernorDeps = {
   isBusy: () => boolean;
   flushWorkers: () => Promise<number>;
   trimEmbeddings: () => number;
-  collectMemory: () => { rss: number; heapUsed: number; external: number };
+  collectMemory: () => {
+    rss: number;
+    heapUsed: number;
+    external: number;
+    footprint?: number | null;
+  };
   gc: () => void;
   requestRestart: (reason: string) => void;
   writeStatus: (status: ResourceStatus) => void;
@@ -111,19 +158,29 @@ export function summarizeManagedProcesses(
   );
   const byKindBytes: Record<string, number> = {};
   let rssBytes = 0;
+  let footprintBytes = 0;
   let largest: ResourceStatus["managed"]["largest"] = null;
   for (const row of managed) {
+    const bytes = memoryOf(row);
     rssBytes += row.rssBytes;
+    footprintBytes += bytes;
     const kind = processKind(row.command);
-    byKindBytes[kind] = (byKindBytes[kind] ?? 0) + row.rssBytes;
-    if (!largest || row.rssBytes > largest.rssBytes) {
-      largest = { pid: row.pid, rssBytes: row.rssBytes, command: basename(row.command) };
+    byKindBytes[kind] = (byKindBytes[kind] ?? 0) + bytes;
+    if (!largest || bytes > largest.footprintBytes) {
+      largest = {
+        pid: row.pid,
+        rssBytes: row.rssBytes,
+        footprintBytes: bytes,
+        command: basename(row.command),
+      };
     }
   }
-  return { rssBytes, processCount: managed.length, byKindBytes, largest };
+  return { rssBytes, footprintBytes, processCount: managed.length, byKindBytes, largest };
 }
 
-export function collectProcessTable(): Promise<ProcessRow[]> {
+export function collectProcessTable(
+  readFootprint: FootprintReader = defaultFootprintReader(),
+): Promise<ProcessRow[]> {
   return new Promise((resolve, reject) => {
     execFile(
       "/bin/ps",
@@ -131,10 +188,24 @@ export function collectProcessTable(): Promise<ProcessRow[]> {
       { maxBuffer: 4 * MIB },
       (error, stdout) => {
         if (error) reject(error);
-        else resolve(parseProcessTable(stdout));
+        else
+          resolve(
+            parseProcessTable(stdout).map((row) => ({
+              ...row,
+              footprintBytes: readFootprint(row.pid),
+            })),
+          );
       },
     );
   });
+}
+
+let sharedFootprintReader: FootprintReader | null = null;
+
+/** One FFI binding per process, made on first use. */
+export function defaultFootprintReader(): FootprintReader {
+  sharedFootprintReader ??= makeFootprintReader();
+  return sharedFootprintReader;
 }
 
 export function atomicStatusWriter(path: string): (status: ResourceStatus) => void {
@@ -181,10 +252,13 @@ export class ResourceGovernor {
       const managed = summarizeManagedProcesses(rows, process.pid, this.deps.getWorkerPids());
       // ps and process.memoryUsage() take their snapshots at slightly different
       // moments. Never under-report the daemon if ps caught it between samples.
+      const daemonBytes = mem.footprint ?? mem.rss;
       managed.rssBytes = Math.max(managed.rssBytes, mem.rss);
-      const overSoft = managed.rssBytes >= this.options.softLimitBytes;
+      managed.footprintBytes = Math.max(managed.footprintBytes, daemonBytes);
+      const overSoft = managed.footprintBytes >= this.options.softLimitBytes;
       const overHard =
-        managed.rssBytes >= this.options.hardLimitBytes || mem.rss >= this.options.hardLimitBytes;
+        managed.footprintBytes >= this.options.hardLimitBytes ||
+        daemonBytes >= this.options.hardLimitBytes;
       this.consecutiveHardSamples = overHard ? this.consecutiveHardSamples + 1 : 0;
 
       const busy = this.deps.isBusy();
@@ -216,7 +290,7 @@ export class ResourceGovernor {
           this.deps.log("error", `[resources] ${action}`);
         } else {
           restartReason =
-            `managed RSS remained at ${Math.round(managed.rssBytes / MIB)} MiB ` +
+            `managed memory remained at ${Math.round(managed.footprintBytes / MIB)} MiB ` +
             `for ${this.consecutiveHardSamples} samples`;
           action = `graceful restart requested: ${restartReason}`;
         }
@@ -235,6 +309,7 @@ export class ResourceGovernor {
         daemon: {
           pid: process.pid,
           rssBytes: mem.rss,
+          footprintBytes: mem.footprint ?? null,
           heapUsedBytes: mem.heapUsed,
           externalBytes: mem.external,
         },

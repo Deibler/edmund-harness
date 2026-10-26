@@ -3,6 +3,7 @@ import {
   ResourceGovernor,
   type ResourceGovernorDeps,
   type ResourceStatus,
+  makeFootprintReader,
   parseProcessTable,
   summarizeManagedProcesses,
 } from "../src/boot/resource-governor.ts";
@@ -27,16 +28,30 @@ describe("resource governor process accounting", () => {
   });
 });
 
-function harness(args?: { busy?: boolean; rssMiB?: number; trim?: number; flush?: number }) {
+function harness(args?: {
+  busy?: boolean;
+  rssMiB?: number;
+  footprintMiB?: number;
+  trim?: number;
+  flush?: number;
+}) {
   let now = 1_000_000_000;
   let flushes = 0;
   let trims = 0;
   let restarts = 0;
   let lastStatus: ResourceStatus | null = null;
   const rss = (args?.rssMiB ?? 5) * MIB;
+  const footprint = args?.footprintMiB === undefined ? null : args.footprintMiB * MIB;
   const deps: ResourceGovernorDeps = {
     collectProcesses: async () => [
-      { pid: process.pid, ppid: 1, pgid: process.pid, rssBytes: rss, command: "bun" },
+      {
+        pid: process.pid,
+        ppid: 1,
+        pgid: process.pid,
+        rssBytes: rss,
+        footprintBytes: footprint,
+        command: "bun",
+      },
     ],
     getWorkerPids: () => [],
     isBusy: () => args?.busy ?? false,
@@ -48,7 +63,7 @@ function harness(args?: { busy?: boolean; rssMiB?: number; trim?: number; flush?
       trims++;
       return args?.trim ?? 0;
     },
-    collectMemory: () => ({ rss, heapUsed: MIB, external: MIB }),
+    collectMemory: () => ({ rss, heapUsed: MIB, external: MIB, footprint }),
     gc: () => {},
     requestRestart: () => {
       restarts++;
@@ -128,5 +143,54 @@ describe("resource governor actions", () => {
         ),
     ).toThrow("soft limit must be below hard limit");
     h.governor.stop();
+  });
+});
+
+describe("resource governor counts footprint, not RSS", () => {
+  test("memory that was compressed or swapped out still counts", async () => {
+    // The 2026-10-25 shape: little resident, most of it compressed.
+    const h = harness({ rssMiB: 3, footprintMiB: 9 });
+    for (let i = 0; i < 3; i++) {
+      await h.governor.tick();
+      h.advance();
+    }
+    expect(h.status()?.pressure).toBe("hard");
+    expect(h.counts().restarts).toBe(1);
+    expect(h.status()?.managed.footprintBytes).toBe(9 * MIB);
+  });
+
+  test("shared library pages counted in RSS do not set off relief", async () => {
+    const h = harness({ rssMiB: 5, footprintMiB: 2 });
+    const status = await h.governor.tick();
+    expect(status?.pressure).toBe("normal");
+    expect(h.counts().trims).toBe(0);
+  });
+
+  test("the largest process is the one with the largest footprint", () => {
+    const rows = [
+      { pid: process.pid, ppid: 1, pgid: 1, rssBytes: 100, footprintBytes: 50, command: "bun" },
+      { pid: 41, ppid: process.pid, pgid: 1, rssBytes: 400, footprintBytes: 60, command: "claude" },
+      {
+        pid: 42,
+        ppid: process.pid,
+        pgid: 1,
+        rssBytes: 90,
+        footprintBytes: 900,
+        command: "python3",
+      },
+    ];
+    const summary = summarizeManagedProcesses(rows, process.pid, []);
+    expect(summary.largest?.pid).toBe(42);
+    expect(summary.footprintBytes).toBe(1010);
+    expect(summary.rssBytes).toBe(590);
+  });
+
+  test.if(process.platform === "darwin")("reads a live footprint from the kernel", () => {
+    const read = makeFootprintReader();
+    const mine = read(process.pid);
+    expect(mine).not.toBeNull();
+    expect(mine!).toBeGreaterThan(MIB);
+    // A pid that does not exist has no footprint rather than a zero.
+    expect(read(999_999)).toBeNull();
   });
 });
