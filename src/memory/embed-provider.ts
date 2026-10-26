@@ -159,7 +159,18 @@ type PendingEmbed = {
  * Pooling + query prefix follow the model family (see familyFor); output is
  * L2-normalized either way.
  */
-class TransformersEmbedProvider implements EmbedProvider {
+/**
+ * Most texts the local model sees in one inference. ONNX keeps the memory a
+ * batch needed and never gives it back: measured on bge-small, about 45 MB
+ * per long text, so the indexer's 128-text batches left the daemon holding
+ * 10 GB on a 16 GB Mac and pushed Messages into swap. Throughput per text is
+ * the same at 4 and 16, so small costs nothing. It also bounds how long a
+ * live recall query waits behind a backfill, since chunks are sent one at a
+ * time and a query slots in between them.
+ */
+export const LOCAL_EMBED_BATCH = 8;
+
+export class TransformersEmbedProvider implements EmbedProvider {
   private static readonly WORKER_IDLE_MS = 5 * 60_000;
   private worker: Worker | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -169,6 +180,7 @@ class TransformersEmbedProvider implements EmbedProvider {
   constructor(
     public model: string,
     public dim: number,
+    private readonly workerUrl: URL = new URL("./transformers-embed-worker.ts", import.meta.url),
   ) {}
 
   private getWorker(): Worker {
@@ -177,7 +189,7 @@ class TransformersEmbedProvider implements EmbedProvider {
       this.idleTimer = null;
     }
     if (this.worker) return this.worker;
-    const worker = new Worker(new URL("./transformers-embed-worker.ts", import.meta.url), {
+    const worker = new Worker(this.workerUrl, {
       name: "recall-embeddings",
       ref: false,
     });
@@ -265,6 +277,18 @@ class TransformersEmbedProvider implements EmbedProvider {
   }
 
   private async run(texts: string[]): Promise<EmbedResult> {
+    if (texts.length <= LOCAL_EMBED_BATCH) return this.runChunk(texts);
+    const vectors: Float32Array[] = [];
+    let dim = this.dim;
+    for (let i = 0; i < texts.length; i += LOCAL_EMBED_BATCH) {
+      const part = await this.runChunk(texts.slice(i, i + LOCAL_EMBED_BATCH));
+      vectors.push(...part.vectors);
+      dim = part.dim;
+    }
+    return { vectors, model: this.model, dim };
+  }
+
+  private async runChunk(texts: string[]): Promise<EmbedResult> {
     if (texts.length === 0) return { vectors: [], model: this.model, dim: this.dim };
     const worker = this.getWorker();
     const id = this.nextRequestId++;
