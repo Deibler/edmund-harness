@@ -9,7 +9,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Config } from "../../../src/config/config.ts";
 import { ChatDb } from "../../../src/imessage/db.ts";
 import { isDmSession } from "../../../src/sessions/key.ts";
@@ -18,13 +19,15 @@ import { log } from "../../../src/util/log.ts";
 import { registerMount, unregisterMount } from "../../../src/web/mounts.ts";
 import { type PrinterConfig, isConfigured } from "../config.ts";
 import { type Decision, findDecision } from "./approval.ts";
-import { CameraFeed } from "./camera.ts";
+import { CameraHostProcess, writeLiveTokens } from "./camera-server.ts";
 import { colorName } from "./color.ts";
+import { BambuConnect, sameFilament, slotName } from "./connect.ts";
 import { CtrlSession } from "./ctrl.ts";
-import { planFilaments, trayFingerprint } from "./filament.ts";
-import { type PlateLook, checkControlGate, checkStartGate } from "./gate.ts";
+import { type Plan, planFilaments, trayFingerprint } from "./filament.ts";
+import { type PlateLook, checkControlGate, checkStartGate, plateConfirmation } from "./gate.ts";
 import { type ErrorDb, loadErrorDb, refreshErrorDb } from "./hms.ts";
 import { PrinterLink } from "./link.ts";
+import { boundPrinterName } from "./makerworld.ts";
 import { type PageStatus, renderPage } from "./page.ts";
 import { lookAtPlate } from "./platecheck.ts";
 import { type PrinterState, isActive, isIdle } from "./report.ts";
@@ -33,6 +36,7 @@ import {
   approvers,
   framesDir,
   jobDir,
+  liveTokensPath,
   pageUrl,
   runtimeInfoPath,
   visionModel,
@@ -73,7 +77,8 @@ type ControlResult = { ok: boolean; message: string; problems?: string[] };
 export class PrinterRuntime {
   readonly store: PrinterStore;
   readonly link: PrinterLink;
-  readonly camera: CameraFeed;
+  readonly camera: CameraHostProcess;
+  readonly connect: BambuConnect;
   private chatDb: ChatDb;
   private errorDb: ErrorDb;
   private server: ReturnType<typeof Bun.serve> | null = null;
@@ -102,10 +107,23 @@ export class PrinterRuntime {
       onState: (st, prev) => this.onState(st, prev),
       onLog: (m) => log.info("printer", m),
     });
-    this.camera = new CameraFeed({
-      host: cfg.host,
-      accessCode: cfg.access_code,
-      fps: cfg.camera_fps,
+    this.camera = new CameraHostProcess({
+      script: join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "camera-host.ts"),
+      env: {
+        EDMUND_CAMERA_HOST: cfg.host,
+        EDMUND_CAMERA_CODE: cfg.access_code,
+        EDMUND_CAMERA_FPS: String(cfg.camera_fps),
+        EDMUND_CAMERA_DIR: join(printerDir(dataDir), "live"),
+        EDMUND_CAMERA_TOKENS: liveTokensPath(dataDir),
+        EDMUND_CAMERA_SECRET: this.secret,
+      },
+      secret: this.secret,
+      onPort: (port) => registerMount(this.dataDir, "/printcam/", port),
+      log: (m) => log.warn("printer", m),
+    });
+    this.connect = new BambuConnect({
+      app: cfg.bambu_connect_app,
+      log: (m) => log.info("printer", m),
     });
     const saved = this.readPrintKey();
     if (saved) this.printKey = saved.key;
@@ -113,9 +131,13 @@ export class PrinterRuntime {
 
   start(): void {
     this.link.start();
+    this.camera.start();
     this.server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
+      // A page request can wait on a still from a cold camera; Bun's default
+      // of 10 s would drop it.
+      idleTimeout: 30,
       fetch: (req) => this.handle(req),
     });
     const port = this.server.port ?? 0;
@@ -138,6 +160,7 @@ export class PrinterRuntime {
     this.link.close();
     this.server?.stop(true);
     unregisterMount(this.dataDir, "/print/");
+    unregisterMount(this.dataDir, "/printcam/");
     try {
       unlinkSync(runtimeInfoPath(this.dataDir));
     } catch {}
@@ -198,6 +221,23 @@ export class PrinterRuntime {
     const st = this.link.state;
     if (st) this.evaluate(st, st);
     this.checkApprovals();
+    this.publishLiveTokens();
+  }
+
+  private liveTokensWritten = "";
+
+  /** Tell the camera host which pages may show video: the ones that are live. */
+  publishLiveTokens(): void {
+    const live = this.store
+      .jobs({ limit: 20 })
+      .filter((j) => !["draft", "declined"].includes(j.status) && this.pageStatus(j).live);
+    // Have the 3D view ready before anyone opens it.
+    for (const j of live) this.ensureViewer(j);
+    const tokens = live.map((j) => j.token);
+    const key = tokens.join(",");
+    if (key === this.liveTokensWritten) return;
+    writeLiveTokens(liveTokensPath(this.dataDir), tokens);
+    this.liveTokensWritten = key;
   }
 
   private evaluate(prev: PrinterState | null, cur: PrinterState) {
@@ -418,6 +458,15 @@ export class PrinterRuntime {
         const what = job
           ? `print job ${job.id}, "${job.title}"`
           : `the ${a.action} of "${a.target}"`;
+        if (a.action === "plate") {
+          this.fire(
+            a.sessionKey,
+            status === "approved"
+              ? `[Printer] ${who} confirmed from your photo that the plate is clear for ${what}: "${d.text}". Next: call print_start with job_id ${job?.id} and frame_id ${a.frameMs}. Their yes stands for 15 minutes.`
+              : `[Printer] ${who} says the plate is not clear for ${what}: "${d.text}". Ask for it to be cleared, then take a new printer_camera frame and try print_start again.`,
+          );
+          continue;
+        }
         const next =
           status !== "approved"
             ? `Tell ${job?.requester || "whoever asked"} kindly, and ask ${who} what to change if it is not clear.`
@@ -444,6 +493,10 @@ export class PrinterRuntime {
     const plan = planFilaments(job.needs, trays, job.prefer);
     const framePath = frameId ? join(framesDir(this.dataDir), `${frameId}.jpg`) : "";
     const ownLookMs = frameId && existsSync(framePath) ? frameId : null;
+    const plateAsk = this.store.liveApproval(job.id, "plate");
+    const plateConfirm = plateAsk
+      ? { approval: plateAsk, decision: this.decisionFor(plateAsk.id) }
+      : null;
     const base = {
       now: Date.now(),
       callerSession: session,
@@ -456,6 +509,9 @@ export class PrinterRuntime {
       stateAgeMs: st ? Date.now() - this.link.updatedMs : Number.POSITIVE_INFINITY,
       plan,
       ownLookMs,
+      sendVia: this.cfg.send_via,
+      connectReady: this.connect.available(),
+      plateConfirm,
     };
     // Everything but the plate first; the independent look costs a model call.
     const pre = checkStartGate({
@@ -463,18 +519,35 @@ export class PrinterRuntime {
       plateLook: { verdict: "CLEAR", frameMs: Date.now(), note: "" },
     });
     if (!pre.ok) return { ok: false, problems: pre.problems };
-    let look: PlateLook;
-    try {
-      const shot = await this.snapshot();
-      look = await lookAtPlate(shot.path, shot.ms, visionModel(this.config));
-    } catch (e) {
-      look = {
-        verdict: "UNSURE",
-        frameMs: Date.now(),
-        note: `no camera picture: ${(e as Error).message}`,
-      };
+    // The approver's yes to a photo of the plate is the plate check; otherwise an independent look.
+    const confirmed =
+      plateConfirmation({
+        now: Date.now(),
+        job,
+        printYesMs: decision?.ms ?? null,
+        plateConfirm,
+        approvers: approvers(this.config),
+      }).state === "valid";
+    let look: PlateLook | null = null;
+    if (confirmed) {
+      this.store.log(
+        "plate_check",
+        `confirmed by the approver from a photo: "${plateConfirm?.decision?.text}"`,
+        job.id,
+      );
+    } else {
+      try {
+        const shot = await this.snapshot();
+        look = await lookAtPlate(shot.path, shot.ms, visionModel(this.config));
+      } catch (e) {
+        look = {
+          verdict: "UNSURE",
+          frameMs: Date.now(),
+          note: `no camera picture: ${(e as Error).message}`,
+        };
+      }
+      this.store.log("plate_check", `${look.verdict}: ${look.note}`, job.id);
     }
-    this.store.log("plate_check", `${look.verdict}: ${look.note}`, job.id);
     const gate = checkStartGate({ ...base, now: Date.now(), plateLook: look });
     if (!gate.ok) return { ok: false, problems: gate.problems };
 
@@ -489,14 +562,83 @@ export class PrinterRuntime {
       this.store.restore(approval.id);
       return { ok: false, problems: ["Another start of this job is already underway."] };
     }
+    // A plate confirmation is good for this one start.
+    const plateUsed = confirmed && plateAsk && plateConfirm?.decision ? plateAsk.id : null;
+    if (plateUsed && plateConfirm?.decision) {
+      const d = plateConfirm.decision;
+      if (plateAsk?.status === "pending")
+        this.store.decide(plateUsed, "approved", d.by, d.text, d.ms);
+      this.store.consume(plateUsed);
+    }
     const giveBack = (why: string): StartResult => {
       this.store.updateJob(job.id, { status: "approved" });
       this.store.restore(approval.id);
+      if (plateUsed) this.store.restore(plateUsed);
       this.store.log("start_failed", why, job.id);
       return { ok: false, problems: [why] };
     };
 
     const remoteName = `${safeName(job.title)}.gcode.3mf`;
+    const bedStudio = job.plateType || slicedBedType(job.file, job.plate);
+    const sent =
+      gate.route === "bambu_connect"
+        ? await this.sendThroughConnect(job, plan)
+        : await this.sendOverLan(job, plan, remoteName, bedStudio);
+    if (sent) return giveBack(sent);
+    let started: PrinterState;
+    try {
+      // A Bambu Connect send goes through Bambu's cloud and the printer
+      // downloads it, which takes longer than a LAN upload.
+      const wait = gate.route === "bambu_connect" ? 240_000 : 90_000;
+      // The LAN start names the task after the job. Bambu Connect names it
+      // itself; the gate saw the printer idle just before, so the next print
+      // to run is this one, under whatever name the printer reports.
+      started = await this.link.waitFor(
+        (s) => isActive(s) && (gate.route === "bambu_connect" || s.taskName === job.title),
+        wait,
+      );
+    } catch {
+      // The command was accepted; whether it is running is for the system of record to say.
+      const now = this.link.state;
+      return giveBack(
+        `The printer took the print but has not started "${job.title}" yet (it is ${now?.stateLabel ?? "not reporting"}${now?.taskName ? `, task "${now.taskName}"` : ""}). Look at the printer before trying again.`,
+      );
+    }
+    // onState saw the print begin and named it before waitFor returned.
+    const taskName = gate.route === "bambu_connect" ? started.taskName : remoteName;
+    this.store.updateJob(job.id, {
+      status: "printing",
+      startedMs: Date.now(),
+      remoteName: taskName,
+    });
+    this.store.log(
+      "print_started",
+      `${taskName} on ${bedLabelFor(bedStudio)} via ${gate.route === "bambu_connect" ? "Bambu Connect" : "the LAN"}`,
+      job.id,
+    );
+    const watches = this.autoWatches(job, session);
+    const url = pageUrl(this.config, job.token);
+    return {
+      ok: true,
+      page: url,
+      message: [
+        `Printing "${job.title}" now (${statusLine(started)}).`,
+        `Filament: ${plan.assignments.map((a) => `${colorName(a.need.color)} ${a.need.type} from ${a.tray.label}`).join(", ")}.`,
+        url
+          ? `Live page for ${job.requester || "the person who asked"}: ${url}`
+          : "No page origin is configured, so there is no live page link.",
+        `Wake-ups set: ${watches}.`,
+      ].join("\n"),
+    };
+  }
+
+  /** Uploads to the printer and sends the start over the LAN (Developer Mode). An error, or null when it took it. */
+  private async sendOverLan(
+    job: Job,
+    plan: Plan,
+    remoteName: string,
+    bedStudio: string,
+  ): Promise<string | null> {
     try {
       const s = await CtrlSession.open({
         host: this.cfg.host,
@@ -509,9 +651,8 @@ export class PrinterRuntime {
         s.close();
       }
     } catch (e) {
-      return giveBack(`Could not send the file to the printer: ${(e as Error).message}`);
+      return `Could not send the file to the printer: ${(e as Error).message}`;
     }
-    const bedStudio = job.plateType || slicedBedType(job.file, job.plate);
     let reply: Record<string, unknown>;
     try {
       reply = await this.link.command(
@@ -544,41 +685,44 @@ export class PrinterRuntime {
         { timeoutMs: 20_000 },
       );
     } catch (e) {
-      return giveBack(`The printer did not take the print command: ${(e as Error).message}`);
+      return `The printer did not take the print command: ${(e as Error).message}`;
     }
     const result = String(reply.result ?? "").toLowerCase();
     if (result && result !== "success") {
-      return giveBack(
-        `The printer refused the print (${String(reply.reason || reply.err_code || result)}).`,
-      );
+      return `The printer refused the print (${String(reply.reason || reply.err_code || result)}).`;
     }
-    let started: PrinterState;
+    return null;
+  }
+
+  /**
+   * Sends through Bambu Connect, checking its send dialog against the
+   * approved job first: this printer (by its name on the account, looked up
+   * by serial), each filament from the slot the plan chose, the timelapse
+   * setting. Anything off and nothing is sent.
+   */
+  private async sendThroughConnect(job: Job, plan: Plan): Promise<string | null> {
+    let printer: string;
     try {
-      started = await this.link.waitFor((s) => isActive(s) && s.taskName === job.title, 90_000);
-    } catch {
-      // The command was accepted; whether it is running is for the system of record to say.
-      const now = this.link.state;
-      return giveBack(
-        `The printer accepted the command but has not started "${job.title}" after 90 seconds (it is ${now?.stateLabel ?? "not reporting"}). Look at the printer before trying again.`,
-      );
+      printer = await boundPrinterName(this.dataDir, this.cfg.serial);
+    } catch (e) {
+      return `Could not confirm the printer's name on the Bambu account: ${(e as Error).message}`;
     }
-    // onState saw the print begin and named it before waitFor returned.
-    this.store.updateJob(job.id, { status: "printing", startedMs: Date.now(), remoteName });
-    this.store.log("print_started", `${remoteName} on ${bedLabelFor(bedStudio)}`, job.id);
-    const watches = this.autoWatches(job, session);
-    const url = pageUrl(this.config, job.token);
-    return {
-      ok: true,
-      page: url,
-      message: [
-        `Printing "${job.title}" now (${statusLine(started)}).`,
-        `Filament: ${plan.assignments.map((a) => `${colorName(a.need.color)} ${a.need.type} from ${a.tray.label}`).join(", ")}.`,
-        url
-          ? `Live page for ${job.requester || "the person who asked"}: ${url}`
-          : "No page origin is configured, so there is no live page link.",
-        `Wake-ups set: ${watches}.`,
-      ].join("\n"),
-    };
+    try {
+      const out = await this.connect.send({
+        file: job.file,
+        name: safeName(job.title),
+        plate: job.plate,
+        printer,
+        slots: plan.assignments.map((a) => slotName(a.tray)),
+        alike: sameFilament(this.link.state ? allTrays(this.link.state) : []),
+        timelapse: this.cfg.timelapse,
+      });
+      this.store.log("connect_send", `${out.ok ? "sent" : "not sent"}: ${out.seen}`, job.id);
+      if (!out.ok) return `Bambu Connect was not sent the print: ${out.problems.join(" ")}`;
+    } catch (e) {
+      return `Bambu Connect could not send it: ${(e as Error).message}`;
+    }
+    return null;
   }
 
   /** Progress, finish, error and pause wake-ups for the conversation that asked, on every print Edmund starts. */
@@ -650,7 +794,7 @@ export class PrinterRuntime {
       problems.push(`Nothing to resume: the printer is ${st.stateLabel}.`);
     if (st?.developerMode === false) {
       problems.push(
-        "The printer is not in Developer Mode, so it will not take this command from Edmund.",
+        `The printer is not in Developer Mode, so it will not take a ${action} from Edmund. Ask the approver to ${action} it from Bambu Handy or the printer's screen.`,
       );
     }
     if (approval?.target && st && approval.target !== st.taskName) {
@@ -767,7 +911,9 @@ export class PrinterRuntime {
   pageStatus(job: Job): PageStatus {
     const st = this.link.state;
     const current =
-      st && (job.status === "printing" || job.status === "starting") && st.taskName === job.title
+      st &&
+      (job.status === "printing" || job.status === "starting") &&
+      (st.taskName === job.title || (!!job.remoteName && st.taskName === job.remoteName))
         ? st
         : null;
     const phase: PageStatus["phase"] =
@@ -863,10 +1009,70 @@ export class PrinterRuntime {
       "final.jpg": [job.finalPhoto, "image/jpeg"],
       "timelapse.mp4": [job.timelapse, "video/mp4"],
     };
+    if (name === "viewer.json" || name === "viewer.bin") return this.serveViewer(job, name);
     const f = files[name];
     if (!f || !f[0] || !existsSync(f[0]))
       return new Response("Not found", { status: 404, headers });
     return serveFile(req, f[0], f[1]);
+  }
+
+  private viewerBuilds = new Set<number>();
+
+  /**
+   * Start building a job's 3D view if it is not built or building. The work
+   * runs in its own process (scripts/viewer-model.ts): parsing the model part
+   * of a sliced file would otherwise hold this loop for the length of it.
+   */
+  ensureViewer(job: Job): "ready" | "building" | "none" {
+    const dir = jobDir(this.dataDir, job.id);
+    if (existsSync(join(dir, "viewer.json"))) return "ready";
+    if (!job.file || !existsSync(job.file)) return "none";
+    if (this.viewerBuilds.has(job.id)) return "building";
+    mkdirSync(dir, { recursive: true });
+    this.viewerBuilds.add(job.id);
+    const script = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "scripts",
+      "viewer-model.ts",
+    );
+    const proc = Bun.spawn([process.execPath, script, job.file, String(job.plate || 1), dir], {
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    void proc.exited.then(async (code) => {
+      this.viewerBuilds.delete(job.id);
+      if (code) {
+        const err = (await new Response(proc.stderr).text()).slice(-300);
+        log.warn("printer", "3D view build failed", { job: job.id, code, err });
+      }
+    });
+    return "building";
+  }
+
+  private serveViewer(job: Job, name: "viewer.json" | "viewer.bin"): Response {
+    const noStore = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" };
+    const state = this.ensureViewer(job);
+    if (state === "none")
+      return Response.json({ error: "no model for this print" }, { status: 404, headers: noStore });
+    if (state === "building")
+      return Response.json({ pending: true }, { status: 202, headers: noStore });
+    const path = join(jobDir(this.dataDir, job.id), name);
+    if (!existsSync(path))
+      return Response.json({ pending: true }, { status: 202, headers: noStore });
+    if (name === "viewer.json")
+      return new Response(Bun.file(path), {
+        headers: { ...noStore, "Content-Type": "application/json" },
+      });
+    return new Response(Bun.file(path), {
+      headers: {
+        "Content-Type": "application/octet-stream",
+        // Stored compressed; the browser undoes it.
+        "Content-Encoding": "gzip",
+        "Cache-Control": "private, max-age=3600",
+        "X-Robots-Tag": "noindex",
+      },
+    });
   }
 }
 

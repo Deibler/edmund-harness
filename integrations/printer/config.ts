@@ -53,6 +53,15 @@ export const Schema = z
     auto_progress: z.array(z.number().int().min(1).max(99)).default([25, 50, 75]),
     /** Camera frames per second while someone is watching. */
     camera_fps: z.number().positive().max(5).default(1),
+    /**
+     * How starts reach the printer. "lan" needs Developer Mode (LAN Only Mode,
+     * no Bambu Handy); "bambu_connect" sends through Bambu's desktop app, signed
+     * in to the Bambu account, so the printer stays in cloud mode; "auto" uses
+     * the LAN when Developer Mode is on and Bambu Connect otherwise.
+     */
+    send_via: z.enum(["auto", "lan", "bambu_connect"]).default("auto"),
+    /** Where Bambu Connect is installed. */
+    bambu_connect_app: z.string().default("/Applications/Bambu Connect.app"),
   })
   .default({});
 

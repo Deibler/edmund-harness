@@ -1,0 +1,543 @@
+{
+ "path": "",
+ "role": "AXApplication",
+ "title": "Bambu Connect",
+ "children": [
+  {
+   "path": "0",
+   "role": "AXWindow",
+   "subrole": "AXStandardWindow",
+   "title": "Bambu Connect (Beta)",
+   "children": [
+    {
+     "path": "0.0",
+     "role": "AXGroup",
+     "children": [
+      {
+       "path": "0.0.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.0.0.0",
+         "role": "AXGroup",
+         "children": [
+          {
+           "path": "0.0.0.0.0",
+           "role": "AXGroup",
+           "children": [
+            {
+             "path": "0.0.0.0.0.0",
+             "role": "AXWebArea",
+             "title": "Bambu Connect (Beta)",
+             "children": [
+              {
+               "path": "0.0.0.0.0.0.0",
+               "role": "AXGroup",
+               "subrole": "AXApplicationDialog",
+               "title": "Send to print",
+               "children": [
+                {
+                 "id": "semi-modal-title",
+                 "path": "0.0.0.0.0.0.0.0",
+                 "role": "AXHeading",
+                 "title": "Send to print",
+                 "value": "5",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.0.0",
+                   "role": "AXStaticText",
+                   "value": "Send to print"
+                  }
+                 ]
+                },
+                {
+                 "desc": "close",
+                 "path": "0.0.0.0.0.0.0.1",
+                 "role": "AXButton",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.1.0",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "desc": "close",
+                     "path": "0.0.0.0.0.0.0.1.0.0",
+                     "role": "AXImage"
+                    }
+                   ]
+                  }
+                 ]
+                },
+                {
+                 "id": "semi-modal-body",
+                 "path": "0.0.0.0.0.0.0.2",
+                 "role": "AXGroup",
+                 "children": [
+                  {
+                   "desc": "Workshop P2S chevron_down",
+                   "path": "0.0.0.0.0.0.0.2.0",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "desc": "/p2s-U7M6FIGx.png",
+                     "path": "0.0.0.0.0.0.0.2.0.0",
+                     "role": "AXImage"
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.2.0.1",
+                     "role": "AXStaticText",
+                     "value": "Workshop P2S"
+                    },
+                    {
+                     "desc": "chevron_down",
+                     "path": "0.0.0.0.0.0.0.2.0.2",
+                     "role": "AXImage"
+                    }
+                   ]
+                  },
+                  {
+                   "desc": "/bed_pei-BaeEzUdI.png",
+                   "path": "0.0.0.0.0.0.0.2.1",
+                   "role": "AXImage"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.2",
+                   "role": "AXStaticText",
+                   "value": "PEI"
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.3",
+                   "role": "AXButton",
+                   "title": "Refresh Printers",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.3.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.3.0.0",
+                       "role": "AXStaticText",
+                       "value": "Refresh Printers"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.4",
+                   "role": "AXStaticText",
+                   "value": "PLA"
+                  },
+                  {
+                   "desc": "A2 PLA",
+                   "path": "0.0.0.0.0.0.0.2.5",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.5.0",
+                     "role": "AXImage"
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.2.5.1",
+                     "role": "AXStaticText",
+                     "value": "A2"
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.2.5.2",
+                     "role": "AXStaticText",
+                     "value": "PLA"
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.6",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.6.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.6.0.0",
+                       "role": "AXStaticText",
+                       "value": "Print Options"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.7",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.7.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.7.0.0",
+                       "role": "AXStaticText",
+                       "value": "Timelapse"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "class": "semi-radioGroup semi-radioGroup-wrapper semi-radioGroup-buttonRadio",
+                   "path": "0.0.0.0.0.0.0.2.8",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "class": "semi-radio semi-radio-buttonRadioGroup semi-radio-buttonRadioGroup-small",
+                     "path": "0.0.0.0.0.0.0.2.8.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.8.0.0",
+                       "role": "AXRadioButton",
+                       "title": "On",
+                       "value": "0"
+                      },
+                      {
+                       "class": "semi-radio-addon-buttonRadio semi-radio-addon-buttonRadio-small",
+                       "path": "0.0.0.0.0.0.0.2.8.0.1",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.2.8.0.1.0",
+                         "role": "AXStaticText",
+                         "value": "On"
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "class": "semi-radio semi-radio-checked semi-radio-buttonRadioGroup semi-radio-buttonRadioGroup-small",
+                     "path": "0.0.0.0.0.0.0.2.8.1",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.8.1.0",
+                       "role": "AXRadioButton",
+                       "title": "Off",
+                       "value": "1"
+                      },
+                      {
+                       "desc": "radio",
+                       "path": "0.0.0.0.0.0.0.2.8.1.1",
+                       "role": "AXImage"
+                      },
+                      {
+                       "class": "semi-radio-addon-buttonRadio semi-radio-addon-buttonRadio-checked semi-radio-addon-buttonRadio-small",
+                       "path": "0.0.0.0.0.0.0.2.8.1.2",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.2.8.1.2.0",
+                         "role": "AXStaticText",
+                         "value": "Off"
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.9",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.9.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.9.0.0",
+                       "role": "AXStaticText",
+                       "value": "Auto bed leveling"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "class": "semi-radioGroup semi-radioGroup-wrapper semi-radioGroup-buttonRadio",
+                   "path": "0.0.0.0.0.0.0.2.10",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "class": "semi-radio semi-radio-checked semi-radio-buttonRadioGroup semi-radio-buttonRadioGroup-small",
+                     "path": "0.0.0.0.0.0.0.2.10.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.10.0.0",
+                       "role": "AXRadioButton",
+                       "title": "Auto",
+                       "value": "0"
+                      },
+                      {
+                       "desc": "radio",
+                       "path": "0.0.0.0.0.0.0.2.10.0.1",
+                       "role": "AXImage"
+                      },
+                      {
+                       "class": "semi-radio-addon-buttonRadio semi-radio-addon-buttonRadio-checked semi-radio-addon-buttonRadio-small",
+                       "path": "0.0.0.0.0.0.0.2.10.0.2",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.2.10.0.2.0",
+                         "role": "AXStaticText",
+                         "value": "Auto"
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "class": "semi-radio semi-radio-buttonRadioGroup semi-radio-buttonRadioGroup-small",
+                     "path": "0.0.0.0.0.0.0.2.10.1",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.10.1.0",
+                       "role": "AXRadioButton",
+                       "title": "On",
+                       "value": "0"
+                      },
+                      {
+                       "class": "semi-radio-addon-buttonRadio semi-radio-addon-buttonRadio-small",
+                       "path": "0.0.0.0.0.0.0.2.10.1.1",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.2.10.1.1.0",
+                         "role": "AXStaticText",
+                         "value": "On"
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "class": "semi-radio semi-radio-buttonRadioGroup semi-radio-buttonRadioGroup-small",
+                     "path": "0.0.0.0.0.0.0.2.10.2",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.10.2.0",
+                       "role": "AXRadioButton",
+                       "title": "Off",
+                       "value": "0"
+                      },
+                      {
+                       "class": "semi-radio-addon-buttonRadio semi-radio-addon-buttonRadio-small",
+                       "path": "0.0.0.0.0.0.0.2.10.2.1",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.2.10.2.1.0",
+                         "role": "AXStaticText",
+                         "value": "Off"
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.2.11",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.2.11.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.11.0.0",
+                       "role": "AXStaticText",
+                       "value": "Flow dynamic calibration"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "class": "semi-radioGroup semi-radioGroup-wrapper semi-radioGroup-buttonRadio",
+                   "path": "0.0.0.0.0.0.0.2.12",
+                   "role": "AXGroup",
+                   "children": [
+                    {
+                     "class": "semi-radio semi-radio-checked semi-radio-buttonRadioGroup semi-radio-buttonRadioGroup-small",
+                     "path": "0.0.0.0.0.0.0.2.12.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.12.0.0",
+                       "role": "AXRadioButton",
+                       "title": "Auto",
+                       "value": "0"
+                      },
+                      {
+                       "desc": "radio",
+                       "path": "0.0.0.0.0.0.0.2.12.0.1",
+                       "role": "AXImage"
+                      },
+                      {
+                       "class": "semi-radio-addon-buttonRadio semi-radio-addon-buttonRadio-checked semi-radio-addon-buttonRadio-small",
+                       "path": "0.0.0.0.0.0.0.2.12.0.2",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.2.12.0.2.0",
+                         "role": "AXStaticText",
+                         "value": "Auto"
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "class": "semi-radio semi-radio-buttonRadioGroup semi-radio-buttonRadioGroup-small",
+                     "path": "0.0.0.0.0.0.0.2.12.1",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.12.1.0",
+                       "role": "AXRadioButton",
+                       "title": "On",
+                       "value": "0"
+                      },
+                      {
+                       "class": "semi-radio-addon-buttonRadio semi-radio-addon-buttonRadio-small",
+                       "path": "0.0.0.0.0.0.0.2.12.1.1",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.2.12.1.1.0",
+                         "role": "AXStaticText",
+                         "value": "On"
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "class": "semi-radio semi-radio-buttonRadioGroup semi-radio-buttonRadioGroup-small",
+                     "path": "0.0.0.0.0.0.0.2.12.2",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.2.12.2.0",
+                       "role": "AXRadioButton",
+                       "title": "Off",
+                       "value": "0"
+                      },
+                      {
+                       "class": "semi-radio-addon-buttonRadio semi-radio-addon-buttonRadio-small",
+                       "path": "0.0.0.0.0.0.0.2.12.2.1",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.2.12.2.1.0",
+                         "role": "AXStaticText",
+                         "value": "Off"
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                },
+                {
+                 "path": "0.0.0.0.0.0.0.3",
+                 "role": "AXGroup",
+                 "children": [
+                  {
+                   "desc": "cancel",
+                   "path": "0.0.0.0.0.0.0.3.0",
+                   "role": "AXButton",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.3.0.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.3.0.0.0",
+                       "role": "AXStaticText",
+                       "value": "Cancel"
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "desc": "confirm",
+                   "path": "0.0.0.0.0.0.0.3.1",
+                   "role": "AXButton",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.3.1.0",
+                     "role": "AXGroup",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.3.1.0.0",
+                       "role": "AXStaticText",
+                       "value": "Send"
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.1",
+     "role": "AXButton",
+     "subrole": "AXCloseButton"
+    },
+    {
+     "help": "this button also has an action to zoom the window",
+     "path": "0.2",
+     "role": "AXButton",
+     "subrole": "AXFullScreenButton",
+     "children": [
+      {
+       "path": "0.2.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.2.0.0",
+         "role": "AXGroup"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.3",
+     "role": "AXButton",
+     "subrole": "AXMinimizeButton"
+    }
+   ]
+  }
+ ]
+}

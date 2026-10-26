@@ -182,6 +182,10 @@ async function check(h: Hosted): Promise<void> {
 Bun.serve({
   hostname: "127.0.0.1",
   port: routerPort,
+  // Bun drops a request after 10 s by default. A mounted page (the printer's)
+  // can be slower than that while its process is busy, and the person sees
+  // a page that never loads.
+  idleTimeout: 60,
   async fetch(req) {
     const url = new URL(req.url);
     const shelf = serveShelf(req, shelfDir);

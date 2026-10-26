@@ -19,6 +19,44 @@ import type { Approval, Job } from "./store.ts";
 
 export type PlateLook = { verdict: "CLEAR" | "OCCUPIED" | "UNSURE"; frameMs: number; note: string };
 
+/** How a start or cancel reaches the printer. */
+export type SendRoute = "lan" | "bambu_connect";
+export type SendVia = "auto" | SendRoute;
+
+/**
+ * The route for a print command. Bambu's firmware takes start and stop over
+ * the LAN only in Developer Mode (which on the P2S means LAN Only Mode, and no
+ * Bambu Handy); otherwise they must come from Bambu's own signed software,
+ * which is what Bambu Connect is. "auto" prefers the LAN when it is open.
+ */
+export function chooseRoute(
+  via: SendVia,
+  developerMode: boolean | null,
+  connectReady: boolean,
+): { route: SendRoute | null; problem: string } {
+  const noConnect =
+    "Bambu Connect is not installed on the Mac (brew install --cask bambu-connect, then sign in to the Bambu account in it once).";
+  const noDev = "The printer is not in Developer Mode, so it will not take this over the LAN.";
+  if (via === "lan") {
+    return developerMode === false
+      ? { route: null, problem: noDev }
+      : { route: "lan", problem: "" };
+  }
+  if (via === "bambu_connect") {
+    return connectReady
+      ? { route: "bambu_connect", problem: "" }
+      : { route: null, problem: noConnect };
+  }
+  if (developerMode === true) return { route: "lan", problem: "" };
+  if (connectReady) return { route: "bambu_connect", problem: "" };
+  if (developerMode === null) return { route: "lan", problem: "" };
+  return {
+    route: null,
+    problem:
+      "The printer is not in Developer Mode and Bambu Connect is not installed, so nothing can send it a print. Installing Bambu Connect keeps Bambu Handy working; the other way is LAN Only Mode plus Developer Mode on the printer.",
+  };
+}
+
 export type GateInput = {
   now: number;
   callerSession: string;
@@ -36,9 +74,16 @@ export type GateInput = {
   ownLookMs: number | null;
   /** The independent check of a fresh frame. */
   plateLook: PlateLook | null;
+  /** [printer].send_via, and whether Bambu Connect is installed. */
+  sendVia: SendVia;
+  connectReady: boolean;
+  /** The approver's answer to a photo of the plate, when the plate check was unsure. */
+  plateConfirm: { approval: Approval; decision: Decision | null } | null;
 };
 
 const PLATE_LOOK_MAX_AGE_MS = 5 * 60_000;
+/** How long the approver's "the plate is clear" stands; someone could put something on it after. */
+export const PLATE_CONFIRM_MAX_AGE_MS = 15 * 60_000;
 const STATE_MAX_AGE_MS = 90_000;
 
 /** HMS severities that mean the printer should not be asked to print. */
@@ -57,8 +102,67 @@ export function approvedSlots(plan: Plan): Map<number, number> {
   return m;
 }
 
-export function checkStartGate(g: GateInput): { ok: boolean; problems: string[] } {
+/**
+ * Whether the approver has confirmed, from a photo, that the plate is clear
+ * for this print: asked from the print's own conversation after the yes to
+ * print it, with a photo taken after that yes, answered yes by an approver
+ * after the ask, and recently. "none" when nobody was asked.
+ */
+export function plateConfirmation(g: {
+  now: number;
+  job: Job;
+  /** When the approver said yes to the print. */
+  printYesMs: number | null;
+  plateConfirm: GateInput["plateConfirm"];
+  approvers: string[];
+}): { state: "none" | "valid" | "waiting" | "invalid"; problem: string } {
+  const c = g.plateConfirm;
+  if (!c || c.approval.action !== "plate" || c.approval.jobId !== g.job.id)
+    return { state: "none", problem: "" };
+  const a = c.approval;
+  const d = c.decision;
+  if (!["pending", "approved"].includes(a.status)) return { state: "none", problem: "" };
+  if (a.sessionKey !== g.job.originSession)
+    return {
+      state: "invalid",
+      problem: "The plate confirmation was asked from another conversation.",
+    };
+  if (g.printYesMs === null || a.askedMs <= g.printYesMs || (a.frameMs ?? 0) < g.printYesMs)
+    return {
+      state: "invalid",
+      problem:
+        "The plate confirmation must be asked after the yes to this print, with a photo taken after it.",
+    };
+  if (!d)
+    return {
+      state: "waiting",
+      problem: "Waiting for the approver to confirm the plate from the photo.",
+    };
+  if (d.verdict !== "approve")
+    return {
+      state: "invalid",
+      problem: `The approver says the plate is not clear ("${d.text}"). Ask for it to be cleared, then look again.`,
+    };
+  if (!g.approvers.includes(d.by))
+    return { state: "invalid", problem: "The plate confirmation did not come from an approver." };
+  if (d.ms <= a.askedMs)
+    return { state: "invalid", problem: "The plate confirmation came before the ask." };
+  if (g.now - d.ms > PLATE_CONFIRM_MAX_AGE_MS)
+    return {
+      state: "invalid",
+      problem:
+        "The plate confirmation is more than 15 minutes old; take a new photo and ask again.",
+    };
+  return { state: "valid", problem: "" };
+}
+
+export function checkStartGate(g: GateInput): {
+  ok: boolean;
+  problems: string[];
+  route: SendRoute | null;
+} {
   const p: string[] = [];
+  let route: SendRoute | null = null;
   const { job } = g;
 
   if (g.callerSession !== job.originSession) {
@@ -96,11 +200,9 @@ export function checkStartGate(g: GateInput): { ok: boolean; problems: string[] 
     p.push("No current status from the printer, so it cannot be checked. Try again in a minute.");
   } else {
     if (!isIdle(st)) p.push(`The printer is ${st.stateLabel}, not ready for a new print.`);
-    if (st.developerMode === false) {
-      p.push(
-        "The printer is not in Developer Mode, so it will not accept a print from Edmund. The approver can turn it on: printer Settings, Network, LAN Only Mode, then Developer Mode.",
-      );
-    }
+    const r = chooseRoute(g.sendVia, st.developerMode, g.connectReady);
+    route = r.route;
+    if (!r.route) p.push(r.problem);
     const blocking = blockingHms(st.hms);
     if (blocking.length)
       p.push(`The printer is reporting ${blocking.length} serious error(s); clear them first.`);
@@ -135,18 +237,29 @@ export function checkStartGate(g: GateInput): { ok: boolean; problems: string[] 
     p.push("The approval has no filament plan attached. Ask again with print_request_approval.");
   }
 
-  // The plate.
+  // The plate: the independent look says clear, or the approver confirmed it from a photo.
   const after = g.decision?.ms ?? Number.POSITIVE_INFINITY;
   if (g.ownLookMs === null || g.ownLookMs < after) {
     p.push(
       "Look at the plate yourself first: take a printer_camera frame after the yes and pass its frame id.",
     );
   }
-  if (!g.plateLook) p.push("The independent plate check did not run.");
+  const confirm = plateConfirmation({
+    now: g.now,
+    job,
+    printYesMs: g.decision?.ms ?? null,
+    plateConfirm: g.plateConfirm,
+    approvers: g.approvers,
+  });
+  if (confirm.state === "valid") {
+    // The approver looked at the photo and said it is clear; that is the plate check.
+  } else if (confirm.state === "waiting" || confirm.state === "invalid") {
+    p.push(confirm.problem);
+  } else if (!g.plateLook) p.push("The independent plate check did not run.");
   else {
     if (g.plateLook.verdict !== "CLEAR") {
       p.push(
-        `The independent look at the plate says ${g.plateLook.verdict.toLowerCase()}: ${g.plateLook.note || "no detail"}. Ask for the plate to be cleared.`,
+        `The independent look at the plate says ${g.plateLook.verdict.toLowerCase()}: ${g.plateLook.note || "no detail"}. If the plate needs clearing, ask for that. If you think it is clear, send the approver your photo and ask them to confirm: print_request_approval with action "plate" and your frame_id. Their yes counts as the plate check.`,
       );
     }
     if (g.plateLook.frameMs < after || g.now - g.plateLook.frameMs > PLATE_LOOK_MAX_AGE_MS) {
@@ -156,7 +269,7 @@ export function checkStartGate(g: GateInput): { ok: boolean; problems: string[] 
     }
   }
 
-  return { ok: p.length === 0, problems: p };
+  return { ok: p.length === 0, problems: p, route };
 }
 
 /** The same rules for cancel and resume: an approver's fresh yes to that action, from the conversation that asked. */

@@ -44,11 +44,29 @@ describe("what can move the printer, structurally", () => {
     expect(read("src/access.ts")).not.toContain('"print"');
   });
 
+  test("Bambu Connect is driven only by the daemon's runtime", () => {
+    for (const f of sources()) {
+      const drives = /new BambuConnect\(|\.connect\.send\(/.test(read(f));
+      expect([f, drives]).toEqual([f, f === "src/runtime.ts"]);
+    }
+  });
+
   test("the runtime checks the gate before every start and every control", () => {
     const s = read("src/runtime.ts");
-    const start = s.slice(s.indexOf("async startJob("), s.indexOf("private autoWatches("));
-    expect(start.indexOf("checkStartGate")).toBeGreaterThan(-1);
-    expect(start.indexOf("checkStartGate")).toBeLessThan(start.indexOf('"project_file"'));
+    const start = s.slice(s.indexOf("async startJob("), s.indexOf("private async sendOverLan("));
+    const gate = start.indexOf("checkStartGate");
+    expect(gate).toBeGreaterThan(-1);
+    // Both routes are reached from startJob only, after the gate.
+    for (const route of ["this.sendOverLan(", "this.sendThroughConnect("]) {
+      expect(start.indexOf(route)).toBeGreaterThan(gate);
+      expect(s.split(route).length - 1).toBe(1);
+    }
+    const lan = s.slice(
+      s.indexOf("private async sendOverLan("),
+      s.indexOf("private async sendThroughConnect("),
+    );
+    expect(lan).toContain('"project_file"');
+    expect(s.split('"project_file"').length - 1).toBe(1);
     const control = s.slice(s.indexOf("async control("), s.indexOf("/* ── HTTP"));
     expect(control.indexOf("checkControlGate")).toBeLessThan(control.indexOf(".command("));
   });
@@ -195,5 +213,8 @@ function configPrinter() {
     approval_ttl_hours: 12,
     auto_progress: [25, 50, 75],
     camera_fps: 1,
+    send_via: "auto" as const,
+    // Never the real app on the machine running the tests.
+    bambu_connect_app: "/nonexistent/Bambu Connect.app",
   };
 }

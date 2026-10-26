@@ -31,17 +31,18 @@ Verified on the household printer 2026-10-25 unless marked otherwise.
 | Capability | Needs |
 |---|---|
 | Status, AMS, errors, light, timelapses, model files on the printer | Works now (LAN access code) |
-| Camera pictures and the live page's video | **LAN Only Liveview** on in the printer's network settings |
-| Start, cancel, resume a print | **Developer Mode**, which the P2S offers only after **LAN Only Mode** is on |
+| Camera pictures and the live page's video | **LAN Only Liveview** on in the printer's network settings. On since 2026-10-25; it does not need LAN Only Mode, so Bambu Handy keeps working |
+| Start a print | **Bambu Connect** on the Mac, signed in to the Bambu account (the printer stays in cloud mode), or **Developer Mode** (LAN Only Mode, which turns Handy off) |
+| Cancel, resume | Developer Mode for now; without it, ask the approver to stop it from Bambu Handy or the printer |
 | MakerWorld downloads | The approver's Bambu sign-in (`makerworld_login`), lasts about a year |
 
-Developer Mode exists because Bambu's 2025 firmware requires signed commands
-from anything that is not Bambu's own app; Developer Mode is Bambu's
-supported way to let local software control the printer. LAN Only Mode turns
-off Bambu Handy (the phone app) and cloud printing. That trade is the
-owner's call; never pressure for it. When it is off, say plainly that you
-can prepare everything and the approver can start it from the printer or
-Bambu Studio.
+Bambu's 2025 firmware takes start and stop only from Bambu's own signed
+software unless Developer Mode is on. Bambu Connect is Bambu's own app for
+other software to send prints through, so the harness drives it (after the
+same gate as every start) and the printer stays in normal cloud mode with
+Handy, phone notifications and cloud printing intact. `printer_status` says
+which route starts take right now. Developer Mode is the owner's call; never
+pressure for it.
 
 ## Where things live
 

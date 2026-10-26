@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Decision } from "../src/approval.ts";
 import { planFilaments } from "../src/filament.ts";
-import { type GateInput, checkControlGate, checkStartGate } from "../src/gate.ts";
+import { type GateInput, checkControlGate, checkStartGate, chooseRoute } from "../src/gate.ts";
 import { type PrinterState, normalize } from "../src/report.ts";
 import { type Approval, type Job, PrinterStore } from "../src/store.ts";
 
@@ -92,6 +92,7 @@ const approval: Approval = {
   trays: "",
   plan,
   target: "",
+  frameMs: null,
 };
 
 const decision: Decision = {
@@ -115,11 +116,14 @@ const good = (): GateInput => ({
   plan,
   ownLookMs: now - 60_000,
   plateLook: { verdict: "CLEAR", frameMs: now - 30_000, note: "empty textured plate" },
+  sendVia: "auto",
+  connectReady: false,
+  plateConfirm: null,
 });
 
 describe("starting a print", () => {
   test("everything right: it may start", () => {
-    expect(checkStartGate(good())).toEqual({ ok: true, problems: [] });
+    expect(checkStartGate(good())).toEqual({ ok: true, problems: [], route: "lan" });
   });
 
   const breaks: Array<[string, (g: GateInput) => void, RegExp]> = [
@@ -215,11 +219,27 @@ describe("starting a print", () => {
       /not ready/,
     ],
     [
-      "no Developer Mode",
+      "no Developer Mode and no Bambu Connect",
       (g) => {
         g.state!.developerMode = false;
       },
-      /Developer Mode/,
+      /not in Developer Mode and Bambu Connect is not installed/,
+    ],
+    [
+      "LAN forced without Developer Mode, though Bambu Connect is there",
+      (g) => {
+        g.state!.developerMode = false;
+        g.sendVia = "lan";
+        g.connectReady = true;
+      },
+      /not in Developer Mode/,
+    ],
+    [
+      "Bambu Connect forced but not installed",
+      (g) => {
+        g.sendVia = "bambu_connect";
+      },
+      /Bambu Connect is not installed/,
     ],
     [
       "a serious HMS error",
@@ -312,6 +332,145 @@ describe("starting a print", () => {
       expect(r.problems.join(" | ")).toMatch(why);
     });
   }
+
+  describe("the approver confirming the plate from a photo", () => {
+    // The print's yes was 5 minutes ago; the photo and the ask came after it.
+    const unsure = (): GateInput => {
+      const g = good();
+      g.plateLook = { verdict: "UNSURE", frameMs: now - 30_000, note: "faint marks" };
+      g.plateConfirm = {
+        approval: {
+          ...approval,
+          id: 2,
+          action: "plate",
+          status: "pending",
+          askedMs: now - 120_000,
+          frameMs: now - 150_000,
+          plan: null,
+        },
+        decision: {
+          verdict: "approve",
+          by: APPROVER,
+          text: "yes it's clear",
+          ms: now - 60_000,
+          guid: "p",
+        },
+      };
+      return g;
+    };
+
+    test("an unsure look plus the approver's yes: it may start", () => {
+      expect(checkStartGate(unsure()).ok).toBe(true);
+    });
+
+    test("the approver's yes outranks an occupied look: they looked and said it is clear", () => {
+      const g = unsure();
+      g.plateLook = { verdict: "OCCUPIED", frameMs: now - 30_000, note: "a strand at the edge" };
+      expect(checkStartGate(g).ok).toBe(true);
+    });
+
+    test("with no confirmation, an unsure look says how to ask for one", () => {
+      const g = unsure();
+      g.plateConfirm = null;
+      expect(checkStartGate(g).problems.join(" ")).toMatch(/action "plate"/);
+    });
+
+    const breaks: Array<[string, (g: GateInput) => void, RegExp]> = [
+      [
+        "no answer yet",
+        (g) => {
+          g.plateConfirm!.decision = null;
+        },
+        /Waiting for the approver/,
+      ],
+      [
+        "the approver said it is not clear",
+        (g) => {
+          g.plateConfirm!.decision!.verdict = "decline";
+        },
+        /not clear/,
+      ],
+      [
+        "the answer is older than 15 minutes",
+        (g) => {
+          g.plateConfirm!.decision!.ms = now - 16 * 60_000;
+          g.plateConfirm!.approval.askedMs = now - 17 * 60_000;
+          g.plateConfirm!.approval.frameMs = now - 17 * 60_000;
+          g.decision!.ms = now - 20 * 60_000;
+          g.ownLookMs = now - 18 * 60_000;
+        },
+        /more than 15 minutes/,
+      ],
+      [
+        "asked before the yes to the print",
+        (g) => {
+          g.plateConfirm!.approval.askedMs = now - 400_000;
+        },
+        /after the yes to this print/,
+      ],
+      [
+        "a photo from before the yes",
+        (g) => {
+          g.plateConfirm!.approval.frameMs = now - 400_000;
+        },
+        /after the yes to this print/,
+      ],
+      [
+        "answered by someone who is not an approver",
+        (g) => {
+          g.plateConfirm!.decision!.by = "+15555550199";
+        },
+        /did not come from an approver/,
+      ],
+      [
+        "asked from another conversation",
+        (g) => {
+          g.plateConfirm!.approval.sessionKey = "imessage:dm:+15555550199";
+        },
+        /another conversation/,
+      ],
+      [
+        "an answer from before the ask",
+        (g) => {
+          g.plateConfirm!.decision!.ms = now - 130_000;
+        },
+        /before the ask/,
+      ],
+    ];
+    for (const [name, breakIt, why] of breaks) {
+      test(`refuses: ${name}`, () => {
+        const g = unsure();
+        breakIt(g);
+        const r = checkStartGate(g);
+        expect(r.ok).toBe(false);
+        expect(r.problems.join(" | ")).toMatch(why);
+      });
+    }
+
+    test("a confirmation for another job does not count", () => {
+      const g = unsure();
+      g.plateConfirm!.approval.jobId = 99;
+      expect(checkStartGate(g).problems.join(" ")).toMatch(
+        /independent look at the plate says unsure/,
+      );
+    });
+  });
+
+  test("without Developer Mode, Bambu Connect carries the print", () => {
+    const g = good();
+    g.state!.developerMode = false;
+    g.connectReady = true;
+    expect(checkStartGate(g)).toEqual({ ok: true, problems: [], route: "bambu_connect" });
+  });
+
+  test("the route: the LAN when it is open, Bambu Connect when it is not", () => {
+    expect(chooseRoute("auto", true, true).route).toBe("lan");
+    expect(chooseRoute("auto", false, true).route).toBe("bambu_connect");
+    expect(chooseRoute("auto", null, false).route).toBe("lan");
+    expect(chooseRoute("auto", false, false).route).toBeNull();
+    expect(chooseRoute("bambu_connect", true, true).route).toBe("bambu_connect");
+    expect(chooseRoute("lan", false, true).route).toBeNull();
+  });
 
   test("a substitute the person accepted passes the color check", () => {
     const g = good();

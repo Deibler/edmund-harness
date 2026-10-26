@@ -47,6 +47,11 @@ export function runtimeInfoPath(dataDir: string): string {
   return join(printerDir(dataDir), "runtime.json");
 }
 
+/** The pages the camera host may show video for; written by the runtime. */
+export function liveTokensPath(dataDir: string): string {
+  return join(printerDir(dataDir), "live-tokens.json");
+}
+
 export function readRuntimeInfo(dataDir: string): RuntimeInfo | null {
   const p = runtimeInfoPath(dataDir);
   if (!existsSync(p)) return null;

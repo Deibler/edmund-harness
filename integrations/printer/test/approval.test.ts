@@ -99,6 +99,36 @@ describe("what counts as a yes", () => {
     expect(classifyReply("cancel it", "start")).toBe("decline");
   });
 
+  test("for a plate check, 'clear' is the yes and anything on the plate is the no", () => {
+    for (const y of [
+      "yes",
+      "clear",
+      "yes it's clear",
+      "all clear",
+      "looks clear",
+      "it's empty",
+      "yep all good",
+      "👍",
+    ]) {
+      expect([y, classifyReply(y, "plate")]).toEqual([y, "approve"]);
+    }
+    for (const n of [
+      "no",
+      "not clear",
+      "it isn't clear",
+      "there's a strand on it",
+      "still has the benchy",
+      "something's on it",
+    ]) {
+      expect([n, classifyReply(n, "plate")]).toEqual([n, "decline"]);
+    }
+    for (const h of ["is that a strand?", "clear it first", "clear once I wipe it"]) {
+      expect([h, classifyReply(h, "plate")]).toEqual([h, null]);
+    }
+    // "clear" means nothing to a print ask.
+    expect(classifyReply("clear", "start")).toBeNull();
+  });
+
   test("tapback targets lose their part prefix", () => {
     expect(tapbackTarget("p:0/ABC-1")).toBe("ABC-1");
     expect(tapbackTarget("bp:ABC-2")).toBe("ABC-2");

@@ -108,6 +108,21 @@ export async function verifyLoginCode(
   return cloud;
 }
 
+/**
+ * The printer's name on the Bambu account, looked up by serial. Bambu Connect
+ * shows printers only by this name, so it is how a send is checked to be going
+ * to this printer.
+ */
+export async function boundPrinterName(dataDir: string, serial: string): Promise<string> {
+  const r = await call("/v1/iot-service/api/user/bind", { token: await token(dataDir) });
+  if (r.status !== 200) throw new Error(`Bambu did not list the account's printers (${r.status}).`);
+  const devices = (r.json.devices ?? []) as Array<{ dev_id?: string; name?: string }>;
+  const mine = devices.find((d) => d.dev_id === serial);
+  if (!mine?.name)
+    throw new Error(`The printer ${serial} is not bound to the signed-in Bambu account.`);
+  return mine.name;
+}
+
 /** A usable token, refreshed when it is within a month of expiring. */
 export async function token(dataDir: string): Promise<string> {
   const c = readCloud(dataDir);

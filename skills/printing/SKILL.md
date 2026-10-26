@@ -23,7 +23,7 @@ and tell people what is happening in plain words.
 | More views: seams, layers, supports, overhangs, sides | `print_preview` |
 | Find the exact setting key to change | `print_settings` |
 | Make it a job, record the design OK, plan filament, swap in a re-slice | `print_job` |
-| Ask the approver | `print_request_approval` |
+| Ask the approver (to print, cancel, resume, or to confirm the plate from your photo) | `print_request_approval` |
 | Start it | `print_start` |
 | Cancel / resume (each needs its own yes), light | `print_control` |
 | Find, show, download models | `makerworld_search`, `makerworld_model`, `makerworld_download` |
@@ -37,8 +37,9 @@ version. The code enforces it: `print_start` re-reads Messages for the
 approver's reply to the ask, checks the yes is newer than the ask and not
 stale, checks the conversation calling is the one that asked, checks the
 colors loaded are the ones in the approved plan, needs a camera frame you
-took after the yes, and runs its own independent look at the plate. If
-anything fails it tells you every reason; fix them, do not argue with them.
+took after the yes, and runs its own independent look at the plate (or takes
+the approver's yes to your photo of it instead). If anything fails it tells
+you every reason; fix them, do not argue with them.
 
 - Cancel and resume each need their own yes (`print_request_approval`
   with action cancel or resume). There is no pause, from any path.
@@ -78,6 +79,15 @@ anything fails it tells you every reason; fix them, do not argue with them.
 8. **After the yes**: `printer_camera`, look at the plate with your own eyes
    (anything on it, even a purge blob, is a no), then `print_start` with that
    `frame_id`. It returns the live page link: send it to the person who asked.
+   - If its independent plate check says unsure (faint marks, glare, the
+     front edge out of frame) and you think the plate is fine, do not stall
+     and do not argue with it: `print_request_approval` with action `plate`,
+     your `frame_id`, and what you see in your own words ("Can you confirm
+     the plate is clear? I think I see an old outline at the front, but it
+     looks fine to print."). It sends the approver the photo, in the group or
+     their DM like any ask. Their yes counts as the plate check for 15
+     minutes; then call `print_start` again.
+   - If you can see something on the plate, ask for it to be cleared instead.
 9. **While it prints** you are woken at 25/50/75% (long prints), at the end
    with a photo, on errors and on pauses. Answer like a friend watching the
    printer: short, useful, no noise. A progress note nobody needs is noise.

@@ -1,0 +1,327 @@
+{
+ "path": "",
+ "role": "AXApplication",
+ "title": "Bambu Connect",
+ "children": [
+  {
+   "path": "0",
+   "role": "AXWindow",
+   "subrole": "AXStandardWindow",
+   "title": "Bambu Connect (Beta)",
+   "children": [
+    {
+     "path": "0.0",
+     "role": "AXGroup",
+     "children": [
+      {
+       "path": "0.0.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.0.0.0",
+         "role": "AXGroup",
+         "children": [
+          {
+           "path": "0.0.0.0.0",
+           "role": "AXGroup",
+           "children": [
+            {
+             "path": "0.0.0.0.0.0",
+             "role": "AXWebArea",
+             "title": "Bambu Connect (Beta)",
+             "children": [
+              {
+               "id": "root",
+               "path": "0.0.0.0.0.0.0",
+               "role": "AXGroup",
+               "children": [
+                {
+                 "path": "0.0.0.0.0.0.0.0",
+                 "role": "AXGroup",
+                 "children": [
+                  {
+                   "path": "0.0.0.0.0.0.0.0.0",
+                   "role": "AXGroup",
+                   "subrole": "AXSectionHeader",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.0.0.0",
+                     "role": "AXGroup",
+                     "subrole": "AXLandmarkNavigation",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.0.0.0.0",
+                       "role": "AXStaticText",
+                       "value": "Bambu Connect"
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.0.0.1",
+                       "role": "AXStaticText",
+                       "value": "Beta"
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.0.0.2",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.0.0.2.0",
+                         "role": "AXGroup",
+                         "children": [
+                          {
+                           "path": "0.0.0.0.0.0.0.0.0.0.2.0.0",
+                           "role": "AXGroup",
+                           "children": [
+                            {
+                             "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0",
+                             "role": "AXMenu",
+                             "children": [
+                              {
+                               "desc": "Print",
+                               "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0.0",
+                               "role": "AXLink",
+                               "children": [
+                                {
+                                 "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0.0.0",
+                                 "role": "AXMenuItem",
+                                 "title": "Print"
+                                }
+                               ]
+                              },
+                              {
+                               "class": "active",
+                               "desc": "Devices",
+                               "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0.1",
+                               "role": "AXLink",
+                               "children": [
+                                {
+                                 "path": "0.0.0.0.0.0.0.0.0.0.2.0.0.0.1.0",
+                                 "role": "AXMenuItem",
+                                 "title": "Devices"
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.0.0.3",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.0.0.3.0",
+                         "role": "AXPopUpButton",
+                         "title": "user_0000 user_0000 chevron_down",
+                         "children": [
+                          {
+                           "path": "0.0.0.0.0.0.0.0.0.0.3.0.0",
+                           "role": "AXGroup",
+                           "children": [
+                            {
+                             "desc": "user_0000",
+                             "path": "0.0.0.0.0.0.0.0.0.0.3.0.0.0",
+                             "role": "AXImage"
+                            },
+                            {
+                             "path": "0.0.0.0.0.0.0.0.0.0.3.0.0.1",
+                             "role": "AXStaticText",
+                             "value": "user_0000"
+                            },
+                            {
+                             "desc": "chevron_down",
+                             "path": "0.0.0.0.0.0.0.0.0.0.3.0.0.2",
+                             "role": "AXImage"
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  },
+                  {
+                   "path": "0.0.0.0.0.0.0.0.1",
+                   "role": "AXGroup",
+                   "subrole": "AXLandmarkMain",
+                   "children": [
+                    {
+                     "path": "0.0.0.0.0.0.0.0.1.0",
+                     "role": "AXGroup",
+                     "subrole": "AXSectionHeader",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.0.0",
+                       "role": "AXStaticText",
+                       "value": "My Printers"
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.0.1",
+                       "role": "AXButton",
+                       "title": "refresh",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.0.1.0",
+                         "role": "AXGroup",
+                         "children": [
+                          {
+                           "desc": "refresh",
+                           "path": "0.0.0.0.0.0.0.0.1.0.1.0.0",
+                           "role": "AXImage"
+                          }
+                         ]
+                        }
+                       ]
+                      },
+                      {
+                       "desc": "selected",
+                       "path": "0.0.0.0.0.0.0.0.1.0.2",
+                       "role": "AXComboBox",
+                       "value": "Device Name ↑",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.0.2.0",
+                         "role": "AXStaticText",
+                         "value": "Device Name ↑"
+                        },
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.0.2.1",
+                         "role": "AXImage"
+                        }
+                       ]
+                      },
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.0.3",
+                       "role": "AXPopUpButton",
+                       "title": "more",
+                       "children": [
+                        {
+                         "path": "0.0.0.0.0.0.0.0.1.0.3.0",
+                         "role": "AXGroup",
+                         "children": [
+                          {
+                           "desc": "more",
+                           "path": "0.0.0.0.0.0.0.0.1.0.3.0.0",
+                           "role": "AXImage"
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    },
+                    {
+                     "path": "0.0.0.0.0.0.0.0.1.1",
+                     "role": "AXList",
+                     "subrole": "AXContentList",
+                     "children": [
+                      {
+                       "path": "0.0.0.0.0.0.0.0.1.1.0",
+                       "role": "AXGroup",
+                       "children": [
+                        {
+                         "desc": "Workshop P2S Bed: 23°C Idle",
+                         "path": "0.0.0.0.0.0.0.0.1.1.0.0",
+                         "role": "AXLink",
+                         "children": [
+                          {
+                           "desc": "To get missing image descriptions, open the context menu.",
+                           "path": "0.0.0.0.0.0.0.0.1.1.0.0.0",
+                           "role": "AXImage"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.0.0.1",
+                           "role": "AXGroup",
+                           "children": [
+                            {
+                             "path": "0.0.0.0.0.0.0.0.1.1.0.0.1.0",
+                             "role": "AXStaticText",
+                             "value": "Workshop P2S"
+                            }
+                           ]
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.0.0.2",
+                           "role": "AXStaticText",
+                           "value": "Bed"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.0.0.3",
+                           "role": "AXStaticText",
+                           "value": ": "
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.0.0.4",
+                           "role": "AXStaticText",
+                           "value": "23"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.0.0.5",
+                           "role": "AXStaticText",
+                           "value": "°C"
+                          },
+                          {
+                           "path": "0.0.0.0.0.0.0.0.1.1.0.0.6",
+                           "role": "AXStaticText",
+                           "value": "Idle"
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.1",
+     "role": "AXButton",
+     "subrole": "AXCloseButton"
+    },
+    {
+     "help": "this button also has an action to zoom the window",
+     "path": "0.2",
+     "role": "AXButton",
+     "subrole": "AXFullScreenButton",
+     "children": [
+      {
+       "path": "0.2.0",
+       "role": "AXGroup",
+       "children": [
+        {
+         "path": "0.2.0.0",
+         "role": "AXGroup"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "path": "0.3",
+     "role": "AXButton",
+     "subrole": "AXMinimizeButton"
+    }
+   ]
+  }
+ ]
+}

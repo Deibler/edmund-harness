@@ -15,11 +15,12 @@ import { shelveFile } from "../../src/shelf/shelf.ts";
 import { assertPathSafe } from "../../src/util/path-safety.ts";
 import { PLATES, isConfigured, printerConfig } from "./config.ts";
 import { PrinterAccess } from "./src/access.ts";
-import { findAskGuid } from "./src/approval.ts";
+import { findAskGuid, findDecision } from "./src/approval.ts";
 import { colorName } from "./src/color.ts";
 import { CtrlSession } from "./src/ctrl.ts";
 import { describeJob, describePlan, describeStatus, describeWatch } from "./src/describe.ts";
 import { type Need, describeNeed, planFilaments, trayFingerprint } from "./src/filament.ts";
+import { chooseRoute } from "./src/gate.ts";
 import { describeToolpaths, parseGcode } from "./src/gcode.ts";
 import { describeError, loadErrorDb, lookupCode, wikiLink } from "./src/hms.ts";
 import {
@@ -35,7 +36,7 @@ import {
 } from "./src/makerworld.ts";
 import { VIEWS, legend, render } from "./src/preview.ts";
 import { copyIntoJobDir } from "./src/runtime.ts";
-import { approverName, approvers, pageUrl } from "./src/settings.ts";
+import { approverName, approvers, framesDir, pageUrl } from "./src/settings.ts";
 import { type SliceResult, readSidecar, referenceConfig, safeName, slice } from "./src/slicer.ts";
 import { type Job, PrinterStore, type WatchKind } from "./src/store.ts";
 import { bedLabelFor, printablePlate, readSliced, slicedBedType, zipEntry } from "./src/threemf.ts";
@@ -185,16 +186,25 @@ const JobInput = z.object({
 });
 
 const ApprovalInput = z.object({
-  action: z.enum(["start", "cancel", "resume"]),
+  action: z
+    .enum(["start", "cancel", "resume", "plate"])
+    .describe(
+      "start, cancel or resume a print; plate: after the yes to a print, when print_start's plate check is unsure, send the approver your photo of the plate to confirm it is clear.",
+    ),
   job_id: z
     .number()
     .int()
     .optional()
-    .describe("start: the job. cancel/resume: the job if it is one of Edmund's."),
+    .describe("start and plate: the job. cancel/resume: the job if it is one of Edmund's."),
+  frame_id: z
+    .number()
+    .int()
+    .optional()
+    .describe("plate: the printer_camera frame_id of the photo to send, taken after the yes."),
   message: z
     .string()
     .describe(
-      'Your ask in your own voice, e.g. "Hey Alex, Sam wants to print a dragon. Can you put red PLA in slot 4?" The facts and how to answer are added after it.',
+      'Your ask in your own voice, e.g. "Hey Alex, Sam wants to print a dragon. Can you put red PLA in slot 4?" For a plate check, say what you see: "Can you confirm the plate is clear? I think I see a faint line at the front, but it looks fine to print." The facts and how to answer are added after it.',
     ),
 });
 
@@ -263,6 +273,11 @@ export function printerTools(ctx: ToolContext): ToolDef[] {
             name: cfg.name,
             via: snap.via,
             modules: snap.modules,
+            route: chooseRoute(
+              cfg.send_via,
+              snap.state.developerMode,
+              existsSync(cfg.bambu_connect_app),
+            ),
           });
           const extra = withStore((s) => {
             const jobs = s.jobs({ open: true, limit: 5 });
@@ -713,7 +728,7 @@ export function printerTools(ctx: ToolContext): ToolDef[] {
     },
     {
       name: "print_request_approval",
-      description: `Ask ${approver} to approve a print (or a cancel or resume). Nothing starts without their yes. It goes into this group if they are in it, otherwise to their DM, with the job's facts and the swaps it needs added after your words; the reply is read from Messages itself and you are woken when it comes. Needs the requester's design OK recorded first (print_job update design_ok).`,
+      description: `Ask ${approver} to approve a print (or a cancel or resume). Nothing starts without their yes. It goes into this group if they are in it, otherwise to their DM, with the job's facts and the swaps it needs added after your words; the reply is read from Messages itself and you are woken when it comes. Needs the requester's design OK recorded first (print_job update design_ok). After the yes, if print_start's plate check is unsure, use action "plate" with your printer_camera frame_id to send them the photo and ask them to confirm the plate is clear; their yes counts as the plate check for 15 minutes.`,
       inputSchema: ApprovalInput,
       handler: async (args) => {
         if (!configured) return notReady();
@@ -729,7 +744,33 @@ export function printerTools(ctx: ToolContext): ToolDef[] {
         let facts = "";
         let plan = null;
         let target = "";
-        if (args.action === "start") {
+        let attachments: string[] = [];
+        let frameMs: number | null = null;
+        if (args.action === "plate") {
+          if (!job) return text("Which job? The plate check is for a print job.", true);
+          if (job.originSession !== ctx.sessionKey)
+            return text("Ask from the conversation the print belongs to.", true);
+          const startAsk = withStore((s) => s.liveApproval(job.id, "start"));
+          const yes = startAsk ? findDecision(ctx.chatDb, startAsk, approverList) : null;
+          if (!startAsk || yes?.verdict !== "approve")
+            return text(
+              `${approver} has not said yes to this print yet; the plate check comes after that yes.`,
+              true,
+            );
+          if (!args.frame_id)
+            return text("Pass the frame_id of your printer_camera photo of the plate.", true);
+          const photo = join(framesDir(ctx.dataDir), `${args.frame_id}.jpg`);
+          if (!existsSync(photo))
+            return text(`No frame ${args.frame_id}; take one with printer_camera.`, true);
+          if (args.frame_id < yes.ms)
+            return text(
+              "That photo is from before the yes; take a new one with printer_camera.",
+              true,
+            );
+          attachments = [photo];
+          frameMs = args.frame_id;
+          facts = `The plate for ${job.title}, just now. Reply yes if it is clear, or no.`;
+        } else if (args.action === "start") {
           if (!job) return text("Which job? Create one with print_job first.", true);
           if (job.originSession !== ctx.sessionKey)
             return text("Ask from the conversation the print belongs to.", true);
@@ -784,7 +825,7 @@ export function printerTools(ctx: ToolContext): ToolDef[] {
         }
         const body = `${args.message.trim()}\n\n${facts}`;
         const askedMs = Date.now();
-        const sent = await sendMessage({ to, isGroup, text: body, chatGuid });
+        const sent = await sendMessage({ to, isGroup, text: body, chatGuid, attachments });
         if (!sent.ok) return text(`Could not send the ask: ${sent.error}`, true);
         const ownChat = ctx.chatGuids.includes(chatGuid);
         if (ownChat) recordToolSend(ctx, body, chatGuid);
@@ -799,6 +840,7 @@ export function printerTools(ctx: ToolContext): ToolDef[] {
             trays: st ? trayFingerprint(allTrays(st.state)) : "",
             plan,
             target,
+            frameMs,
           });
           if (job && args.action === "start") s.updateJob(job.id, { status: "awaiting_approval" });
           s.log(
@@ -818,6 +860,10 @@ export function printerTools(ctx: ToolContext): ToolDef[] {
           }
         }
         const where = isGroup ? "in this group" : ownChat ? "here" : `in ${approver}'s DM`;
+        if (args.action === "plate")
+          return text(
+            `Sent ${approver} the photo ${where}. Do not repeat it.${ownChat ? " It is already in this chat." : ""} When they say it is clear you will be woken; then call print_start with job_id ${job?.id} and frame_id ${frameMs}. Their yes stands for 15 minutes.`,
+          );
         return text(
           `Asked ${where}. Do not repeat the ask.${ownChat ? " It is already in this chat, so do not send it again in your reply." : ` Tell ${job?.requester || "them"} you have asked ${approver} if useful.`} You will be woken when ${approver} answers${plan && !plan.ok ? "; meanwhile a filament wake-up (printer_watch kind filament) will tell you when the swap is done" : ""}.`,
         );
@@ -825,7 +871,7 @@ export function printerTools(ctx: ToolContext): ToolDef[] {
     },
     {
       name: "print_start",
-      description: `Start an approved print job. Only works from the conversation that asked for it, after ${approver}'s yes, with the approved filament loaded, and after you looked at the plate (frame_id from printer_camera taken after the yes); it then runs its own independent check that the plate is empty. Returns the live page link to send the person who asked.`,
+      description: `Start an approved print job. Only works from the conversation that asked for it, after ${approver}'s yes, with the approved filament loaded, and after you looked at the plate (frame_id from printer_camera taken after the yes); it then runs its own independent check that the plate is empty, unless ${approver} has just confirmed it from your photo (print_request_approval action "plate"). Returns the live page link to send the person who asked.`,
       inputSchema: z.object({
         job_id: z.number().int(),
         frame_id: z
