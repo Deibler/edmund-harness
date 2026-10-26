@@ -61,7 +61,15 @@ export async function startMirrorRuntime(
   // needs the orchestrator's handlers. Wire via a late-bound reference.
   let orchestrator: InstanceType<typeof MirrorOrchestrator> | null = null;
   const bridge = new MirrorBridge(config, store, {
-    onWake: () => orchestrator?.onWake(),
+    onWake: () => {
+      // Start loading the speech models while the person is still talking;
+      // they unload again after a quiet spell. Not awaited: the turn already
+      // copes with the sidecar not being ready yet.
+      void import("./src/voice.ts").then(({ warmLocalSpeech }) =>
+        warmLocalSpeech(config).catch(() => {}),
+      );
+      orchestrator?.onWake();
+    },
     onUtterance: (wav, eventId) => void orchestrator?.onUtterance(wav, eventId),
     onAudioDone: (err, requestId, detail) => orchestrator?.onAudioDone(err, requestId, detail),
     onListenTimeout: () => orchestrator?.onListenTimeout(),
@@ -113,13 +121,6 @@ export async function startMirrorRuntime(
   log.info("mirror", "bridge starting", {
     endpoint: `ws://${mirrorConfig(config).host}:${mirrorConfig(config).port}`,
   });
-
-  // Load the speech models now rather than on the first thing anyone says.
-  // Deliberately not awaited: boot should not block on it, and every caller of
-  // the sidecar already handles it not being ready yet.
-  void import("./src/voice.ts").then(({ warmLocalSpeech }) =>
-    warmLocalSpeech(config).catch(() => {}),
-  );
 
   return {
     stop: async () => {

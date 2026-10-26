@@ -17,9 +17,10 @@ import { mirrorConfig } from "../config.ts";
  * (ARM dequantization overhead) and CoreML fragmented the graph into 109
  * partitions for no gain, so fp32-on-CPU is deliberate, not a default.
  *
- * The sidecar owns a ~325 MB graph and takes ~0.4s to load, so it is started
- * once and kept resident. Everything here is failure-tolerant by construction:
- * every path that cannot produce audio promptly returns null, and the caller
+ * The sidecar owns a ~325 MB graph and takes ~0.4s to load. It is started on
+ * first use and exits after IDLE_UNLOAD_MS without a request. Everything here
+ * is failure-tolerant by construction: every path that cannot produce audio
+ * promptly returns null, and the caller
  * falls back to OpenRouter. A dead sidecar degrades the mirror's latency, never
  * its ability to speak.
  */
@@ -38,6 +39,13 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  * up using anyway.
  */
 const MAX_POST_BOOT_CRASHES = 5;
+/**
+ * Quiet time after which the sidecar exits and gives its memory back. Kokoro
+ * plus Whisper hold about 880 MB (measured 2026-10-25) and the mirror can go
+ * weeks without speaking, so they load on use (a wake starts the load while
+ * the person is still talking) instead of staying resident.
+ */
+const IDLE_UNLOAD_MS = 15 * 60_000;
 
 type PendingRequest = {
   resolve: (value: KokoroAudio | null) => void;
@@ -75,8 +83,12 @@ export class SpeechSidecar {
   private servedSinceSpawn = 0;
   private consecutiveFailures = 0;
   private postBootCrashes = 0;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(config: Config) {
+  constructor(
+    config: Config,
+    private readonly idleUnloadMs: number = IDLE_UNLOAD_MS,
+  ) {
     const mirror = mirrorConfig(config);
     this.pythonBin = expandHome(mirror.kokoro_python || defaultPython());
     this.modelPath = expandHome(mirror.kokoro_model || defaultModel());
@@ -209,7 +221,37 @@ export class SpeechSidecar {
 
   stop(): void {
     this.stopped = true;
+    this.clearIdleUnload();
     this.teardown("shutting down");
+  }
+
+  /** True while the models are loaded and ready. */
+  resident(): boolean {
+    return this.ready && this.proc !== null;
+  }
+
+  /** Measured from the last finished request, so a long exchange is never cut off. */
+  private armIdleUnload(): void {
+    this.clearIdleUnload();
+    const timer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.pending.size + this.pendingText.size > 0 || this.booting) {
+        this.armIdleUnload();
+        return;
+      }
+      if (!this.proc) return;
+      console.log(
+        `[mirror] speech models unloaded after ${Math.round(this.idleUnloadMs / 60_000)} min idle`,
+      );
+      this.teardown("idle");
+    }, this.idleUnloadMs);
+    timer.unref?.();
+    this.idleTimer = timer;
+  }
+
+  private clearIdleUnload(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
   }
 
   private async ensureRunning(): Promise<boolean> {
@@ -265,6 +307,7 @@ export class SpeechSidecar {
         if (ok) {
           this.ready = true;
           this.consecutiveFailures = 0;
+          this.armIdleUnload();
         } else {
           this.consecutiveFailures += 1;
           if (reason) console.error(`[mirror] kokoro boot failed: ${reason}`);
@@ -407,6 +450,7 @@ export class SpeechSidecar {
     clearTimeout(pending.timer);
     this.pending.delete(id);
     pending.resolve(value);
+    if (this.proc) this.armIdleUnload();
   }
 
   private settleText(id: string, value: string | null): void {
@@ -415,6 +459,7 @@ export class SpeechSidecar {
     clearTimeout(pending.timer);
     this.pendingText.delete(id);
     pending.resolve(value);
+    if (this.proc) this.armIdleUnload();
   }
 
   private failAllPending(reason: string): void {
