@@ -106,9 +106,9 @@ function speechSidecar(config: Config): SpeechSidecar | null {
 }
 
 /**
- * Boot local speech before anyone speaks. Called once at daemon start so the
- * model loads land on idle time instead of the first utterance. No-op when
- * local speech is disabled or unprovisioned.
+ * Start local speech ahead of the utterance. Called on a wake, so the model
+ * loads overlap with the person speaking. No-op when local speech is disabled,
+ * unprovisioned or already loaded.
  */
 export async function warmLocalSpeech(config: Config): Promise<void> {
   await speechSidecar(config)?.warmup();

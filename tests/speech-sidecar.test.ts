@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SpeechSidecar } from "../integrations/mirror/src/speech.ts";
 import type { Config } from "../src/config/config.ts";
 
@@ -154,5 +156,39 @@ describe.if(runLiveSynthesis)("SpeechSidecar synthesis", () => {
 describe.if(!runLiveSynthesis)("SpeechSidecar synthesis", () => {
   test("skipped — set RUN_KOKORO_SMOKE=1 after installing Kokoro to run the live sidecar", () => {
     expect(existsSync("/")).toBe(true);
+  });
+});
+
+describe("SpeechSidecar idle unload", () => {
+  // A stand-in interpreter that does the sidecar's boot handshake and then
+  // waits, so the lifecycle can be tested without Kokoro installed.
+  const dir = mkdtempSync(join(tmpdir(), "speech-idle-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const fakePython = join(dir, "python3");
+  writeFileSync(
+    fakePython,
+    `#!/bin/sh\necho '{"id":"boot","ok":true,"ready":true}'\nwhile read -r line; do :; done\n`,
+  );
+  chmodSync(fakePython, 0o755);
+  for (const f of ["model.onnx", "voices.bin"]) writeFileSync(join(dir, f), "");
+  const config = () =>
+    makeConfig({
+      kokoro_python: fakePython,
+      kokoro_model: join(dir, "model.onnx"),
+      kokoro_voices: join(dir, "voices.bin"),
+    });
+
+  test("the models are let go after a quiet spell and come back on the next use", async () => {
+    const sidecar = new SpeechSidecar(config(), 40);
+    try {
+      await sidecar.warmup();
+      expect(sidecar.resident()).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(sidecar.resident()).toBe(false);
+      await sidecar.warmup();
+      expect(sidecar.resident()).toBe(true);
+    } finally {
+      sidecar.stop();
+    }
   });
 });

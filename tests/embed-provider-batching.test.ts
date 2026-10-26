@@ -32,6 +32,20 @@ describe("local embedding batches", () => {
     expect(answer.vectors[0]?.[1]).toBe(999);
   });
 
+  test("an idle worker lets the model go", async () => {
+    provider = new TransformersEmbedProvider("test-model", 2, workerUrl, 30);
+    await provider.embed(texts(2));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    // Nothing left to trim: the idle timer already released it.
+    expect(provider.trimIdleWorker()).toBe(false);
+    // And the next call simply starts a fresh worker.
+    expect((await provider.embed(texts(1))).vectors.length).toBe(1);
+  });
+
+  test("an idle worker is kept for a minute by default", () => {
+    expect(TransformersEmbedProvider.WORKER_IDLE_MS).toBeLessThanOrEqual(60_000);
+  });
+
   test("a small request is one call", async () => {
     provider = new TransformersEmbedProvider("test-model", 2, workerUrl);
     const out = await provider.embed(texts(3));

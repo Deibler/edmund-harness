@@ -171,7 +171,10 @@ type PendingEmbed = {
 export const LOCAL_EMBED_BATCH = 8;
 
 export class TransformersEmbedProvider implements EmbedProvider {
-  private static readonly WORKER_IDLE_MS = 5 * 60_000;
+  /** How long an idle worker keeps the model loaded. Reloading took 201 ms
+   *  (measured 2026-10-25), and the model plus its arena hold 300-650 MB, so
+   *  releasing it quickly costs a recall a fifth of a second at most. */
+  static readonly WORKER_IDLE_MS = 60_000;
   private worker: Worker | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private nextRequestId = 1;
@@ -181,6 +184,7 @@ export class TransformersEmbedProvider implements EmbedProvider {
     public model: string,
     public dim: number,
     private readonly workerUrl: URL = new URL("./transformers-embed-worker.ts", import.meta.url),
+    private readonly idleMs: number = TransformersEmbedProvider.WORKER_IDLE_MS,
   ) {}
 
   private getWorker(): Worker {
@@ -251,7 +255,7 @@ export class TransformersEmbedProvider implements EmbedProvider {
       this.idleTimer = null;
       this.worker = null;
       worker.terminate();
-    }, TransformersEmbedProvider.WORKER_IDLE_MS);
+    }, this.idleMs);
     timer.unref?.();
     this.idleTimer = timer;
   }
