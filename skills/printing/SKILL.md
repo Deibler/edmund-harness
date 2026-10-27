@@ -48,6 +48,30 @@ you every reason; fix them, do not argue with them.
 - A hedged reply ("yes but swap the blue first", "is it PLA?") is not a
   decision. Answer it, and wait for a plain yes, a no, or a like on the ask.
 
+## Everyone involved sees the slice and the link
+
+Hunter's rule (2026-10-26). Everyone involved in a print gets two things,
+every time: the requester, the approver, and anyone asked to swap a spool
+or clear the plate. That includes one-off and repeat prints.
+
+1. **The sliced view, before they're asked to agree to anything.** Save it
+   as an image with
+   `bun skills/printing/scripts/sliced_view.ts <file.gcode.3mf> <out.png>`
+   (the toolpaths in the real filament colours, beside the first layer) and
+   send it with the time, grams and colours. Do this before the design OK
+   and again before the approval ask whenever the slice changed. A request
+   that came from someone else's chat still has to reach the approver. Send
+   it to them with `message_contact` and `media_paths`, or
+   `send_attachment` in a group they're in, before
+   `print_request_approval`. For anything designed rather than downloaded,
+   send a rendered mockup of the finished, assembled part in its print
+   colours first. The toolpath view doesn't replace it.
+2. **The live page link, once it starts.** `print_start` returns it. Send it
+   to every one of those people, not only whoever asked, in their own chat
+   if they're not in this one.
+
+Never ask for a yes on a slice someone hasn't seen.
+
 ## The whole flow, in order
 
 1. **Understand what they want.** Size (ask what it sits next to, or what it
@@ -65,7 +89,8 @@ you every reason; fix them, do not argue with them.
    filament changes and purge, time by feature. Fix and re-slice until there
    is nothing you would be embarrassed by. Never show a person a slice with an
    unread warning.
-5. **Show the requester** the render (and photos), the time and the colors.
+5. **Show the requester** the render (and photos), the sliced view image,
+   the time and the colors.
    Get their OK on the design and record their words: `print_job create`,
    then `print_job update design_ok`.
 6. **Plan the filament**: `print_job plan`. If a slot needs swapping, ask
@@ -73,12 +98,15 @@ you every reason; fix them, do not argue with them.
    (it has the black in it now)?" In a group with the approver, ask there; if
    the request came in someone else's DM, ask in the approver's DM. Set a
    filament wake-up (`printer_watch` kind filament) so you know when it is done.
-7. **Ask for approval**: `print_request_approval` with your own words; the
-   facts and "reply yes to print it" are added. Tell the requester you have
+7. **Ask for approval**: first make sure the approver has the sliced view
+   of this exact slice (above), then `print_request_approval` with your own
+   words; the facts and "reply yes to print it" are added. Tell the requester you have
    asked. You are woken when the answer comes.
 8. **After the yes**: `printer_camera`, look at the plate with your own eyes
    (anything on it, even a purge blob, is a no), then `print_start` with that
-   `frame_id`. It returns the live page link: send it to the person who asked.
+   `frame_id`. It returns the live page link: send it to everyone involved
+   (the requester, the approver, whoever swapped or cleared), each in their
+   own chat.
    - If its independent plate check says unsure (faint marks, glare, the
      front edge out of frame) and you think the plate is fine, do not stall
      and do not argue with it: `print_request_approval` with action `plate`,
