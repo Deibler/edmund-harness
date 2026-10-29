@@ -62,6 +62,21 @@ render_plist() {
   sed -e "s|__HARNESS_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$1" > "$2"
 }
 
+# Load an agent in place of any loaded copy. `launchctl bootout` returns before
+# launchd has finished unloading the job, and a bootstrap inside that window
+# fails with "Bootstrap failed: 5: Input/output error". Under `set -e` the
+# script then stops with the old job gone and the new one not loaded: on
+# 2026-10-29 that left the daemon down until it was bootstrapped by hand.
+reload_agent() {
+  local label="$1" plist="$2" i
+  launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1 || true
+  for i in $(seq 1 100); do
+    launchctl print "$DOMAIN/$label" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  launchctl bootstrap "$DOMAIN" "$plist"
+}
+
 # A sidecar with nothing special about its install: render the template, load
 # it, and manage it by label. A symlink to the template instead leaves the
 # placeholders in, and launchd exits 78 (EX_CONFIG) on every start.
@@ -74,9 +89,8 @@ sidecar() {
     install)
       [[ -f "$src" ]] || { echo "plist not found: $src" >&2; exit 1; }
       mkdir -p "$HOME/Library/LaunchAgents"
-      launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1 || true
       render_plist "$src" "$dest"
-      launchctl bootstrap "$DOMAIN" "$dest"
+      reload_agent "$label" "$dest"
       launchctl enable "$DOMAIN/$label"
       launchctl kickstart -k "$DOMAIN/$label"
       sleep 1
@@ -125,9 +139,7 @@ case "$cmd" in
     mkdir -p "$HOME/Library/LaunchAgents"
     render_plist "$SRC_PLIST" "$DEST_PLIST"
     kill_stray_daemons
-    # If already bootstrapped, replace cleanly.
-    launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-    launchctl bootstrap "$DOMAIN" "$DEST_PLIST"
+    reload_agent "$LABEL" "$DEST_PLIST"
     launchctl enable "$DOMAIN/$LABEL"
     launchctl kickstart -k "$DOMAIN/$LABEL"
     sleep 1
@@ -213,8 +225,7 @@ case "$cmd" in
           pkill -f 'bun.*dashboard/server/main.ts' || true
           sleep 1
         fi
-        launchctl bootout "$DOMAIN/$DASH_LABEL" >/dev/null 2>&1 || true
-        launchctl bootstrap "$DOMAIN" "$DASH_DEST_PLIST"
+        reload_agent "$DASH_LABEL" "$DASH_DEST_PLIST"
         launchctl enable "$DOMAIN/$DASH_LABEL"
         launchctl kickstart -k "$DOMAIN/$DASH_LABEL"
         sleep 1
@@ -256,8 +267,7 @@ case "$cmd" in
           pkill -f 'bun.*integrations/trading/dashboard/main.ts' || true
           sleep 1
         fi
-        launchctl bootout "$DOMAIN/$TRADE_LABEL" >/dev/null 2>&1 || true
-        launchctl bootstrap "$DOMAIN" "$TRADE_DEST_PLIST"
+        reload_agent "$TRADE_LABEL" "$TRADE_DEST_PLIST"
         launchctl enable "$DOMAIN/$TRADE_LABEL"
         launchctl kickstart -k "$DOMAIN/$TRADE_LABEL"
         sleep 1
@@ -299,8 +309,7 @@ case "$cmd" in
           pkill -f 'fishctl serve' || true
           sleep 1
         fi
-        launchctl bootout "$DOMAIN/$FISH_LABEL" >/dev/null 2>&1 || true
-        launchctl bootstrap "$DOMAIN" "$FISH_DEST_PLIST"
+        reload_agent "$FISH_LABEL" "$FISH_DEST_PLIST"
         launchctl enable "$DOMAIN/$FISH_LABEL"
         launchctl kickstart -k "$DOMAIN/$FISH_LABEL"
         sleep 1

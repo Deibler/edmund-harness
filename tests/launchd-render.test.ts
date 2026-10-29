@@ -53,3 +53,58 @@ describe("render_plist", () => {
     expect(readFileSync(dest, "utf8")).not.toContain("__HARNESS_ROOT__");
   });
 });
+
+/**
+ * `launchctl bootout` returns before the job has finished unloading, and a
+ * bootstrap in that window fails with error 5. Under `set -e` service.sh then
+ * stopped with the old job gone and the new one never loaded: on 2026-10-29
+ * an install left the daemon down until it was bootstrapped by hand. The fake
+ * launchctl below keeps the job unloading for two polls and fails a bootstrap
+ * issued during them, as the real one did.
+ */
+describe("reload_agent", () => {
+  function reload(): { code: number; calls: string[] } {
+    const log = join(DIR, `launchctl-${Math.random().toString(36).slice(2)}.log`);
+    writeFileSync(log, "");
+    const run = Bun.spawnSync([
+      "bash",
+      "-c",
+      `set -euo pipefail; DOMAIN=gui/501; LOG="$1"; state=loaded; polls=0
+       launchctl() {
+         echo "$1" >> "$LOG"
+         case "$1" in
+           bootout) state=unloading ;;
+           print)
+             case "$state" in
+               loaded) return 0 ;;
+               unloading) polls=$((polls + 1)); if (( polls > 2 )); then state=gone; return 1; fi; return 0 ;;
+               *) return 1 ;;
+             esac ;;
+           bootstrap) [[ "$state" == gone ]] || { echo "Bootstrap failed: 5: Input/output error" >&2; return 5; }; state=loaded ;;
+         esac
+       }
+       sleep() { :; }
+       eval "$(awk '/^reload_agent\\(\\) \\{/,/^\\}/' "$0")"
+       reload_agent com.example.agent /x.plist`,
+      SCRIPT,
+      log,
+    ]);
+    return { code: run.exitCode, calls: readFileSync(log, "utf8").trim().split("\n") };
+  }
+
+  test("waits for the old job to unload before loading the new one", () => {
+    const { code, calls } = reload();
+    expect(code).toBe(0);
+    expect(calls[0]).toBe("bootout");
+    expect(calls.at(-1)).toBe("bootstrap");
+    expect(calls.filter((c) => c === "print").length).toBe(3);
+  });
+
+  test("every install in service.sh loads through it", () => {
+    const script = readFileSync(SCRIPT, "utf8")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("#"));
+    expect(script.filter((l) => l.includes("launchctl bootstrap")).length).toBe(1);
+    expect(script.filter((l) => /^\s*reload_agent "/.test(l)).length).toBe(5);
+  });
+});
