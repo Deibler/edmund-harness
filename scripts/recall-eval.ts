@@ -19,8 +19,12 @@
  * the hits a subject-less message pulls in.
  *
  * Compactions are the moments the conversation was summarised, one
- * "<ISO time> <auto|manual>" per line, read from the transcript's
- * compact_boundary rows, the system of record. `--boundary fixed` recalls the
+ * "<ISO time> <auto|manual>" per line. Up to 2026-10-29 they were read from
+ * the transcript's compact_boundary rows; workers now trim the transcript at
+ * each compaction (CLAUDE_CODE_TRANSCRIPT_LOCAL_GC), so later ones come from
+ * the daemon log: `--compactions-from-log <session as logged, e.g.
+ * dm:+15551234567>` reads its `[claude-worker] compacted` lines and adds them
+ * to the file's. `--boundary fixed` recalls the
  * way production did before 2026-10-29 (skip a fixed recent window, and only
  * manual compactions were known); `compaction` treats everything older than
  * the last compaction as out of the model's sight.
@@ -95,6 +99,23 @@ const compactions: Compaction[] = existsSync(compactionsPath)
       })
       .sort((a, b) => a.atMs - b.atMs)
   : [];
+const fromLog = arg("compactions-from-log", "");
+if (fromLog) {
+  compactions.push(...compactionsFromLog(join(dataDir, "daemon.log"), fromLog));
+  compactions.sort((a, b) => a.atMs - b.atMs);
+}
+
+/** The compactions the worker logged for one session (worker.ts "compacted"). */
+function compactionsFromLog(logPath: string, session: string): Compaction[] {
+  const marker = `[claude-worker] compacted session=${session} `;
+  return readFileSync(logPath, "utf8")
+    .split("\n")
+    .filter((l) => l.includes(marker))
+    .map((l) => ({
+      atMs: Date.parse(l.slice(0, 24)),
+      trigger: / trigger=manual\b/.test(l) ? "manual" : "auto",
+    }));
+}
 
 /** The newest compaction before `ms`, optionally only those the harness saw. */
 function lastCompactBefore(ms: number, manualOnly: boolean): number {
@@ -190,7 +211,17 @@ for (const n of needles) {
     continue;
   }
   const refs = new Set((n.needle_guids ?? []).map((g) => `msg:${g}`));
-  const pos = shown.findIndex((s) => refs.has(s.ref));
+  // A plain loop, not findIndex: on 2026-10-29 Bun 1.3.9 returned -1 from
+  // `shown.findIndex((s) => refs.has(s.ref))` with the needle at index 0, and
+  // 0 when the same call was repeated a line later (seen 3 runs in a row,
+  // only in the faster run). The eval's numbers depend on this one match.
+  let pos = -1;
+  for (let i = 0; i < shown.length; i++) {
+    if (refs.has(shown[i]!.ref)) {
+      pos = i;
+      break;
+    }
+  }
   const needleRows = [...refs].map((r) => store.get(r)).filter((r) => r !== null);
   const oldestNeedleTs = Math.min(...needleRows.map((r) => r.ts));
   const outcome: Outcome = {

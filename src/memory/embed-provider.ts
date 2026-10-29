@@ -5,6 +5,8 @@
  * insert and refuses to mix shapes.
  */
 
+import type { EmbedLane } from "./embed-lanes.ts";
+
 export type EmbedResult = { vectors: Float32Array[]; model: string; dim: number };
 
 export interface EmbedProvider {
@@ -17,6 +19,8 @@ export interface EmbedProvider {
    *  omitting it costs several nDCG points. Providers without an
    *  asymmetric contract fall back to embed(). */
   embedQuery?(texts: string[]): Promise<EmbedResult>;
+  /** Have the model loaded before a query arrives. Fire and forget. */
+  warm?(): void;
 }
 
 /** Search-side embedding with the model's query contract applied. */
@@ -170,6 +174,15 @@ type PendingEmbed = {
  */
 export const LOCAL_EMBED_BATCH = 8;
 
+/**
+ * Most texts one index request sends. A batch cannot be interrupted, so it is
+ * how long a live query can wait. Measured 2026-10-29 on person-file chunks:
+ * 41-45 ms per text at batch 1, 2, 4 and 8 alike, so a batch of 8 held the
+ * worker four times as long as a batch of 2 for no gain (358 ms against
+ * 87 ms idle; several times that under the daemon's load).
+ */
+export const INDEX_EMBED_BATCH = 2;
+
 export class TransformersEmbedProvider implements EmbedProvider {
   /** How long an idle worker keeps the model loaded. Reloading took 201 ms
    *  (measured 2026-10-25), and the model plus its arena hold 300-650 MB, so
@@ -271,28 +284,40 @@ export class TransformersEmbedProvider implements EmbedProvider {
     return true;
   }
 
+  /**
+   * Load the model now if its worker was released, so the recall query that
+   * follows does not pay the reload. The daemon calls it as an inbound
+   * message opens its debounce window, 1.5 s before recall runs. Free when a
+   * worker is alive; the idle release still applies afterwards.
+   */
+  warm(): void {
+    if (this.worker) return;
+    this.runChunk(["warm"], "query").catch(() => {});
+  }
+
   async embed(texts: string[]): Promise<EmbedResult> {
-    return this.run(texts);
+    return this.run(texts, "index");
   }
 
   async embedQuery(texts: string[]): Promise<EmbedResult> {
     const { queryPrefix } = familyFor(this.model);
-    return this.run(queryPrefix ? texts.map((t) => queryPrefix + t) : texts);
+    return this.run(queryPrefix ? texts.map((t) => queryPrefix + t) : texts, "query");
   }
 
-  private async run(texts: string[]): Promise<EmbedResult> {
-    if (texts.length <= LOCAL_EMBED_BATCH) return this.runChunk(texts);
+  private async run(texts: string[], lane: EmbedLane): Promise<EmbedResult> {
+    const batch = lane === "query" ? LOCAL_EMBED_BATCH : INDEX_EMBED_BATCH;
+    if (texts.length <= batch) return this.runChunk(texts, lane);
     const vectors: Float32Array[] = [];
     let dim = this.dim;
-    for (let i = 0; i < texts.length; i += LOCAL_EMBED_BATCH) {
-      const part = await this.runChunk(texts.slice(i, i + LOCAL_EMBED_BATCH));
+    for (let i = 0; i < texts.length; i += batch) {
+      const part = await this.runChunk(texts.slice(i, i + batch), lane);
       vectors.push(...part.vectors);
       dim = part.dim;
     }
     return { vectors, model: this.model, dim };
   }
 
-  private async runChunk(texts: string[]): Promise<EmbedResult> {
+  private async runChunk(texts: string[], lane: EmbedLane): Promise<EmbedResult> {
     if (texts.length === 0) return { vectors: [], model: this.model, dim: this.dim };
     const worker = this.getWorker();
     const id = this.nextRequestId++;
@@ -308,6 +333,7 @@ export class TransformersEmbedProvider implements EmbedProvider {
           model: this.model,
           pooling: familyFor(this.model).pooling,
           texts,
+          lane,
         });
       } catch (error) {
         this.pending.delete(id);

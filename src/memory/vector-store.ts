@@ -134,6 +134,11 @@ export type SearchOptions = {
    * model asked and sees the scores.
    */
   sparseRescue?: boolean;
+  /** The BM25 candidates for `queryText`, when the caller already has them
+   *  (sparseCandidates). Every auto-recall leg searches the same text with
+   *  the same global MATCH and limit, so one lookup serves them all instead
+   *  of one per leg (63-175 ms each, measured 2026-10-29). */
+  sparseRefsRanked?: string[];
 };
 
 export type SearchHit = {
@@ -586,7 +591,8 @@ export class VectorStore {
     if (opts.queryText) {
       const admissible =
         opts.sparseRescue === false ? new Map(dense.map((h) => [h.ref, h])) : scored;
-      pool = fuseWithSparse(dense, admissible, this.sparseRefs(opts.queryText, 200), limit);
+      const sparse = opts.sparseRefsRanked ?? this.sparseCandidates(opts.queryText);
+      pool = fuseWithSparse(dense, admissible, sparse, limit);
     } else {
       pool = dense;
     }
@@ -623,6 +629,11 @@ export class VectorStore {
    * can never inject FTS5 syntax. Returns refs only — filtering and
    * fusion happen against the scored cache rows.
    */
+  /** The BM25 candidates search() fuses for this text. */
+  sparseCandidates(queryText: string): string[] {
+    return this.sparseRefs(queryText, 200);
+  }
+
   private sparseRefs(queryText: string, limit: number): string[] {
     const tokens = [
       ...new Set((queryText.toLowerCase().match(/[a-z0-9]{2,}/g) ?? []).slice(0, 12)),
@@ -641,6 +652,21 @@ export class VectorStore {
       // dense-only, not break search.
       return [];
     }
+  }
+
+  /**
+   * Every row under a ref prefix, text and vector included, so a document can
+   * be re-indexed without re-embedding the chunks it already holds. A range
+   * on the primary key: `LIKE` (refsWithPrefix) scans the whole index.
+   */
+  rowsWithPrefix(prefix: string): IndexRow[] {
+    return this.db
+      .prepare<DbRow, [string, string]>(
+        `SELECT ref, kind, chat_guid, sender, ts, text, vec, model, dim
+           FROM rows WHERE ref >= ? AND ref < ?`,
+      )
+      .all(prefix, `${prefix}\uffff`)
+      .map(rowToIndexRow);
   }
 
   hasRef(ref: string): boolean {

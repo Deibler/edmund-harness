@@ -21,7 +21,7 @@ import { dmChatGuid } from "../imessage/participants.ts";
 import { lessonForRecall } from "../persona/domains.ts";
 import { DEPENDENCY_DIRS, underDependencyDir } from "../persona/sandbox.ts";
 import { log } from "../util/log.ts";
-import { chunkMarkdownDoc, chunkPlainText } from "./chunker.ts";
+import { type DocChunk, chunkMarkdownDoc, chunkPlainText } from "./chunker.ts";
 import type { EmbedProvider } from "./embed-provider.ts";
 import { type AttachmentInfo, buildEnrichedText } from "./enrich.ts";
 import { type IndexRow, type VectorStore, normalize } from "./vector-store.ts";
@@ -166,7 +166,13 @@ export class Indexer {
     coverage: ReturnType<Indexer["coverage"]>;
   }> {
     if (this.indexing) {
-      return { messages: 0, people: 0, artifacts: 0, coverage: this.coverage() };
+      // A skipped tick reports the last snapshot instead of computing one.
+      return {
+        messages: 0,
+        people: 0,
+        artifacts: 0,
+        coverage: this.lastCoverage ?? this.coverage(),
+      };
     }
     this.indexing = true;
     try {
@@ -214,10 +220,7 @@ export class Indexer {
     totalPeople: number;
   } {
     const indexedMsgs = this.store.countByKind("message");
-    // Artifacts + people index as CHUNKS now; the coverage bars compare
-    // against file counts, so count distinct documents, not rows.
-    const indexedArtifacts = this.store.countDocsByKind("artifact");
-    const indexedPeople = this.store.countDocsByKind("person-file");
+    const { indexedArtifacts, indexedPeople } = this.docCounts();
     const minMs = this.cfg.backfillDays > 0 ? Date.now() - this.cfg.backfillDays * 86_400_000 : 0;
     const minAppleNs = minMs > 0 ? (minMs - 978_307_200_000) * 1_000_000 : 0;
     const total = this.chatDb
@@ -227,7 +230,7 @@ export class Indexer {
     const pending = this.chatDb
       .query<{ n: number }>(`SELECT COUNT(*) AS n FROM message m WHERE m.date >= ? AND m.ROWID > ?`)
       .get(minAppleNs, watermark);
-    return {
+    this.lastCoverage = {
       indexedMsgs,
       totalInWindow: total?.n ?? 0,
       pendingMsgs: pending?.n ?? 0,
@@ -236,7 +239,39 @@ export class Indexer {
       indexedPeople,
       totalPeople: this.countPersonFiles(),
     };
+    return this.lastCoverage;
   }
+
+  private lastCoverage: ReturnType<Indexer["coverage"]> | null = null;
+
+  /**
+   * Distinct documents indexed, for the coverage bars. Artifacts and people
+   * index as chunks, so this is a COUNT(DISTINCT ...) over every row of the
+   * kind: 11.3 s from a cold page cache over 195k artifact rows (measured
+   * 2026-10-29), synchronous on the daemon's main thread, every 60 s tick
+   * including skipped ones. A progress bar needs it every 10 minutes at most.
+   */
+  private docCounts(): { indexedArtifacts: number; indexedPeople: number } {
+    const now = Date.now();
+    if (this.docCountCache && now - this.docCountCache.computedAt < 600_000) {
+      return this.docCountCache;
+    }
+    const started = performance.now();
+    const counts = {
+      indexedArtifacts: this.store.countDocsByKind("artifact"),
+      indexedPeople: this.store.countDocsByKind("person-file"),
+    };
+    const ms = Math.round(performance.now() - started);
+    if (ms > 500) log.warn("recall", "coverage document counts were slow", { ms });
+    this.docCountCache = { ...counts, computedAt: now };
+    return counts;
+  }
+
+  private docCountCache: {
+    indexedArtifacts: number;
+    indexedPeople: number;
+    computedAt: number;
+  } | null = null;
 
   /**
    * Count of text-bearing files under all session sandboxes that
@@ -513,26 +548,16 @@ export class Indexer {
       const chunks = chunkMarkdownDoc(docTitle(body, f.name), body);
       const refPrefix = `self:${f.name}#`;
       try {
-        for (let i = 0; i < chunks.length; i += this.cfg.batchSize) {
-          const slice = chunks.slice(i, i + this.cfg.batchSize);
-          const result = await this.provider.embed(slice.map((c) => c.text));
-          const rows: IndexRow[] = slice.map((c, idx) => {
-            const vec = result.vectors[idx]!;
-            normalize(vec);
-            return {
-              ref: `${refPrefix}${c.seq}`,
-              kind: "self-file" as const,
-              chatGuid: null,
-              sender: null,
-              ts: Math.round(newestContentDateMs(c.text) ?? f.mtime),
-              text: c.text,
-              vec,
-              model: result.model,
-            };
-          });
-          this.store.upsert(rows);
-          indexed += rows.length;
-        }
+        indexed += await this.writeDocChunks(chunks, refPrefix, (c, vec, model) => ({
+          ref: `${refPrefix}${c.seq}`,
+          kind: "self-file" as const,
+          chatGuid: null,
+          sender: null,
+          ts: Math.round(newestContentDateMs(c.text) ?? f.mtime),
+          text: c.text,
+          vec,
+          model,
+        }));
         const live = new Set(chunks.map((c) => `${refPrefix}${c.seq}`));
         const stale = this.store.refsWithPrefix(`self:${f.name}`).filter((r) => !live.has(r));
         this.store.deleteRefs(stale);
@@ -639,26 +664,16 @@ export class Indexer {
       const chatGuid = handle ? dmChatGuid(this.chatDb, handle) : null;
       const refPrefix = `person:${f.name}#`;
       try {
-        for (let i = 0; i < chunks.length; i += this.cfg.batchSize) {
-          const slice = chunks.slice(i, i + this.cfg.batchSize);
-          const result = await this.provider.embed(slice.map((c) => c.text));
-          const rows: IndexRow[] = slice.map((c, idx) => {
-            const vec = result.vectors[idx]!;
-            normalize(vec);
-            return {
-              ref: `${refPrefix}${c.seq}`,
-              kind: "person-file",
-              chatGuid,
-              sender: handle,
-              ts: Math.round(newestContentDateMs(c.text) ?? f.mtime),
-              text: c.text,
-              vec,
-              model: result.model,
-            };
-          });
-          this.store.upsert(rows);
-          indexed += rows.length;
-        }
+        indexed += await this.writeDocChunks(chunks, refPrefix, (c, vec, model) => ({
+          ref: `${refPrefix}${c.seq}`,
+          kind: "person-file",
+          chatGuid,
+          sender: handle,
+          ts: Math.round(newestContentDateMs(c.text) ?? f.mtime),
+          text: c.text,
+          vec,
+          model,
+        }));
         // A shrunk re-chunk leaves stale high-seq rows — prune them, and
         // prune the legacy whole-file row (`person:<file>` without #).
         const live = new Set(chunks.map((c) => `${refPrefix}${c.seq}`));
@@ -678,6 +693,49 @@ export class Indexer {
     }
     this.store.setWatermark("person.mtime", maxMtime);
     return indexed;
+  }
+
+  /**
+   * Write a document's chunks under `refPrefix`, embedding only text the index
+   * does not already hold for it. A chunk unchanged at its position is left
+   * alone; unchanged text that moved (an earlier section grew) keeps its
+   * vector. Until 2026-10-29 every edit re-embedded the whole file, and an
+   * archive only ever gains a section at its end: 300-650 chunks re-embedded
+   * per append, 10-28k a day, on the worker live recall queries wait for.
+   * Returns how many chunks were embedded.
+   */
+  private async writeDocChunks(
+    chunks: DocChunk[],
+    refPrefix: string,
+    toRow: (chunk: DocChunk, vec: Float32Array, model: string) => IndexRow,
+  ): Promise<number> {
+    const current = (r: IndexRow) =>
+      r.model === this.provider.model && r.vec.length === this.provider.dim;
+    const existing = this.store.rowsWithPrefix(refPrefix).filter(current);
+    const atRef = new Map(existing.map((r) => [r.ref, r]));
+    const byText = new Map(existing.map((r) => [r.text, r]));
+    const reused: IndexRow[] = [];
+    const fresh: DocChunk[] = [];
+    for (const c of chunks) {
+      const known = byText.get(c.text);
+      if (!known) fresh.push(c);
+      else if (atRef.get(`${refPrefix}${c.seq}`)?.text !== c.text) {
+        reused.push(toRow(c, known.vec, known.model));
+      }
+    }
+    if (reused.length > 0) this.store.upsert(reused);
+    for (let i = 0; i < fresh.length; i += this.cfg.batchSize) {
+      const slice = fresh.slice(i, i + this.cfg.batchSize);
+      const result = await this.provider.embed(slice.map((c) => c.text));
+      this.store.upsert(
+        slice.map((c, idx) => {
+          const vec = result.vectors[idx]!;
+          normalize(vec);
+          return toRow(c, vec, result.model);
+        }),
+      );
+    }
+    return fresh.length;
   }
 
   /** persona/people/*.md plus persona/people/archive/*.md (aged history
@@ -708,26 +766,16 @@ export class Indexer {
       const chatGuid = this.groupChatGuid(f.name, body);
       const refPrefix = `group:${f.name}#`;
       try {
-        for (let i = 0; i < chunks.length; i += this.cfg.batchSize) {
-          const slice = chunks.slice(i, i + this.cfg.batchSize);
-          const result = await this.provider.embed(slice.map((c) => c.text));
-          const rows: IndexRow[] = slice.map((c, idx) => {
-            const vec = result.vectors[idx]!;
-            normalize(vec);
-            return {
-              ref: `${refPrefix}${c.seq}`,
-              kind: "person-file",
-              chatGuid,
-              sender: null,
-              ts: Math.round(newestContentDateMs(c.text) ?? f.mtime),
-              text: c.text,
-              vec,
-              model: result.model,
-            };
-          });
-          this.store.upsert(rows);
-          indexed += rows.length;
-        }
+        indexed += await this.writeDocChunks(chunks, refPrefix, (c, vec, model) => ({
+          ref: `${refPrefix}${c.seq}`,
+          kind: "person-file",
+          chatGuid,
+          sender: null,
+          ts: Math.round(newestContentDateMs(c.text) ?? f.mtime),
+          text: c.text,
+          vec,
+          model,
+        }));
         const live = new Set(chunks.map((c) => `${refPrefix}${c.seq}`));
         const stale = this.store.refsWithPrefix(`group:${f.name}`).filter((ref) => !live.has(ref));
         this.store.deleteRefs(stale);

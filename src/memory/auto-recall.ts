@@ -192,6 +192,13 @@ export async function autoRecall(
   }
   const embedMs = Date.now() - embedStart;
   const searchStart = Date.now();
+  // One BM25 lookup for every leg below: they all search this same text.
+  let sparse: string[] | undefined;
+  try {
+    sparse = store.sparseCandidates(text);
+  } catch {
+    sparse = undefined;
+  }
 
   const now = opts.nowMs ?? Date.now();
   const excludeCutoff =
@@ -217,6 +224,7 @@ export async function autoRecall(
       rowKinds: RECALL_KINDS,
       queryText: text,
       sparseRescue: false,
+      sparseRefsRanked: sparse,
       // Over-fetch so excludeRefs / senderInChat dedup post-filters
       // can't starve the block below `limit`.
       limit: opts.limit + excludeAllowance + (opts.senderLimit ?? 0),
@@ -252,6 +260,7 @@ export async function autoRecall(
         rowKinds: RECALL_KINDS,
         queryText: text,
         sparseRescue: false,
+        sparseRefsRanked: sparse,
         limit:
           deepLimit +
           Math.min(opts.excludeRefs?.size ?? 0, 3 * deepLimit) +
@@ -287,6 +296,7 @@ export async function autoRecall(
           rowKinds: ["self-file"],
           queryText: text,
           sparseRescue: false,
+          sparseRefsRanked: sparse,
           limit: SELF_RECALL_LIMIT + Math.min(opts.excludeRefs?.size ?? 0, 3 * SELF_RECALL_LIMIT),
           minScore: opts.minScore,
           nowMs: now,
@@ -318,6 +328,7 @@ export async function autoRecall(
         rowKinds: ["message"],
         queryText: text,
         sparseRescue: false,
+        sparseRefsRanked: sparse,
         limit: senderLimit + Math.min(opts.excludeRefs?.size ?? 0, 3 * senderLimit),
         minScore: opts.minScore,
         untilMs: excludeCutoff > 0 ? excludeCutoff : undefined,
@@ -376,6 +387,7 @@ export async function autoRecall(
         rowKinds: ["skill"],
         queryText: text,
         sparseRescue: false,
+        sparseRefsRanked: sparse,
         limit: SKILL_SUGGEST_LIMIT,
         minScore: Math.max(opts.minScore, SKILL_MIN_SCORE),
         nowMs: now,

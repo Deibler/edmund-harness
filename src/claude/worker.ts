@@ -336,6 +336,13 @@ export class Worker {
   private idleMs: number;
   private sessionKey: string;
   private resumedProcess: boolean;
+  /** Cold-start timing, logged once on the first streamed event: how long
+   *  the CLI took to load (spawn to first init) and how long until the model
+   *  produced anything. The gap between them is the prompt prefill, which a
+   *  prompt-cache miss makes long. */
+  private readonly spawnedAt = Date.now();
+  private loadMs: number | null = null;
+  private coldStartLogged = false;
 
   constructor(args: WorkerSpawnArgs) {
     this.idleMs = args.perTurnIdleMs;
@@ -400,6 +407,11 @@ export class Worker {
   }
 
   /** Has the underlying process died? */
+  /** The CLI process id, for the pool's stats and the memory governor. */
+  get pid(): number | null {
+    return this.proc.pid ?? null;
+  }
+
   get isDead(): boolean {
     return this.deadReason !== null;
   }
@@ -765,6 +777,7 @@ export class Worker {
     if (evt.type === "system" && evt.subtype === "init") {
       if (this.boundSessionId === null) {
         this.boundSessionId = evt.session_id;
+        this.loadMs = Date.now() - this.spawnedAt;
         log.debug("claude-worker", "session bound", {
           session: this.sessionKey,
           claudeSessionId: evt.session_id,
@@ -966,6 +979,15 @@ export class Worker {
    */
   private handleStreamEvent(evt: StreamEvent): void {
     if (!this.pending) return;
+    if (!this.coldStartLogged) {
+      this.coldStartLogged = true;
+      log.info("claude-worker", "cold start", {
+        session: this.sessionKey,
+        resumed: this.resumedProcess,
+        load: this.loadMs !== null ? humanMs(this.loadMs) : undefined,
+        first_token: humanMs(Date.now() - this.pending.startedAt),
+      });
+    }
     switch (evt.type) {
       case "content_block_start": {
         const cb = evt.content_block;
