@@ -7,7 +7,8 @@
  *
  *   bun scripts/recall-eval.ts [--needles data/evals/recall-needles.jsonl]
  *       [--compactions data/evals/compactions.txt] [--boundary fixed|compaction]
- *       [--contextualize] [--label name]
+ *       [--contextualize] [--no-time-scope] [--time-floor 0.6] [--time-limit 5]
+ *       [--label name]
  *
  * Needles are JSON lines (gitignored, they hold real messages):
  *   {"id", "query_ms", "query_text", "chat_guid", "needle_guids": [...],
@@ -72,6 +73,9 @@ const needlesPath = arg("needles", join(dataDir, "evals/recall-needles.jsonl"));
 const compactionsPath = arg("compactions", join(dataDir, "evals/compactions.txt"));
 const boundary = arg("boundary", "compaction") as "fixed" | "compaction";
 const contextualize = process.argv.includes("--contextualize");
+const timeScope = !process.argv.includes("--no-time-scope");
+const timeFloor = Number(arg("time-floor", "NaN"));
+const timeLimit = Number(arg("time-limit", "NaN"));
 const label = arg("label", `${boundary}${contextualize ? "+ctx" : ""}`);
 
 /** --contextualize: a short follow-up ("yeah do brown instead") is searched
@@ -146,7 +150,7 @@ type Outcome = {
   topic?: string;
   gapHours?: number;
   reached: boolean;
-  block: "recent" | "deep" | null;
+  block: "time" | "recent" | "deep" | null;
   position: number | null;
   shown: number;
   blind: boolean;
@@ -192,8 +196,12 @@ for (const n of needles) {
     contextCutoffMs: lastKnown > 0 ? lastKnown : undefined,
     outsideContextBoost: mr.auto_recall_outside_context_boost,
     nowMs: n.query_ms,
+    timeScope,
+    timeScopedMinScore: Number.isFinite(timeFloor) ? timeFloor : undefined,
+    timeScopedLimit: Number.isFinite(timeLimit) ? timeLimit : undefined,
   });
   const shown = [
+    ...result.timeScoped.map((h) => ({ ref: h.ref, block: "time" as const })),
     ...result.recent.map((h) => ({ ref: h.ref, block: "recent" as const })),
     ...result.deep.map((h) => ({ ref: h.ref, block: "deep" as const })),
   ];

@@ -97,6 +97,12 @@ export type EnvelopeContext = {
    * matches. Pure cosine ranking, no recency boost.
    */
   autoRecallDeepLines?: string[];
+  /** Auto-recall hits inside the time the message names ("back in June"),
+   *  and that time. Shown before the other recall blocks: it is the one
+   *  that answers "when", and a newer match on the same subject would
+   *  otherwise outrank it. */
+  autoRecallTimeLines?: string[];
+  autoRecallTimeLabel?: string;
   /** At most one skill name whose description matched this message. */
   skillSuggestions?: string[];
 };
@@ -227,6 +233,11 @@ export function buildEnvelope(ctx: EnvelopeContext): string {
   // model doesn't need to call `semantic_search` for the common case.
   // Two blocks — newer matches first (recency-boosted), then a deep-
   // memory block for matches older than ~30 days (pure cosine).
+  if (ctx.autoRecallTimeLines && ctx.autoRecallTimeLines.length > 0) {
+    sections.push(
+      `From ${ctx.autoRecallTimeLabel ?? "the time your message names"} (semantic match inside the time this message names; for more from then, call \`semantic_search\` with since/until):\n${ctx.autoRecallTimeLines.join("\n")}`,
+    );
+  }
   if (ctx.autoRecallLines && ctx.autoRecallLines.length > 0) {
     sections.push(
       `Relevant past messages (semantic match, weighted toward recent; outside the recent-thread window above; call \`semantic_search\` if you need more):\n${ctx.autoRecallLines.join("\n")}`,

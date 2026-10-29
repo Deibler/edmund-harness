@@ -917,6 +917,9 @@ async function handleBatchInner(
       senderInChatLines: [],
       recentLines: [],
       deepLines: [],
+      timeScoped: [],
+      timeScopedLines: [],
+      timeScopeLabel: null,
       skillSuggestions: [],
       embedMs: 0,
       searchMs: 0,
@@ -1077,7 +1080,9 @@ async function handleBatchInner(
     let autoRecallSenderLines: string[] | undefined;
     let autoRecallLines: string[] | undefined;
     let autoRecallDeepLines: string[] | undefined;
+    let autoRecallTimeLines: string[] | undefined;
     const recallResult = await autoRecallPromise;
+    if (recallResult.timeScopedLines.length > 0) autoRecallTimeLines = recallResult.timeScopedLines;
     if (recallResult.senderInChatLines.length > 0)
       autoRecallSenderLines = recallResult.senderInChatLines;
     if (recallResult.recentLines.length > 0) autoRecallLines = recallResult.recentLines;
@@ -1128,6 +1133,8 @@ async function handleBatchInner(
       autoRecallSenderLabel: isGroup ? senderLabel : undefined,
       autoRecallLines,
       autoRecallDeepLines,
+      autoRecallTimeLines,
+      autoRecallTimeLabel: recallResult.timeScopeLabel ?? undefined,
       skillSuggestions,
     });
     // Offer at most one capability per turn, and only on the first model
@@ -1178,8 +1185,10 @@ async function handleBatchInner(
     const recallTotal =
       (autoRecallSenderLines?.length ?? 0) +
       (autoRecallLines?.length ?? 0) +
-      (autoRecallDeepLines?.length ?? 0);
+      (autoRecallDeepLines?.length ?? 0) +
+      (autoRecallTimeLines?.length ?? 0);
     const recallBits: string[] = [];
+    if (autoRecallTimeLines?.length) recallBits.push(`${autoRecallTimeLines.length}t`);
     if (autoRecallSenderLines?.length) recallBits.push(`${autoRecallSenderLines.length}s`);
     if (autoRecallLines?.length) recallBits.push(`${autoRecallLines.length}r`);
     if (autoRecallDeepLines?.length) recallBits.push(`${autoRecallDeepLines.length}d`);
