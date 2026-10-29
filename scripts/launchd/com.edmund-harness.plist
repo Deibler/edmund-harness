@@ -52,10 +52,13 @@
         <string>__HOME__</string>
     </dict>
 
-    <!-- Resource caps (optional safety nets). -->
+    <!-- Interactive, never Background. Background clamps the daemon AND every
+         process it spawns (model workers, MCP servers, Messages) to the
+         efficiency cores with throttled I/O: a worker took 5.6-6.1 s to load
+         a conversation that loads in 2.0-2.4 s at normal priority. Adaptive
+         does not help; it only promotes on XPC activity, which this daemon
+         never has. tests/launchd-qos.test.ts pins this. -->
     <key>ProcessType</key>
-    <string>Background</string>
-    <key>Nice</key>
-    <integer>5</integer>
+    <string>Interactive</string>
 </dict>
 </plist>

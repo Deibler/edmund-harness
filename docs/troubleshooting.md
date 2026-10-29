@@ -118,7 +118,12 @@ depend on the webhook; balances are synced on every portal open and every
 generation. For Twilio, `public_base_url` must match the configured webhook
 URL exactly or every signature check fails.
 
-## Local speech is very slow under launchd
+## Everything is slow under launchd (replies, speech, worker loads)
 
-`ProcessType Background` pins the daemon to efficiency cores. Run in the
-foreground to confirm, then change the plist template.
+`ProcessType Background` pins the daemon and every process it spawns to the
+efficiency cores with throttled I/O. The daemon logs `[boot] qos` when it runs
+in that band, and `ps -o pri= -p <pid>` prints 4 for it. The template says
+`Interactive`; if the installed copy in `~/Library/LaunchAgents` disagrees, run
+`scripts/launchd/service.sh install` to render it again. A process keeps the
+band it was spawned with, so a Messages that outlived the old daemon stays
+throttled until it next restarts.

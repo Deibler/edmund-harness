@@ -11,6 +11,7 @@ import { BgJobStore } from "./background/store.ts";
 import { banner, highWaterMark } from "./boot/banner.ts";
 import { type CatchUp, runCatchUp } from "./boot/catchup.ts";
 import { hardenHarnessPermissions } from "./boot/harden-permissions.ts";
+import { schedulingPriority, throttledQosWarning } from "./boot/qos.ts";
 import {
   ResourceGovernor,
   atomicStatusWriter,
@@ -380,6 +381,8 @@ async function main() {
   // sideways ("why is Edmund ignoring his persona?").
   const loadout = checkLoadout(config.claude.model, config.claude.agent_model);
   console.log(formatLoadoutReport(loadout));
+  const qosWarning = throttledQosWarning(schedulingPriority());
+  if (qosWarning) console.warn("[boot] qos", qosWarning);
 
   const activeSessions = new Set<SessionKey>();
   const turnControllers = new Map<SessionKey, AbortController>();
