@@ -1,5 +1,10 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import {
+  POST_COMPACT_THREAD_CHARS,
+  type ThreadDeps,
+  recentThreadWindow,
+} from "../channels/history.ts";
 import { GROUPS_DIR, PEOPLE_DIR, PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
 import type { ChatDb } from "../imessage/db.ts";
@@ -17,6 +22,42 @@ import type { StateStore } from "../sessions/store.ts";
 import { skillVisibleTo } from "../skills/author.ts";
 import { readDb } from "../skills/installer.ts";
 import { humanCount, progressBar } from "../util/log.ts";
+
+/**
+ * Where the model's verbatim sight of this conversation begins, so recall
+ * offers everything older and nothing it can already read.
+ *
+ * A group turn shows its active thread, and a DM cold start its history
+ * lines: those start where they say (`shownSinceMs`). A warm DM shows
+ * nothing and relies on the conversation itself, which since its last
+ * compaction holds a summary, the thread the post-compaction hook put back
+ * (recentThreadWindow before that moment), and everything after. Until
+ * 2026-10-29 a warm DM skipped a fixed 48 hours instead, while the operator's DM
+ * compacted every 1.2 hours: on the median turn 140 of the previous 2 days'
+ * 144 messages were in neither the conversation nor recall.
+ *
+ * With no compaction or session start recorded, undefined: the caller's
+ * fixed window applies.
+ */
+export function recallSightSince(
+  sessionKey: SessionKey,
+  chatGuid: string,
+  lastCompactAtMs: number,
+  deps: ThreadDeps,
+  shownSinceMs?: number,
+): number | undefined {
+  if (shownSinceMs !== undefined) return shownSinceMs;
+  if (lastCompactAtMs <= 0) return undefined;
+  try {
+    const { lines } = recentThreadWindow(sessionKey, chatGuid, deps, {
+      beforeMs: lastCompactAtMs,
+      budgetChars: POST_COMPACT_THREAD_CHARS,
+    });
+    return lines[0]?.timestampMs ?? lastCompactAtMs;
+  } catch {
+    return lastCompactAtMs;
+  }
+}
 
 /**
  * Set up the semantic-recall background indexer + auto-recall closure that
@@ -235,6 +276,15 @@ export function wireRecall(args: {
         // anymore (only the summary survives), so surfacing them is
         // exactly when recall is most valuable.
         const lastCompactAtMs = sessionKey ? state.getLastCompactAtMs(sessionKey) : 0;
+        const sightSinceMs = sessionKey
+          ? recallSightSince(
+              sessionKey,
+              chatGuid,
+              lastCompactAtMs,
+              { config, chatDb, contacts, state },
+              shownSinceMs,
+            )
+          : shownSinceMs;
         let surfaced: { compactAtMs: number; refs: Set<string> } | undefined;
         if (sessionKey) {
           surfaced = surfacedRefs.get(sessionKey);
@@ -250,9 +300,9 @@ export function wireRecall(args: {
           // Being addressed by name is not a subject to search for.
           selfNames: config.identity.names,
           excludeRecentMs: config.memory_recall.auto_recall_window_hours * 3_600_000,
-          // A group turn's history ends where its shown thread starts;
-          // recall picks up from there instead of skipping a fixed window.
-          excludeFromMs: shownSinceMs,
+          // Recall picks up where the model's verbatim sight ends instead of
+          // skipping a fixed window (recallSightSince).
+          excludeFromMs: sightSinceMs,
           excludeRefs: surfaced?.refs,
           deepSplitDays: config.memory_recall.auto_recall_deep_split_days,
           deepLimit: config.memory_recall.auto_recall_deep_limit,
@@ -269,6 +319,7 @@ export function wireRecall(args: {
           // A suggestion that dead-ends is worse than no suggestion.
           suggestSkills: config.memory_recall.suggest_skills,
           skillsToSkip: skillsUnavailableTo(sessionKey),
+          speakerLabel: (sender) => (sender === "me" ? "You" : (contacts.label(sender) ?? sender)),
         });
         if (surfaced) {
           for (const h of [...result.senderInChat, ...result.recent, ...result.deep]) {

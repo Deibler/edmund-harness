@@ -863,6 +863,22 @@ function rerankForDiversity(
     (c) => cache.get(c.ref)?.vec ?? new Float32Array(0),
   );
 
+  // MMR weighs relevance against similarity, so both must be on the same
+  // scale. Similarity is cosine (0–1); relevance arrives as whatever ranked
+  // the pool: an RRF score (at most ~0.033) when the query text went through
+  // the sparse leg, or a cosine times recency and context boosts (up to ~4)
+  // otherwise. On the RRF scale 0.3·maxSim outweighed 0.7·relevance about
+  // twentyfold, so after the first pick every auto-recall leg chose the hit
+  // least like the ones before it, not the next most relevant (2026-10-29).
+  // Min-max over the pool keeps the ranking and puts it on 0–1.
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = Number.NEGATIVE_INFINITY;
+  for (const c of candidates) {
+    lo = Math.min(lo, c.rankScore);
+    hi = Math.max(hi, c.rankScore);
+  }
+  const relevance = (c: SearchHit) => (hi > lo ? (c.rankScore - lo) / (hi - lo) : 1);
+
   const picked: SearchHit[] = [];
   const pickedVecs: Float32Array[] = [];
   const remaining = candidates.map((_, i) => i); // indices into candidates
@@ -892,7 +908,7 @@ function rerankForDiversity(
         continue;
       }
 
-      const mmrScore = lam * cand.rankScore - (1 - lam) * maxSim;
+      const mmrScore = lam * relevance(cand) - (1 - lam) * maxSim;
       if (mmrScore > bestScore) {
         bestScore = mmrScore;
         bestIdx = i;

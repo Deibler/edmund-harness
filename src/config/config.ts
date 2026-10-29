@@ -1209,9 +1209,11 @@ export const ConfigSchema = z.object({
        * (see memory/query-intent.ts).
        */
       auto_recall_min_score: z.number().min(-1).max(1).default(0.7),
-      /** Skip messages that fall within the last N hours — those are
-       *  already in the rendered recent-thread window, so re-surfacing
-       *  is noise. */
+      /** Fallback only: skip messages from the last N hours when nothing
+       *  says where the model's verbatim sight begins. A group turn's shown
+       *  thread, a cold start's history, or a warm conversation's last
+       *  compaction (or start) sets that edge instead; see recallSightSince
+       *  in boot/wire-recall.ts. */
       auto_recall_window_hours: z.number().int().nonnegative().default(24),
       /** Where "recent" ends and "deep" begins, in days from now.
        *  Hits older than this are shown as a separate "deep memory"
