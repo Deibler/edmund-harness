@@ -33,10 +33,12 @@ function harness(args?: {
   rssMiB?: number;
   footprintMiB?: number;
   trim?: number;
-  flush?: number;
+  /** Sessions the pool would evict, least recently used first. */
+  idle?: string[];
 }) {
   let now = 1_000_000_000;
-  let flushes = 0;
+  let evictions = 0;
+  const idle = [...(args?.idle ?? [])];
   let trims = 0;
   let restarts = 0;
   let lastStatus: ResourceStatus | null = null;
@@ -55,9 +57,9 @@ function harness(args?: {
     ],
     getWorkerPids: () => [],
     isBusy: () => args?.busy ?? false,
-    flushWorkers: async () => {
-      flushes++;
-      return args?.flush ?? 0;
+    evictIdleWorker: async () => {
+      evictions++;
+      return idle.shift() ?? null;
     },
     trimEmbeddings: () => {
       trims++;
@@ -90,18 +92,39 @@ function harness(args?: {
     advance: () => {
       now += 10_000;
     },
-    counts: () => ({ flushes, trims, restarts }),
+    counts: () => ({ evictions, trims, restarts }),
     status: () => lastStatus,
   };
 }
 
 describe("resource governor actions", () => {
-  test("soft pressure trims embeddings and evicts only idle workers", async () => {
-    const h = harness({ trim: 1, flush: 2 });
+  test("soft pressure trims embeddings and evicts one idle worker, not all of them", async () => {
+    const h = harness({ trim: 1, idle: ["dm:a", "dm:b"] });
     const status = await h.governor.tick();
     expect(status?.pressure).toBe("soft");
-    expect(h.counts()).toEqual({ flushes: 1, trims: 1, restarts: 0 });
-    expect(h.status()?.action).toContain("evicted 2 idle worker");
+    expect(h.counts()).toEqual({ evictions: 1, trims: 1, restarts: 0 });
+    expect(h.status()?.action).toContain("evicted idle worker dm:a (least recently used)");
+  });
+
+  test("each sample evicts the next least recently used, until none qualifies", async () => {
+    const h = harness({ idle: ["dm:a", "dm:b"] });
+    const seen: (string | null | undefined)[] = [];
+    for (let i = 0; i < 4; i++) {
+      await h.governor.tick();
+      seen.push(h.status()?.action);
+      h.advance();
+    }
+    expect(seen[0]).toContain("dm:a");
+    expect(seen[1]).toContain("dm:b");
+    expect(seen[2]).toBeNull();
+    // Embeddings are trimmed once per cooldown, not every sample.
+    expect(h.counts().trims).toBe(1);
+  });
+
+  test("one busy session does not stop relief for the idle ones", async () => {
+    const h = harness({ busy: true, idle: ["dm:idle"] });
+    await h.governor.tick();
+    expect(h.status()?.action).toContain("evicted idle worker dm:idle");
   });
 
   test("a hard breach must persist after cleanup before restart", async () => {
@@ -121,7 +144,9 @@ describe("resource governor actions", () => {
       await h.governor.tick();
       h.advance();
     }
-    expect(h.counts()).toEqual({ flushes: 0, trims: 1, restarts: 0 });
+    // Nothing idle to evict and a turn in flight: the restart waits.
+    expect(h.counts().restarts).toBe(0);
+    expect(h.counts().trims).toBe(1);
     expect(h.status()?.action).toContain("deferred until active turns finish");
   });
 

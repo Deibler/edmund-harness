@@ -128,7 +128,7 @@ export class WorkerPool {
       sessionKey,
       rebindKey: e.rebindKey,
       lastUsedMs: e.lastUsedMs,
-      pid: (e.worker as { pid?: number | null }).pid ?? null,
+      pid: e.worker.pid,
       isDead: e.worker.isDead,
     }));
     return {
@@ -416,24 +416,35 @@ export class WorkerPool {
     await Promise.all(evictions);
   }
 
-  private async evictLruIdle(): Promise<void> {
+  /**
+   * Evict the least recently used idle worker, never a busy one, and none
+   * used within `minIdleMs`. Returns its session key, or null when none
+   * qualifies. The pool calls it at capacity; the memory governor calls it
+   * once per sample while over its soft limit, instead of flushing every
+   * warm worker as it did until 2026-10-29 (67 of 156 cold spawns in the
+   * operator's DM from 10-20 followed such a flush).
+   */
+  async evictLruIdle(reason = "lru-idle to make room", minIdleMs = 0): Promise<string | null> {
     let lru: { key: string; ageMs: number } | null = null;
     const now = Date.now();
     for (const [key, entry] of this.entries) {
       if (entry.busy) continue;
       const age = now - entry.lastUsedMs;
+      if (age < minIdleMs) continue;
       if (!lru || age > lru.ageMs) lru = { key, ageMs: age };
     }
     if (!lru) {
-      // All workers are busy — refuse to spawn another (the caller's
-      // turn will get a "pool full" error from acquire). Rare in practice
-      // because a single user is a single concurrent turn.
-      log.warn("claude-pool", "at capacity with all workers busy", { size: this.entries.size });
-      return;
+      // At capacity with every worker busy, the caller's turn gets a "pool
+      // full" error from acquire. Rare: a single user is a single turn.
+      if (minIdleMs === 0) {
+        log.warn("claude-pool", "at capacity with all workers busy", { size: this.entries.size });
+      }
+      return null;
     }
-    log.info("claude-pool", "evicting LRU idle", { session: lru.key, ageMs: lru.ageMs });
+    log.info("claude-pool", "evicting LRU idle", { session: lru.key, ageMs: lru.ageMs, reason });
     this.stats.lruEvictions++;
-    await this.evict(lru.key, "lru-idle to make room");
+    await this.evict(lru.key, reason);
+    return lru.key;
   }
 
   private sweepIdle(): void {

@@ -344,6 +344,14 @@ export function toolEnv(
     // header assumes and capping the routine turn's re-read.
     ENABLE_TOOL_SEARCH: "auto:1",
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: "250000",
+    // After each compaction the CLI drops the transcript's history from before
+    // it (the file only, never the conversation: a resume restores the same
+    // context). The operator's DM transcript had reached 1.3 GB, of which 4 MB
+    // was live, and every cold spawn re-read all of it: 1.6-2.2 s from the
+    // internal disk with the file cached, measured 2026-10-29, more from the
+    // USB disk cold. Trimmed, the same resume loaded in 0.4 s. Read from the
+    // launch environment only, so it lives here, not in --settings.
+    CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: "1",
     EDMUND_CONFIG_PATH: resolve("./config.toml"),
     EDMUND_SESSION_KEY: sessionKey,
     EDMUND_INBOUND_DEPTH: String(inboundDepth),

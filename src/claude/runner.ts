@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config/config.ts";
@@ -127,7 +127,47 @@ export function isWorkerPoolBusy(): boolean {
   return workerPool?.anyBusy() ?? false;
 }
 
-/** Force-evict every resident worker. Returns count evicted. */
+/** A session transcript's size for the log, e.g. "4.1 MB"; "?" if unreadable. */
+function transcriptSize(sandboxPath: string, sessionId: string): string {
+  try {
+    return `${(statSync(sessionFilePath(sandboxPath, sessionId)).size / 1e6).toFixed(1)} MB`;
+  } catch {
+    return "?";
+  }
+}
+
+/** When each session last needed the browser loadout (in memory). */
+const browserNeededAt = new Map<string, number>();
+const BROWSER_STICKY_MS = 24 * 60 * 60_000;
+
+/**
+ * Whether this turn's worker should carry the browser loadout: when the turn
+ * needs it, or when the session needed it within the last 24 hours. The warm
+ * worker already kept it once it had it, but an evicted worker's successor
+ * started without it, and the session's next link recycled it straight back
+ * up, a cold spawn: 65 such recycles from 10-20 to 10-29, 37 of them in a
+ * session that had needed the browser within the day before.
+ */
+export function stickyBrowser(sessionKey: string, needs: boolean, now = Date.now()): boolean {
+  if (needs) {
+    browserNeededAt.set(sessionKey, now);
+    return true;
+  }
+  const last = browserNeededAt.get(sessionKey);
+  return last !== undefined && now - last < BROWSER_STICKY_MS;
+}
+
+/**
+ * Memory relief: evict the least recently used idle worker that has not
+ * been used for ten minutes, so the conversation in progress keeps its warm
+ * worker. Returns the evicted session, or null when none qualifies.
+ */
+export async function evictIdleWorkerForMemory(): Promise<string | null> {
+  return workerPool?.evictLruIdle("memory pressure (lru)", 10 * 60_000) ?? null;
+}
+
+/** Force-evict every resident worker. Returns count evicted. The dashboard's
+ *  "Flush pool" button; the memory governor evicts one at a time instead. */
 export async function flushWorkerPool(): Promise<number> {
   if (!workerPool) return 0;
   return workerPool.flushAll("dashboard flush");
@@ -359,7 +399,10 @@ export async function runClaude(
   // down throws away the warm Chrome AND the cached prompt prefix, then
   // the next URL recycles back up. Downgrade happens naturally when the
   // worker is idle-evicted.
-  let needsBrowser = input.browserHint ?? envelopeNeedsBrowser(input.envelope);
+  let needsBrowser = stickyBrowser(
+    input.sessionKey,
+    input.browserHint ?? envelopeNeedsBrowser(input.envelope),
+  );
   if (!needsBrowser && getPool(config)?.currentRebindKey(input.sessionKey)?.includes("browser=1")) {
     needsBrowser = true;
   }
@@ -796,6 +839,14 @@ async function runViaPool(args: {
   // Resume the prior session if we have one. (Reusing a warm worker means
   // `--resume` is paid only on the FIRST turn of that worker's life.)
   if (args.existingSessionId) {
+    if (!pool.hasWorker(input.sessionKey)) {
+      // What the cold spawn about to happen has to load: the worker's own
+      // "cold start" line then says how long it took.
+      log.info("claude", "cold resume", {
+        session: input.sessionKey,
+        transcript: transcriptSize(input.sandboxPath, args.existingSessionId),
+      });
+    }
     const result = await attempt(["--resume", args.existingSessionId]);
     if (result.ok) {
       store.clearError(input.sessionKey);

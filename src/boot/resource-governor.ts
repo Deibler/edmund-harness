@@ -88,7 +88,9 @@ export type ResourceGovernorDeps = {
   collectProcesses: () => Promise<ProcessRow[]>;
   getWorkerPids: () => number[];
   isBusy: () => boolean;
-  flushWorkers: () => Promise<number>;
+  /** Evict the least recently used idle worker; its session key, or null
+   *  when none qualifies. Never a busy one. */
+  evictIdleWorker: () => Promise<string | null>;
   trimEmbeddings: () => number;
   collectMemory: () => {
     rss: number;
@@ -265,18 +267,32 @@ export class ResourceGovernor {
       let action: string | null = null;
       const now = this.deps.now();
       const cooldown = this.options.reliefCooldownMs ?? 5 * 60_000;
-      if (overSoft && now - this.lastReliefMs >= cooldown) {
-        const embeddings = this.deps.trimEmbeddings();
-        const workers = busy ? 0 : await this.deps.flushWorkers();
-        this.deps.gc();
-        this.lastReliefMs = now;
-        action = busy
-          ? `trimmed ${embeddings} embedding worker(s); resident workers busy`
-          : `trimmed ${embeddings} embedding worker(s), evicted ${workers} idle worker(s), forced GC`;
-        this.deps.log("warn", `[resources] soft memory limit: ${action}`);
-        // Give successful cleanup a full sustained window to show up in ps
-        // before deciding that the daemon itself needs a graceful restart.
-        if (embeddings > 0 || workers > 0) this.consecutiveHardSamples = 0;
+      if (overSoft) {
+        // One idle worker per sample, least recently used first, and the next
+        // sample re-measures. Until 2026-10-29 this flushed every idle warm
+        // worker at once, at most every 5 minutes, and the next message to
+        // each of them paid a cold spawn: 67 of 156 cold spawns in the
+        // operator's DM from 10-20. Busy workers are never chosen, so one
+        // active turn no longer blocks relief for the rest of the pool.
+        let embeddings = 0;
+        if (now - this.lastReliefMs >= cooldown) {
+          embeddings = this.deps.trimEmbeddings();
+          this.deps.gc();
+          this.lastReliefMs = now;
+        }
+        const evicted = await this.deps.evictIdleWorker();
+        if (embeddings > 0 || evicted) {
+          action = [
+            embeddings > 0 ? `trimmed ${embeddings} embedding worker(s)` : null,
+            evicted ? `evicted idle worker ${evicted} (least recently used)` : null,
+          ]
+            .filter(Boolean)
+            .join("; ");
+          this.deps.log("warn", `[resources] soft memory limit: ${action}`);
+          // Give successful cleanup a full sustained window to show up in ps
+          // before deciding that the daemon itself needs a graceful restart.
+          this.consecutiveHardSamples = 0;
+        }
       }
 
       let restartReason: string | null = null;

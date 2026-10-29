@@ -31,6 +31,7 @@ import { startCliWatch } from "./claude/cli-canary.ts";
 import { checkLoadout, formatLoadoutReport } from "./claude/loadout-check.ts";
 import { showToRunningTurn } from "./claude/mid-turn.ts";
 import {
+  evictIdleWorkerForMemory,
   flushWorkerPool,
   getWorkerPoolStats,
   injectIntoRunningTurn,
@@ -457,7 +458,7 @@ async function main() {
           .map((worker) => worker.pid)
           .filter((pid): pid is number => pid !== null),
       isBusy: isWorkerPoolBusy,
-      flushWorkers: flushWorkerPool,
+      evictIdleWorker: evictIdleWorkerForMemory,
       trimEmbeddings: trimTransformerEmbeddingWorkers,
       collectMemory: () => ({
         ...process.memoryUsage(),
@@ -1102,6 +1103,9 @@ async function main() {
         return;
       }
     }
+    // A new turn's recall runs when the debounce window closes; load the
+    // embedding model meanwhile if it was released (embed-provider.ts warm).
+    recall.provider?.warm?.();
     pipeline.enqueue(key, msg);
   };
 

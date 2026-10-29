@@ -7,6 +7,8 @@
  * responsive while recall backfills are active.
  */
 
+import { type EmbedLane, laneScheduler } from "./embed-lanes.ts";
+
 type Pooling = "mean" | "cls";
 
 // Bun exposes a Web-Worker-compatible global but this project intentionally
@@ -18,6 +20,8 @@ type EmbedRequest = {
   model: string;
   pooling: Pooling;
   texts: string[];
+  /** Absent from callers that predate lanes: treated as index work. */
+  lane?: EmbedLane;
 };
 
 type FeatureExtractor = (
@@ -56,12 +60,11 @@ function loadPipeline(model: string): Promise<FeatureExtractor> {
 }
 
 // One pipeline instance is not safe to drive concurrently. Serialising here
-// also prevents an auto-recall query from racing an indexer batch inside ONNX.
-let queue = Promise.resolve();
-
-self.onmessage = (event: MessageEvent<EmbedRequest>) => {
-  const request = event.data;
-  queue = queue.then(async () => {
+// also prevents an auto-recall query from racing an indexer batch inside ONNX;
+// queries go first (embed-lanes.ts).
+const push = laneScheduler<EmbedRequest>(
+  (request) => request.lane ?? "index",
+  async (request) => {
     try {
       const fe = await loadPipeline(request.model);
       const out = await fe(request.texts, {
@@ -77,5 +80,7 @@ self.onmessage = (event: MessageEvent<EmbedRequest>) => {
         error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
     }
-  });
-};
+  },
+);
+
+self.onmessage = (event: MessageEvent<EmbedRequest>) => push(event.data);
