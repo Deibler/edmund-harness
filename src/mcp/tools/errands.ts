@@ -102,7 +102,7 @@ export function errandTools(ctx: ToolContext): ToolDef[] {
             isGroupChat: args.is_group_chat,
             phoneNumber: args.phone_number,
             groupChatId: args.group_chat_id,
-            inboundDepth: readInboundDepth(),
+            inboundDepth: state.turnDepth(ctx.sessionKey),
             errandId: pendingId,
           },
           {
@@ -230,14 +230,6 @@ export function errandTools(ctx: ToolContext): ToolDef[] {
       },
     },
   ];
-}
-
-/** Same semantics as contacts.ts: relay depth of the inbound that started this turn. */
-function readInboundDepth(): number {
-  const raw = process.env.EDMUND_INBOUND_DEPTH;
-  if (!raw) return 0;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
 function ok(text: string) {

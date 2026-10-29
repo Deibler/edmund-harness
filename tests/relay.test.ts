@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,9 +10,13 @@ import {
   relativeAgo,
   relay,
 } from "../src/bridge/relay.ts";
-import type { Config } from "../src/config/config.ts";
+import { toolEnv } from "../src/claude/mcp-config.ts";
+import { type Config, ConfigSchema } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
 import type { ChatDb } from "../src/imessage/db.ts";
+import type { ToolContext } from "../src/mcp/context.ts";
+import { contactsTools } from "../src/mcp/tools/contacts.ts";
+import { errandTools } from "../src/mcp/tools/errands.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import { normalizeHandle } from "../src/sessions/key.ts";
 import { StateStore } from "../src/sessions/store.ts";
@@ -423,5 +427,95 @@ describe("relay() — input validation", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.targetSessionKey).toBe("imessage:group:chat-fam");
     expect(crons.listActive().length).toBe(1);
+  });
+});
+
+/**
+ * The relay depth reaches the tools through the state store, recorded per
+ * turn, not through the worker's spawn environment: a warm worker serves many
+ * turns, and keying the worker on depth cost every relay two cold spawns (one
+ * into the session, one back out on its next ordinary message).
+ */
+describe("relay tools read the running turn's depth", () => {
+  let dataDir: string;
+  let state: StateStore;
+  let crons: CronStore;
+  const JORDAN = "+15550100001";
+  const CASEY = "+15550100003";
+  const KEY = `imessage:dm:${JORDAN}`;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "relay-depth-test-"));
+    state = new StateStore(dataDir);
+    crons = new CronStore(dataDir);
+  });
+
+  afterEach(() => {
+    state.close();
+    crons.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  function tool(name: "message_contact" | "ask_contact") {
+    const ctx = {
+      config: configWithMode("*"),
+      cron: crons,
+      chatDb: buildFakeChatDb({ handles: [JORDAN, CASEY], groups: [] }),
+      contacts: new ContactBook([]),
+      sessionKey: KEY,
+      dataDir,
+    } as unknown as ToolContext;
+    const found = [...contactsTools(ctx), ...errandTools(ctx)].find((t) => t.name === name);
+    if (!found) throw new Error(`no tool ${name}`);
+    return found;
+  }
+
+  const args = (name: string) =>
+    name === "ask_contact"
+      ? { question: "is Saturday on?", is_group_chat: false, phone_number: CASEY }
+      : { message: "is Saturday on?", is_group_chat: false, phone_number: CASEY };
+
+  for (const name of ["message_contact", "ask_contact"] as const) {
+    test(`${name} refuses when the running turn is already at the max depth`, async () => {
+      state.setTurnDepth(KEY, MAX_RELAY_DEPTH);
+      const out = await tool(name).handler(args(name) as never);
+      expect(JSON.stringify(out)).toMatch(/loop guard/);
+      expect(crons.listActive().length).toBe(0);
+    });
+
+    test(`${name} relays one level deeper than the running turn`, async () => {
+      state.setTurnDepth(KEY, 1);
+      await tool(name).handler(args(name) as never);
+      const jobs = crons.listActive().filter((j) => j.sessionKey === `imessage:dm:${CASEY}`);
+      expect(jobs.length).toBe(1);
+      expect(parseInboundDepth(jobs[0]!.systemEvent)).toBe(2);
+    });
+  }
+
+  test("an organic turn after a relay turn records depth 0 again", () => {
+    state.setTurnDepth(KEY, 2);
+    state.setTurnDepth(KEY, 0);
+    expect(state.turnDepth(KEY)).toBe(0);
+    expect(state.turnDepth("imessage:dm:+15550100009")).toBe(0);
+  });
+
+  test("runModel records the depth before either CLI runs the turn", () => {
+    const model = readFileSync(join(import.meta.dir, "../src/model/runner.ts"), "utf8");
+    const write = model.indexOf(
+      "store.setTurnDepth(rawInput.sessionKey, rawInput.inboundDepth ?? 0)",
+    );
+    expect(write).toBeGreaterThan(0);
+    expect(write).toBeLessThan(model.indexOf("await runCodex(input, config, store)"));
+    expect(write).toBeLessThan(model.indexOf("await runClaude(input, config, store)"));
+  });
+
+  test("neither the worker's environment nor its rebind key carries the depth", () => {
+    const full = ConfigSchema.parse({ self: { handles: [] }, allowlist: {}, identity: {} });
+    const env = toolEnv(full, KEY, dataDir);
+    expect(Object.keys(env).some((k) => k.includes("DEPTH"))).toBe(false);
+    const runner = readFileSync(join(import.meta.dir, "../src/claude/runner.ts"), "utf8");
+    const key = runner.slice(runner.indexOf("const rebindKey = ["), runner.indexOf('].join("|")'));
+    expect(key.length).toBeGreaterThan(0);
+    expect(key).not.toMatch(/depth=\$\{/);
   });
 });

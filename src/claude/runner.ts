@@ -214,8 +214,8 @@ export type RunInput = {
   /**
    * Depth of the inbound envelope this turn responds to. 0 = organic
    * iMessage; N = a relay arriving at depth N (see bridge/relay.ts).
-   * Surfaced to MCP tools via EDMUND_INBOUND_DEPTH so `send_message` can
-   * cap loop chains at MAX_RELAY_DEPTH.
+   * runModel records it for the session's turn (StateStore.setTurnDepth),
+   * where the relay tools read it to cap loop chains at MAX_RELAY_DEPTH.
    */
   inboundDepth?: number;
   /**
@@ -505,7 +505,6 @@ export async function runClaude(
     config,
     input.sessionKey,
     input.sandboxPath,
-    input.inboundDepth ?? 0,
     isGuest ? (input.guest?.tier ?? null) : null,
   );
   const timeoutMs = config.claude.timeout_seconds * 1000;
@@ -792,7 +791,9 @@ async function runViaPool(args: {
   // different group member talked, defeating the pool's whole point.
   const rebindKey = [
     input.sandboxPath,
-    `depth=${input.inboundDepth ?? 0}`,
+    // No relay depth here: runModel records it per turn, so a relay into a
+    // session reuses its warm worker (each relay used to cost two cold spawns,
+    // one in and one back out).
     `images=${useStreamJsonInput ? "stream-json" : "text"}`,
     // Browser MCP set is part of the worker's spawn-time mcp-config — different
     // selection means a different child-process tree, so it must rebind. Once

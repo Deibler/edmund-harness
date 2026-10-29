@@ -318,12 +318,6 @@ export function toolEnv(
   sessionKey: string,
   sandboxPath: string,
   /**
-   * Depth of the inbound envelope being handled this turn — 0 for an
-   * organic iMessage, N for a relay arriving at depth N. Read by the
-   * `send_message` MCP tool to enforce MAX_RELAY_DEPTH.
-   */
-  inboundDepth = 0,
-  /**
    * Guest-access tier of this session's sender, or null for the full
    * operator loadout. Read by the MCP server (src/mcp/server.ts), which
    * simply does not register the excluded tools for guest tiers —
@@ -354,7 +348,6 @@ export function toolEnv(
     CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: "1",
     EDMUND_CONFIG_PATH: resolve("./config.toml"),
     EDMUND_SESSION_KEY: sessionKey,
-    EDMUND_INBOUND_DEPTH: String(inboundDepth),
     // Always set, so a tool process never has to guess. Guests keep their
     // tier names; everyone else is "operator" or "contact" per [security].
     EDMUND_SESSION_TIER: tier,

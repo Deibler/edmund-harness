@@ -185,6 +185,15 @@ export class StateStore {
         created_ms   INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_inbound_ack_session ON inbound_ack(session_key, row_id);
+      -- Relay depth (bridge/relay.ts) of the turn each session is running:
+      -- runModel writes it as the turn starts, and the relay tools read it
+      -- when the model calls them. A warm worker serves many turns, so the
+      -- depth cannot ride in its spawn environment.
+      CREATE TABLE IF NOT EXISTS turn_depth (
+        session_key TEXT PRIMARY KEY,
+        depth       INTEGER NOT NULL,
+        at_ms       INTEGER NOT NULL
+      );
     `);
     // In-place column adds for DBs that predate these columns. Each ALTER
     // is wrapped so a re-run on an already-migrated DB is a no-op.
@@ -373,6 +382,22 @@ export class StateStore {
       startedAtMs,
       sessionKey,
     );
+  }
+
+  /** Record the relay depth of the turn this session is starting. */
+  setTurnDepth(sessionKey: SessionKey, depth: number, atMs = Date.now()): void {
+    this.q(
+      `INSERT INTO turn_depth(session_key, depth, at_ms) VALUES (?, ?, ?)
+         ON CONFLICT(session_key) DO UPDATE SET depth = excluded.depth, at_ms = excluded.at_ms`,
+    ).run(sessionKey, depth, atMs);
+  }
+
+  /** The relay depth of the session's current turn; 0 when none was recorded. */
+  turnDepth(sessionKey: SessionKey): number {
+    const row = this.q("SELECT depth FROM turn_depth WHERE session_key = ?").get(sessionKey) as
+      | { depth: number }
+      | undefined;
+    return row?.depth ?? 0;
   }
 
   markFallbackSent(sessionKey: SessionKey, sentAtMs: number): void {

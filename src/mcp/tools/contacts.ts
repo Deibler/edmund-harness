@@ -92,7 +92,9 @@ export function contactsTools(ctx: ToolContext): ToolDef[] {
         const originatorDisplayName =
           ctx.contacts.displayName(originatorHandle) ?? originatorHandle;
 
-        const inboundDepth = readInboundDepth();
+        // The running turn's relay depth, recorded by runModel as it started.
+        const state = stateStore(ctx);
+        const inboundDepth = state.turnDepth(ctx.sessionKey);
 
         const result = relay(
           {
@@ -110,7 +112,7 @@ export function contactsTools(ctx: ToolContext): ToolDef[] {
             config: ctx.config,
             chatDb: ctx.chatDb,
             contacts: ctx.contacts,
-            state: stateStore(ctx),
+            state,
             crons: ctx.cron instanceof CronStore ? ctx.cron : (ctx.cron as CronStore),
           },
         );
@@ -191,13 +193,6 @@ function renderContactList(ctx: ToolContext): string {
     }
   }
   return lines.join("\n");
-}
-
-function readInboundDepth(): number {
-  const raw = process.env.EDMUND_INBOUND_DEPTH;
-  if (!raw) return 0;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
 /**
