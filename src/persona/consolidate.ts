@@ -5,9 +5,11 @@ import { easternDate } from "../util/clock.ts";
 import { archivedObservationCount, archivedObservationsSince } from "./archive.ts";
 import {
   MAX_PRINCIPLES,
+  MAX_RULE_CHARS,
   type Principle,
   type PrincipleScope,
   principlesDerivedAt,
+  principleViolations,
   principlesDerivedOn,
   readPrinciples,
   writePrinciples,
@@ -43,6 +45,14 @@ const ARCHIVE_RULE = `The file is not the whole record. Older observations are m
 an archive, and the newest of those are listed separately below. A principle
 whose evidence you cannot see is NOT unsupported: keep it unless something
 you can see contradicts it.`;
+
+/** Shared by both prompts: a slot holds one rule, never several. */
+const ONE_RULE = `ONE RULE PER PRINCIPLE
+Each principle is a single rule a reader can apply on its own, written as one
+imperative sentence of at most ${MAX_RULE_CHARS} characters. Never chain rules with
+semicolons, colons or "and" to fit more into a slot. When the list is full and
+a new rule matters more than a standing one, retire the weakest and say so in
+"revised". A rule that loses its slot is not lost: it stays in the log.`;
 
 export const CONSOLIDATION_PROMPT = `You maintain the OPERATING PRINCIPLES for one person: the short list of rules
 for how to work with them. You are not writing to the user and you are not
@@ -82,9 +92,11 @@ Do not simply re-emit the list.
 
 ${ARCHIVE_RULE}
 
+${ONE_RULE}
+
 Output ONE valid JSON object, nothing else, no markdown fences:
 {
-  "principles": [{ "rule": "<one sentence, imperative>", "evidence": ["YYYY-MM-DD", ...] }],
+  "principles": [{ "rule": "<one rule: one imperative sentence, at most ${MAX_RULE_CHARS} characters>", "evidence": ["YYYY-MM-DD", ...] }],
   "revised": "<one line: what changed and why, or 'no change'>"
 }
 
@@ -157,11 +169,13 @@ the list unchanged.
 
 ${ARCHIVE_RULE}
 
+${ONE_RULE}
+
 Cite the dates behind each principle so it can be audited.
 
 Output ONE valid JSON object, nothing else, no markdown fences:
 {
-  "principles": [{ "rule": "<one sentence, imperative>", "evidence": ["YYYY-MM-DD", ...] }],
+  "principles": [{ "rule": "<one rule: one imperative sentence, at most ${MAX_RULE_CHARS} characters>", "evidence": ["YYYY-MM-DD", ...] }],
   "revised": "<one line: what changed and why, or 'no change'>"
 }
 
@@ -260,6 +274,17 @@ export function buildConsolidationPrompt(
   ].join("\n");
 }
 
+/** What a retry is told when its first answer broke the length rules. */
+export function lengthRetryNote(broken: string[]): string {
+  return [
+    "YOUR LAST ANSWER BROKE THE LENGTH RULES:",
+    ...broken.map((b) => `- ${b}`),
+    "",
+    `Answer again. One rule per principle, one sentence of at most ${MAX_RULE_CHARS} characters. ` +
+      "Where two rules compete for a slot, retire the weaker; do not join them.",
+  ].join("\n");
+}
+
 /**
  * Run one consolidation for a person. `runModel` is injected so this stays a
  * pure function of its inputs in tests — the real caller passes the
@@ -281,11 +306,31 @@ export async function consolidatePerson(
     principlesDerivedOn(body),
     ARCHIVED_CONTEXT_BYTES,
   );
-  const raw = await runModel(systemPrompt, buildConsolidationPrompt(handle, body, archived));
+  const prompt = buildConsolidationPrompt(handle, body, archived);
+  const raw = await runModel(systemPrompt, prompt);
   if (!raw) return { ok: false, reason: "model call failed" };
 
-  const parsed = parseConsolidation(raw);
+  let parsed = parseConsolidation(raw);
   if (!parsed) return { ok: false, reason: "unparseable output" };
+
+  // Checked here, where the list is written, not trusted to the prompt: the
+  // prompt always asked for "one sentence" and got paragraphs. One retry that
+  // names what broke; a second miss keeps the standing list.
+  const broken = principleViolations(parsed.principles);
+  if (broken.length > 0) {
+    const retry = await runModel(systemPrompt, `${prompt}\n\n${lengthRetryNote(broken)}`);
+    const again = retry ? parseConsolidation(retry) : null;
+    const still = again ? principleViolations(again.principles) : broken;
+    if (!again || still.length > 0) {
+      log.warn("persona-consolidate", "principles over the length limits; kept the standing list", {
+        handle,
+        broken: still.length,
+        first: still[0]?.slice(0, 120),
+      });
+      return { ok: false, reason: "over the length limits" };
+    }
+    parsed = again;
+  }
 
   const recorded = countObservations(body) + archivedObservationCount(path);
   // No rules this time keeps the standing ones (a weak pass must not wipe

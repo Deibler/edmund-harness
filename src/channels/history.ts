@@ -1,11 +1,15 @@
 import type { WakeThread } from "../cron/wake-thread.ts";
-import { getRecentMessages } from "../imessage/history.ts";
+import { type HistoryLine, getRecentMessages, resolveBeforeRowId } from "../imessage/history.ts";
 import { getGroupParticipants } from "../imessage/participants.ts";
 import { recentReactionsToMe } from "../imessage/reactions.ts";
 import { lookupReplyContext } from "../imessage/reply-lookup.ts";
 import { findTopicShifts, pickActiveSegment, segmentByGaps } from "../imessage/segment.ts";
 import type { InboundMessage, ReplyContext } from "../imessage/types.ts";
-import { makeHistoryFilter, viewerForSession } from "../orchestrators/visibility.ts";
+import {
+  type VisibilityStore,
+  makeHistoryFilter,
+  viewerForSession,
+} from "../orchestrators/visibility.ts";
 import { copyAttachments } from "../persona/copy-received.ts";
 import {
   chatIdFromKey,
@@ -36,9 +40,10 @@ export type HistoryBundle = {
    *  messages have piled up since the model last spoke, recommend
    *  calling `catch_me_up`. */
   catchUpNudge: string | undefined;
-  /** Groups: the oldest message these lines show (the active thread's
-   *  start, or its first kept line when the thread was trimmed). Auto-recall
-   *  excludes from here rather than its fixed window: a group turn shows
+  /** The oldest message these lines show: for a group, the active thread's
+   *  start, or its first kept line when the thread was trimmed; for a DM
+   *  cold start, the first history line. Auto-recall excludes from here
+   *  rather than its fixed window: a group turn shows
    *  only the active thread, so chatter from earlier the same day was in
    *  neither the history nor recall (30% of group turns missed messages in
    *  that gap, 2026-10-23). */
@@ -171,6 +176,8 @@ export function buildHistoryBundle(
       scope: undefined,
       invocation: undefined,
       catchUpNudge: undefined,
+      // A cold start shows these lines, so recall starts where they do.
+      shownSinceMs: lines[0]?.timestampMs,
     };
   }
 
@@ -281,25 +288,72 @@ export function buildHistoryBundle(
 export function recentThreadLines(
   sessionKey: SessionKey,
   chatGuid: string,
-  deps: Pick<Deps, "config" | "chatDb" | "contacts" | "state" | "sms">,
+  deps: ThreadDeps,
   sinceMs = 0,
 ): string[] {
+  return recentThreadWindow(sessionKey, chatGuid, deps, { sinceMs }).formatted;
+}
+
+/** How much of the thread the post-compaction hook re-injects: about 3k
+ *  tokens. The last 60 messages of the operator's DM measured 2.7k tokens at the
+ *  median and 3.7k at p90 (2026-10-29); the window keeps the newest lines
+ *  that fit. Recall reads the same budget to know where that window began. */
+export const POST_COMPACT_THREAD_CHARS = 12_000;
+
+/** What reading a session's recent thread needs. `state` only serves the
+ *  orchestrator visibility filter, so a process without the daemon's store
+ *  (the post-compaction hook) passes null when no orchestrators are set. */
+export type ThreadDeps = Pick<Deps, "config" | "chatDb" | "contacts" | "sms"> & {
+  state: VisibilityStore | null;
+};
+
+/**
+ * The latest `[behavior] history_messages` of a session's thread, oldest
+ * first, as raw lines and as the envelope renders them. `beforeMs` reads the
+ * thread as it stood at that moment; `budgetChars` drops the oldest lines
+ * until the rendered text fits. The post-compaction hook re-injects exactly
+ * this window, and recall excludes it as already in sight, so both read it
+ * from here and cannot disagree about where it starts.
+ */
+export function recentThreadWindow(
+  sessionKey: SessionKey,
+  chatGuid: string,
+  deps: ThreadDeps,
+  opts: { sinceMs?: number; beforeMs?: number; budgetChars?: number } = {},
+): { lines: HistoryLine[]; formatted: string[] } {
   const { config, chatDb, contacts } = deps;
+  const sinceMs = opts.sinceMs ?? 0;
+  const beforeMs = opts.beforeMs ?? Number.POSITIVE_INFINITY;
   const limit = config.behavior.history_messages;
-  if (limit <= 0 || isMirrorSession(sessionKey) || isTradingSession(sessionKey)) return [];
+  const empty = { lines: [], formatted: [] };
+  if (limit <= 0 || isMirrorSession(sessionKey) || isTradingSession(sessionKey)) return empty;
+  let lines: HistoryLine[];
   if (isSmsSession(sessionKey)) {
-    if (!deps.sms) return [];
-    const raw = deps.sms.history(chatIdFromKey(sessionKey), limit);
-    return formatHistoryLines(
-      raw.filter((l) => l.timestampMs > sinceMs),
-      contacts,
+    if (!deps.sms) return empty;
+    lines = deps.sms
+      .history(chatIdFromKey(sessionKey), limit)
+      .filter((l) => l.timestampMs > sinceMs && l.timestampMs < beforeMs);
+  } else {
+    const visible = makeHistoryFilter(viewerForSession(sessionKey), chatGuid, config, deps.state);
+    const beforeRowId = Number.isFinite(beforeMs)
+      ? resolveBeforeRowId(chatDb, chatGuid, beforeMs)
+      : Number.MAX_SAFE_INTEGER;
+    lines = getRecentMessages(chatDb, chatGuid, beforeRowId, limit).filter(
+      (l) => l.timestampMs > sinceMs && visible(l),
     );
   }
-  const visible = makeHistoryFilter(viewerForSession(sessionKey), chatGuid, config, deps.state);
-  const lines = getRecentMessages(chatDb, chatGuid, Number.MAX_SAFE_INTEGER, limit).filter(
-    (l) => l.timestampMs > sinceMs && visible(l),
-  );
-  return formatHistoryLines(lines, contacts);
+  let formatted = formatHistoryLines(lines, contacts);
+  if (opts.budgetChars !== undefined) {
+    let total = formatted.reduce((n, f) => n + f.length + 1, 0);
+    let drop = 0;
+    while (drop < formatted.length - 1 && total > opts.budgetChars) {
+      total -= formatted[drop]!.length + 1;
+      drop++;
+    }
+    lines = lines.slice(drop);
+    formatted = formatted.slice(drop);
+  }
+  return { lines, formatted };
 }
 
 /**
@@ -332,7 +386,7 @@ export function groupRoster(
 export function wakeThread(
   sessionKey: SessionKey,
   chatGuid: string,
-  deps: Pick<Deps, "config" | "chatDb" | "contacts" | "state" | "sms">,
+  deps: ThreadDeps,
   sinceMs?: number,
 ): WakeThread {
   return {

@@ -27,12 +27,40 @@ const ALWAYS_STRIPPED = new Set(["ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS
  * stays on. Project settings were never read in a sandbox (the CLI looks in
  * the cwd only, not the repo root), so dropping them changes nothing.
  */
-export const ISOLATED_SETTINGS_ARGS: readonly string[] = [
-  "--setting-sources",
-  "",
-  "--settings",
-  JSON.stringify({ autoMemoryEnabled: false, alwaysThinkingEnabled: true }),
-];
+export const ISOLATED_SETTINGS_ARGS: readonly string[] = isolatedSettingsArgs();
+
+/**
+ * The settings fragment that registers the post-compaction hook
+ * (post-compact-thread.ts) on a conversation worker: after every compaction,
+ * automatic or manual, Claude Code runs it and adds the chat's latest
+ * messages to the compacted context. It travels in the worker's own
+ * `--settings` JSON because workers read no settings files, with absolute
+ * paths because the worker's cwd is its sandbox.
+ */
+export function postCompactHookSettings(bun = process.execPath): Record<string, unknown> {
+  const script = new URL("./post-compact-thread.ts", import.meta.url).pathname;
+  return {
+    hooks: {
+      SessionStart: [
+        {
+          matcher: "compact",
+          hooks: [{ type: "command", command: `"${bun}" "${script}"`, timeout: 15 }],
+        },
+      ],
+    },
+  };
+}
+
+/** ISOLATED_SETTINGS_ARGS with more settings in the same `--settings` JSON,
+ *  such as the conversation worker's post-compaction hook. */
+export function isolatedSettingsArgs(extra: Record<string, unknown> = {}): string[] {
+  return [
+    "--setting-sources",
+    "",
+    "--settings",
+    JSON.stringify({ autoMemoryEnabled: false, alwaysThinkingEnabled: true, ...extra }),
+  ];
+}
 
 /**
  * For any spawn that may be resumed. Since about CLI 2.1.287 a conversation

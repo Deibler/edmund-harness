@@ -112,7 +112,7 @@ describe("every Claude spawn site is isolated", () => {
     // The pool's workers get runClaude's argv, so baseArgs covers both paths.
     const runner = read("src/claude/runner.ts");
     const baseArgs = runner.slice(runner.indexOf("const baseArgs"), runner.indexOf("const env ="));
-    expect(baseArgs).toContain("...ISOLATED_SETTINGS_ARGS,");
+    expect(baseArgs).toContain("...isolatedSettingsArgs(postCompactHookSettings()),");
     expect(read("scripts/agent-runner.ts")).toContain("...ISOLATED_SETTINGS_ARGS,");
     expect(read("src/claude/one-shot.ts")).toContain('spawn("claude", oneShotArgv(opts.args)');
   });

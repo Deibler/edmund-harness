@@ -220,5 +220,11 @@ export async function runModel(
   }
   // Everything before the turn started was in front of the model.
   if (result.ok) store.markModelTurn(rawInput.sessionKey, startedAtMs);
+  // A new model conversation holds only what its first envelope carried, as
+  // a compacted one holds only the re-injected thread: recall's edge of
+  // verbatim sight moves to its start either way (recallSightSince).
+  if (result.ok && result.claudeSessionId && result.claudeSessionId !== transition.sessionId) {
+    store.markCompacted(rawInput.sessionKey, startedAtMs);
+  }
   return { ...result, backend };
 }

@@ -1,6 +1,14 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { DEBUG, humanCost, humanCount, humanMs, log, shortSession, snippet } from "../util/log.ts";
-import { type IterationUsage, contextTokens, iterationContextTokens } from "./auto-compact.ts";
+import {
+  COMPACT_INSTRUCTIONS,
+  type CompactionEvent,
+  type IterationUsage,
+  compactionFromEvent,
+  contextAfterCompaction,
+  contextTokens,
+  iterationContextTokens,
+} from "./auto-compact.ts";
 import { type InjectResult, recordSeenMidTurn } from "./mid-turn.ts";
 
 /**
@@ -162,6 +170,11 @@ export type WorkerTurn = {
    * per-chunk frequency is fine.
    */
   onHeartbeat?: () => void;
+  /** The conversation was compacted during this turn: by the CLI itself when
+   *  it nears its auto-compact window, or by a `/compact` we wrote. Called
+   *  as the boundary arrives, so a turn that dies afterwards still reports
+   *  it. */
+  onCompaction?: (c: CompactionEvent) => void;
   /** Cancels this turn and retires the worker so no stale events can leak. */
   signal?: AbortSignal;
 };
@@ -174,10 +187,12 @@ export type WorkerResult =
       toolUses: number;
       durationMs: number;
       usage?: UsageStats;
-      /** Real context size of the turn — the largest single API call,
-       *  measured from streamed assistant-event usage (fallback:
-       *  contextTokens(usage)). Feed THIS to shouldCompact. */
+      /** Real context size of the turn — the largest single API call since
+       *  the last compaction, measured from streamed assistant-event usage
+       *  (fallback: contextTokens(usage)). Feed THIS to shouldCompact. */
       contextTokens?: number;
+      /** Compactions during the turn, oldest first. */
+      compactions: CompactionEvent[];
       /** The CLI's running total for the whole model session, carried across
        *  process restarts. Not this turn's cost: see recordSpend. */
       totalCostUsd?: number;
@@ -197,6 +212,7 @@ type ContentBlock =
 
 type ClaudeEvent =
   | { type: "system"; subtype: "init"; session_id: string; model?: string }
+  | { type: "system"; subtype: "compact_boundary"; compact_metadata?: unknown }
   | {
       type: "assistant";
       message: { content: Array<ContentBlock>; model?: string; usage?: UsageStats };
@@ -272,11 +288,15 @@ export class Worker {
      *  reports for the turn. Empty until the first assistant event. */
     model: string;
     toolUses: number;
-    /** Largest single API call seen this turn (read+create+input from
-     *  streamed assistant-event usage) — the turn's real context size.
-     *  Preferred over the result event's usage, whose totals sum every
-     *  round-trip and whose `iterations` shape is undocumented. */
+    /** Largest single API call seen this turn since the last compaction
+     *  (read+create+input from streamed assistant-event usage) — the turn's
+     *  real context size. Preferred over the result event's usage, whose
+     *  totals sum every round-trip and whose `iterations` shape is
+     *  undocumented. A compaction resets it: calls before the boundary
+     *  measured a conversation that no longer exists. */
     maxCallContextTokens: number;
+    compactions: CompactionEvent[];
+    onCompaction?: (c: CompactionEvent) => void;
     startedAt: number;
     idleTimer: ReturnType<typeof setTimeout>;
     armIdle: () => void;
@@ -467,6 +487,8 @@ export class Worker {
         model: "",
         toolUses: 0,
         maxCallContextTokens: 0,
+        compactions: [],
+        onCompaction: payload.onCompaction,
         startedAt,
         idleTimer: setTimeout(() => {}, 0),
         armIdle,
@@ -576,7 +598,7 @@ export class Worker {
       type: "user",
       message: {
         role: "user",
-        content: [{ type: "text", text: "/compact" }],
+        content: [{ type: "text", text: `/compact ${COMPACT_INSTRUCTIONS}` }],
       },
     })}\n`;
     const result = await this.turn({ stdinPayload, signal });
@@ -717,6 +739,27 @@ export class Worker {
   private handleEvent(evt: ClaudeEvent): void {
     if (evt.type === "stream_event") {
       this.handleStreamEvent(evt.event);
+      return;
+    }
+    if (evt.type === "system" && evt.subtype === "compact_boundary") {
+      const c = compactionFromEvent(evt);
+      if (!this.pending || !c) return;
+      this.pending.compactions.push(c);
+      this.pending.maxCallContextTokens = contextAfterCompaction(c);
+      log.info("claude-worker", "compacted", {
+        session: this.sessionKey,
+        trigger: c.trigger,
+        pre: c.preTokens !== undefined ? humanCount(c.preTokens) : undefined,
+        post: c.postTokens !== undefined ? humanCount(c.postTokens) : undefined,
+      });
+      try {
+        this.pending.onCompaction?.(c);
+      } catch (err) {
+        log.warn("claude-worker", "onCompaction threw", {
+          session: this.sessionKey,
+          err: (err as Error).message,
+        });
+      }
       return;
     }
     if (evt.type === "system" && evt.subtype === "init") {
@@ -866,8 +909,12 @@ export class Worker {
       }
       if (seenMidTurn.length > 0) recordSeenMidTurn(this.sessionKey, seenMidTurn);
       const reply = (evt.result ?? p.lastAssistantText).trim();
+      // After a compaction the usage totals still sum the calls before it,
+      // so they are no fallback: no call since means nothing measured.
       const ctxTokens =
-        p.maxCallContextTokens > 0 ? p.maxCallContextTokens : contextTokens(evt.usage);
+        p.maxCallContextTokens > 0 || p.compactions.length > 0
+          ? p.maxCallContextTokens
+          : contextTokens(evt.usage);
       log.info("claude-worker", "result ok", {
         session: this.sessionKey,
         dur: humanMs(dur),
@@ -884,6 +931,7 @@ export class Worker {
         durationMs: dur,
         usage: evt.usage,
         contextTokens: ctxTokens,
+        compactions: p.compactions,
         totalCostUsd: evt.total_cost_usd,
         resumedProcess: this.resumedProcess,
         seenMidTurn,

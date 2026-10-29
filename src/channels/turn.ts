@@ -1355,7 +1355,8 @@ async function handleBatchInner(
     // sat between the model's finished answer and the user seeing it.
     const maybeAutoCompact = (): void => {
       const compactCfg = compactConfigFor(result.backend, config);
-      if (!shouldCompact(result.usage, compactCfg, result.contextTokens)) return;
+      const compacted = result.ok && (result.compactions?.length ?? 0) > 0;
+      if (!shouldCompact(result.usage, compactCfg, result.contextTokens, compacted)) return;
       compactPlan.wanted = true;
       compactPlan.backend = result.backend;
       // Claude compacts in place (/compact into the warm worker). Codex has

@@ -36,6 +36,21 @@ export const PRINCIPLES_HEADING = "## Operating Principles";
  *  every turn; a long one is just the observation log again. */
 export const MAX_PRINCIPLES = 10;
 
+/**
+ * Caps on what a count cannot bound. With only MAX_PRINCIPLES, a pass that
+ * had a new rule and no free slot folded it into a standing one, and from
+ * 10-25 to 10-29 2026 (13 passes for the operator) their ten rules grew from 300-550
+ * characters each to 566-1,377, the section from 3.8 KB to 10.2 KB, against
+ * a design of about 610 tokens. A rule they cared about ("never ask for a print
+ * yes without a rendered mockup") ended up as the fifth clause of one
+ * paragraph. One rule, one sentence. With the count and the dates shown also
+ * capped, the section cannot pass about 3.2 KB, so no separate total is kept.
+ */
+export const MAX_RULE_CHARS = 240;
+/** Evidence shown per rule: the newest dates. Enough to audit a rule and see
+ *  that it is current; seventeen dates on one line was 207 characters. */
+export const MAX_EVIDENCE_SHOWN = 6;
+
 export type Principle = {
   /** The rule, imperative and specific. "His cut ships — give the note, skip the recut." */
   rule: string;
@@ -82,12 +97,34 @@ export function renderPrinciples(
   scope: PrincipleScope = "person",
   on: string | null = null,
 ): string {
-  const lines = [PRINCIPLES_HEADING, note(observedAt, scope, on), ""];
-  for (const p of principles.slice(0, MAX_PRINCIPLES)) {
-    const ev = p.evidence.length ? ` _(${p.evidence.join(", ")})_` : "";
-    lines.push(`- ${p.rule.trim()}${ev}`);
-  }
-  return lines.join("\n");
+  return [PRINCIPLES_HEADING, note(observedAt, scope, on), "", ...principleBullets(principles)].join(
+    "\n",
+  );
+}
+
+/** The section's bullets as they are written to the file. */
+function principleBullets(principles: Principle[]): string[] {
+  return principles.slice(0, MAX_PRINCIPLES).map((p) => {
+    const dates = [...p.evidence].sort().slice(-MAX_EVIDENCE_SHOWN);
+    const ev = dates.length ? ` _(${dates.join(", ")})_` : "";
+    return `- ${p.rule.trim()}${ev}`;
+  });
+}
+
+/**
+ * What a candidate list breaks of the length rules, as sentences a retry can
+ * be shown. Empty when it fits.
+ */
+export function principleViolations(principles: Principle[]): string[] {
+  const out: string[] = [];
+  principles.forEach((p, i) => {
+    if (p.rule.length > MAX_RULE_CHARS) {
+      out.push(
+        `Principle ${i + 1} is ${p.rule.length} characters (limit ${MAX_RULE_CHARS}): "${p.rule.slice(0, 80)}…"`,
+      );
+    }
+  });
+  return out;
 }
 
 /** Parse the section back out of a person file. */

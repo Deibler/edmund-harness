@@ -562,19 +562,22 @@ export class StateStore {
   }
 
   /**
-   * Stamp a successful `/compact` on this session: bump the
-   * last_compact_at_ms boundary recall reads, and tick total_compacts.
-   * Called from turn.ts after WorkerPool.compactIfWarm returns ok.
-   * Idempotent.
+   * Stamp the point where the model's verbatim memory of this session
+   * restarts: a compaction, or a new model conversation (runModel). Moves
+   * the last_compact_at_ms boundary recall reads, and ticks total_compacts.
+   * Called for the CLI's own compactions as their boundary streams in
+   * (runner.ts compactionStamper), and from turn.ts after the harness's
+   * /compact returns. The boundary only moves forward, so a late stamp for
+   * an earlier compaction cannot pull it back.
    */
-  markCompacted(sessionKey: SessionKey): void {
+  markCompacted(sessionKey: SessionKey, atMs = Date.now()): void {
     this.q(
       `INSERT INTO compaction_state(session_key, last_compact_at_ms, total_compacts)
          VALUES (?, ?, 1)
          ON CONFLICT(session_key) DO UPDATE SET
-           last_compact_at_ms = excluded.last_compact_at_ms,
+           last_compact_at_ms = MAX(compaction_state.last_compact_at_ms, excluded.last_compact_at_ms),
            total_compacts = compaction_state.total_compacts + 1`,
-    ).run(sessionKey, Date.now());
+    ).run(sessionKey, atMs);
   }
 
   /**

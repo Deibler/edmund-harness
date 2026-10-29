@@ -197,6 +197,38 @@ describe("autoRecall", () => {
     }
   });
 
+  test("lines name the speaker as history does and drop the indexer's header", async () => {
+    const { store, cleanup } = tempStore();
+    const provider = new HashEmbedProvider("h", 64);
+    try {
+      const ts = Date.now() - 30 * 86400000;
+      await seed(store, provider, [
+        {
+          ref: "msg:1",
+          text: "[2026-09-29] +15550001111: the led dot prints clear",
+          ts,
+          sender: "+15550001111",
+        },
+        { ref: "msg:2", text: "[2026-09-29] me: clear dot it is", ts: ts + 1000, sender: "me" },
+      ]);
+      const r = await autoRecall("led dot clear", provider, store, {
+        chatGuid: "chatA",
+        limit: 5,
+        minScore: 0.0,
+        excludeRecentMs: 0,
+        speakerLabel: (s) => (s === "me" ? "You" : s === "+15550001111" ? "Test Person" : s),
+      });
+      const lines = r.recentLines.join("\n");
+      expect(lines).toContain("Test Person (");
+      expect(lines).toContain("You (");
+      expect(lines).toContain(": the led dot prints clear");
+      expect(lines).not.toContain("[2026-09-29]");
+      expect(lines).not.toContain("+15550001111");
+    } finally {
+      cleanup();
+    }
+  });
+
   test("lines preview is short and formatted", async () => {
     const { store, cleanup } = tempStore();
     const provider = new HashEmbedProvider("h", 64);

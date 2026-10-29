@@ -19,8 +19,19 @@ import type { SessionKey } from "../sessions/key.ts";
 import { isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { DEBUG, humanCount, humanMs, log, snippet } from "../util/log.ts";
-import { type IterationUsage, contextTokens, iterationContextTokens } from "./auto-compact.ts";
-import { ISOLATED_SETTINGS_ARGS, PROMPT_SNAPSHOT_ARGS } from "./direct-env.ts";
+import {
+  type CompactionEvent,
+  type IterationUsage,
+  compactionFromEvent,
+  contextAfterCompaction,
+  contextTokens,
+  iterationContextTokens,
+} from "./auto-compact.ts";
+import {
+  PROMPT_SNAPSHOT_ARGS,
+  isolatedSettingsArgs,
+  postCompactHookSettings,
+} from "./direct-env.ts";
 import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
 import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
 import type { InjectResult } from "./mid-turn.ts";
@@ -258,10 +269,13 @@ export type RunResult =
       reply: string;
       claudeSessionId: string;
       usage?: RunUsage;
-      /** Real context size of the turn — the largest single API call,
-       *  measured from streamed assistant-event usage (fallback:
-       *  contextTokens(usage)). Feed THIS to shouldCompact. */
+      /** Real context size of the turn — the largest single API call since
+       *  the last compaction, measured from streamed assistant-event usage
+       *  (fallback: contextTokens(usage)). Feed THIS to shouldCompact. */
       contextTokens?: number;
+      /** Compactions during the turn, oldest first. Each was already stamped
+       *  on the session as it arrived (runClaude's onCompaction). */
+      compactions?: CompactionEvent[];
       /** The CLI's running total for the whole model session, carried across
        *  process restarts. Not this turn's cost: see recordSpend. */
       totalCostUsd?: number;
@@ -434,8 +448,10 @@ export async function runClaude(
     // Robinhood server) and scoped to trading sessions only (mcp-trading.json
     // adds it explicitly). Deterministic regardless of cwd / registration scope.
     "--strict-mcp-config",
-    // The operator's CLAUDE.md files, auto-memory and plugins stay out.
-    ...ISOLATED_SETTINGS_ARGS,
+    // The operator's CLAUDE.md files, auto-memory and plugins stay out. The
+    // one hook a conversation worker runs puts the chat's own messages back
+    // after every compaction (post-compact-thread.ts).
+    ...isolatedSettingsArgs(postCompactHookSettings()),
     ...PROMPT_SNAPSHOT_ARGS,
     ...pluginDirArgs(config.claude.plugin_dirs, hostAccess(config), isGuest),
     "--append-system-prompt",
@@ -520,6 +536,7 @@ export async function runClaude(
     });
   }
 
+  const onCompaction = compactionStamper(input.sessionKey, store);
   const legacyOnTyping = (active: boolean) => {
     try {
       input.onTyping?.(active);
@@ -561,6 +578,7 @@ export async function runClaude(
       legacyOnTextDelta,
       input.signal,
       input.onHeartbeat,
+      onCompaction,
     );
 
   // Happy path: resume the prior Claude session if we have one. Preventive
@@ -716,6 +734,7 @@ async function runViaPool(args: {
     // No try/catch wrapper: SessionLocks.touch never throws, and the worker
     // guards the call site anyway (it fires on every stdout chunk).
     onHeartbeat: input.onHeartbeat,
+    onCompaction: compactionStamper(input.sessionKey, store),
     signal: input.signal,
   };
 
@@ -858,6 +877,20 @@ async function coldStartViaPool(
   return result;
 }
 
+/**
+ * Record a compaction on the session the moment its boundary arrives. Recall
+ * reads this as the edge of what the model can still see verbatim, and every
+ * turn runs through runClaude, so stamping here covers live, cron, proactive
+ * and recovery turns alike. The harness's own /compact is stamped by turn.ts
+ * when it returns.
+ */
+function compactionStamper(
+  sessionKey: SessionKey,
+  store: StateStore,
+): (c: CompactionEvent) => void {
+  return (c) => store.markCompacted(sessionKey, c.atMs);
+}
+
 function workerResultToRunResult(r: WorkerResult): RunResult {
   if (r.ok) {
     return {
@@ -866,6 +899,7 @@ function workerResultToRunResult(r: WorkerResult): RunResult {
       claudeSessionId: r.claudeSessionId,
       usage: r.usage,
       contextTokens: r.contextTokens,
+      compactions: r.compactions,
       totalCostUsd: r.totalCostUsd,
       resumedProcess: r.resumedProcess,
     };
@@ -950,6 +984,7 @@ function formatModel(model: string): Record<string, unknown> {
 
 type ClaudeEvent =
   | { type: "system"; subtype: "init"; session_id: string; model?: string }
+  | { type: "system"; subtype: "compact_boundary"; compact_metadata?: unknown }
   | {
       type: "assistant";
       message: { content: Array<ContentBlock>; model?: string; usage?: RunUsage };
@@ -998,6 +1033,7 @@ function runProcess(
   onTextDelta?: (text: string) => void,
   signal?: AbortSignal,
   onHeartbeat?: () => void,
+  onCompaction?: (c: CompactionEvent) => void,
 ): Promise<RunResult> {
   // Same guard as the resident worker: only a result after our message's
   // echo is ours (text-mode input has no echo; see isUnsolicitedResult).
@@ -1033,6 +1069,7 @@ function runProcess(
     let settled = false;
     let toolUseCount = 0;
     let maxCallContextTokens = 0;
+    const compactions: CompactionEvent[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const finish = (r: RunResult) => {
@@ -1152,7 +1189,21 @@ function runProcess(
           }
           continue;
         }
-        if (evt.type === "system" && evt.subtype === "init") {
+        if (evt.type === "system" && evt.subtype === "compact_boundary") {
+          const c = compactionFromEvent(evt);
+          if (c) {
+            compactions.push(c);
+            maxCallContextTokens = contextAfterCompaction(c);
+            try {
+              onCompaction?.(c);
+            } catch (err) {
+              log.warn("claude", "onCompaction threw", {
+                session: sessionKey,
+                err: (err as Error).message,
+              });
+            }
+          }
+        } else if (evt.type === "system" && evt.subtype === "init") {
           sessionId = evt.session_id;
           log.debug("claude", "stream init", {
             session: sessionKey,
@@ -1259,7 +1310,10 @@ function runProcess(
             const inputTokens = u?.input_tokens ?? 0;
             const cacheable = cacheRead + cacheCreate + inputTokens;
             const hitPct = cacheable > 0 ? Math.round((cacheRead / cacheable) * 100) : 0;
-            const ctxTokens = maxCallContextTokens > 0 ? maxCallContextTokens : contextTokens(u);
+            const ctxTokens =
+              maxCallContextTokens > 0 || compactions.length > 0
+                ? maxCallContextTokens
+                : contextTokens(u);
             log.info("claude", "result ok", {
               session: sessionKey,
               dur: humanMs(Date.now() - started),
@@ -1284,6 +1338,7 @@ function runProcess(
               claudeSessionId: sessionId,
               usage: u,
               contextTokens: ctxTokens,
+              compactions,
               totalCostUsd: evt.total_cost_usd,
               resumedProcess: args.includes("--resume"),
             });

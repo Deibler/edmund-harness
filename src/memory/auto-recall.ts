@@ -23,7 +23,7 @@ import { type SearchHit, type VectorStore, normalize } from "./vector-store.ts";
  * live file is already in the session's system prompt; only `archive/`
  * chunks add anything the model can't already see).
  */
-const RECALL_KINDS: Array<"message" | "artifact" | "person-file" | "summary"> = [
+export const RECALL_KINDS: Array<"message" | "artifact" | "person-file" | "summary"> = [
   "message",
   "artifact",
   "person-file",
@@ -127,6 +127,13 @@ export type AutoRecallOptions = {
   contextCutoffMs?: number;
   /** Multiplicative boost applied to hits older than `contextCutoffMs`. */
   outsideContextBoost?: number;
+  /** The moment to recall as of. Production leaves it unset (now); the
+   *  replay eval (scripts/recall-eval.ts) sets it to each inbound's time. */
+  nowMs?: number;
+  /** How a hit's sender is named on its line, as history lines name them:
+   *  "You" for the assistant, the contact's name for a handle. Without it a
+   *  handle prints raw. */
+  speakerLabel?: (sender: string) => string;
 };
 
 export type AutoRecallResult = {
@@ -186,7 +193,7 @@ export async function autoRecall(
   const embedMs = Date.now() - embedStart;
   const searchStart = Date.now();
 
-  const now = Date.now();
+  const now = opts.nowMs ?? Date.now();
   const excludeCutoff =
     opts.excludeFromMs ?? (opts.excludeRecentMs > 0 ? now - opts.excludeRecentMs : 0);
   const splitMs =
@@ -386,23 +393,30 @@ export async function autoRecall(
     senderInChat,
     recent,
     deep,
-    senderInChatLines: senderInChat.map(formatLine),
-    recentLines: recent.map(formatLine),
-    deepLines: deep.map(formatLine),
+    senderInChatLines: senderInChat.map((h) => formatLine(h, opts.speakerLabel)),
+    recentLines: recent.map((h) => formatLine(h, opts.speakerLabel)),
+    deepLines: deep.map((h) => formatLine(h, opts.speakerLabel)),
     skillSuggestions: skillLines,
     embedMs,
     searchMs,
   };
 }
 
-function formatLine(h: SearchHit): string {
-  const who = h.sender ?? "—";
+/** The `[YYYY-MM-DD] speaker: ` header the indexer puts on every message row
+ *  so dates and handles are searchable (indexer.ts). On a recall line it
+ *  repeated the line's own stamp, in UTC where the stamp is local, and spent
+ *  part of the 200-character preview. */
+const MESSAGE_ROW_HEADER = /^\[\d{4}-\d{2}-\d{2}\] [^:\n]{1,80}: /;
+
+function formatLine(h: SearchHit, speakerLabel?: (sender: string) => string): string {
+  const who = h.sender ? (speakerLabel?.(h.sender) ?? (h.sender === "me" ? "You" : h.sender)) : "—";
   const when = isoDay(h.ts);
   // The age is stated, not left to be worked out. An absolute date alone was
   // not enough: a six-week-old item got read as Tuesday's and answered as
   // though it were live.
   const age = humanAge(h.ts);
-  const preview = h.text.length > 200 ? `${h.text.slice(0, 200)}…` : h.text;
+  const body = h.ref.startsWith("msg:") ? h.text.replace(MESSAGE_ROW_HEADER, "") : h.text;
+  const preview = body.length > 200 ? `${body.slice(0, 200)}…` : body;
   // Show the raw cosine score so the model can judge match quality
   // without recency confusing it.
   return `  ${when} (${age}) ${who} (${h.score.toFixed(2)}): ${preview.replace(/\n+/g, " ")}`;

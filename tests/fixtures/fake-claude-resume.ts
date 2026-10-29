@@ -53,7 +53,7 @@ process.stdin.on("data", (chunk) => {
       session_id: sid,
     };
     out({ type: "system", subtype: "init", session_id: sid });
-    if (text === "/compact") {
+    if (text === "/compact" || text.startsWith("/compact ")) {
       if (replay) out(echo);
       out({
         type: "result",

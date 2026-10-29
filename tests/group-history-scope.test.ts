@@ -183,6 +183,8 @@ describe("recall around a group's shown thread", () => {
     );
     expect(turn).toMatch(/autoRecallFn\([^)]*historyBundle\.shownSinceMs,?\s*\)/);
     const wire = readFileSync(join(import.meta.dir, "../src/boot/wire-recall.ts"), "utf8");
-    expect(wire).toContain("excludeFromMs: shownSinceMs,");
+    // The shown boundary wins; a warm DM falls back to its compaction edge.
+    expect(wire).toMatch(/recallSightSince\([^;]*shownSinceMs,?\s*\)/);
+    expect(wire).toContain("excludeFromMs: sightSinceMs,");
   });
 });
