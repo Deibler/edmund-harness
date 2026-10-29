@@ -985,7 +985,7 @@ export class Worker {
         session: this.sessionKey,
         resumed: this.resumedProcess,
         load: this.loadMs !== null ? humanMs(this.loadMs) : undefined,
-        first_token: humanMs(Date.now() - this.pending.startedAt),
+        first_output: humanMs(Date.now() - this.pending.startedAt),
       });
     }
     switch (evt.type) {

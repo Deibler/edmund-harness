@@ -322,7 +322,12 @@ export function wireRecall(args: {
           speakerLabel: (sender) => (sender === "me" ? "You" : (contacts.label(sender) ?? sender)),
         });
         if (surfaced) {
-          for (const h of [...result.senderInChat, ...result.recent, ...result.deep]) {
+          for (const h of [
+            ...result.senderInChat,
+            ...result.recent,
+            ...result.deep,
+            ...result.timeScoped,
+          ]) {
             surfaced.refs.add(h.ref);
           }
           // Bound per-session growth; dropping the oldest entries only
@@ -347,6 +352,7 @@ export function wireRecall(args: {
             senderInChatLines: result.senderInChatLines.filter(visible),
             recentLines: result.recentLines.filter(visible),
             deepLines: result.deepLines.filter(visible),
+            timeScopedLines: result.timeScopedLines.filter(visible),
           };
         }
         return result;

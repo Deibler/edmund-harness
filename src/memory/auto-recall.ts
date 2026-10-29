@@ -14,6 +14,7 @@ import { humanAge } from "../util/clock.ts";
 import { log } from "../util/log.ts";
 import { type EmbedProvider, embedQuery } from "./embed-provider.ts";
 import { hasRetrievableIntent } from "./query-intent.ts";
+import { timeWindowsIn } from "./time-scope.ts";
 import { type SearchHit, type VectorStore, normalize } from "./vector-store.ts";
 
 /**
@@ -48,6 +49,17 @@ const SELF_RECALL_LIMIT = 2;
  * recall. A skill description is a dense statement of purpose, so a genuine
  * match scores high; anything marginal is noise and is dropped.
  */
+/**
+ * The time-scoped block: hits per named window, and their cosine floor, lower
+ * than the general one because the window is most of the evidence. Chosen on
+ * the replay eval (scripts/recall-eval.ts) over 24 time-anchored questions
+ * from the operator's DM, 2026-10-29: without the block 10 reached the model;
+ * floor 0.55/0.6/0.65 at 5 hits gave 18/19/18; 0.6 at 3/5/8 hits gave
+ * 18/19/22. Only about 0.4% of messages name a time, so 8 lines is cheap.
+ */
+const TIME_SCOPED_LIMIT = 8;
+const TIME_SCOPED_MIN_SCORE = 0.6;
+
 const SKILL_SUGGEST_LIMIT = 1;
 const SKILL_MIN_SCORE = 0.55;
 
@@ -130,6 +142,14 @@ export type AutoRecallOptions = {
   /** The moment to recall as of. Production leaves it unset (now); the
    *  replay eval (scripts/recall-eval.ts) sets it to each inbound's time. */
   nowMs?: number;
+  /** Search inside the times the message names ("back in June", "on 8/30"),
+   *  on top of the other blocks (time-scope.ts). Default on. */
+  timeScope?: boolean;
+  /** Cosine floor inside a named window. Lower than `minScore`: the window
+   *  is itself most of the evidence. */
+  timeScopedMinScore?: number;
+  /** Most hits shown per named window. */
+  timeScopedLimit?: number;
   /** How a hit's sender is named on its line, as history lines name them:
    *  "You" for the assistant, the contact's name for a handle. Without it a
    *  handle prints raw. */
@@ -150,6 +170,12 @@ export type AutoRecallResult = {
   recentLines: string[];
   /** Pre-formatted lines for the "Deep memory" envelope block. */
   deepLines: string[];
+  /** Hits inside the time the message names, best first. */
+  timeScoped: SearchHit[];
+  /** Pre-formatted lines for the time-scoped block. */
+  timeScopedLines: string[];
+  /** The named time, e.g. "June" or "August 30"; null when none. */
+  timeScopeLabel: string | null;
   /** Skill names worth reading for this message. At most one; often empty. */
   skillSuggestions: string[];
   /** Embed call duration (ms). 0 when no embed ran (empty query / disabled). */
@@ -165,6 +191,9 @@ const EMPTY: AutoRecallResult = {
   senderInChatLines: [],
   recentLines: [],
   deepLines: [],
+  timeScoped: [],
+  timeScopedLines: [],
+  timeScopeLabel: null,
   skillSuggestions: [],
   embedMs: 0,
   searchMs: 0,
@@ -311,6 +340,51 @@ export async function autoRecall(
     }
   }
 
+  // Time-scoped block: when the message names a time, search inside it. The
+  // blocks above rank by meaning weighted toward recent, so an older moment
+  // loses to newer talk on the same subject; "the fireball from June" got
+  // the August and September ones on 2026-10-26. At most two windows.
+  let timeScoped: SearchHit[] = [];
+  let timeScopeLabel: string | null = null;
+  const windows = opts.timeScope === false ? [] : timeWindowsIn(text, now).slice(0, 2);
+  if (windows.length > 0) {
+    const seen = new Set<string>();
+    for (const w of windows) {
+      // Never inside what the model can already read verbatim.
+      const untilMs = excludeCutoff > 0 ? Math.min(w.untilMs, excludeCutoff) : w.untilMs;
+      if (untilMs <= w.sinceMs) continue;
+      try {
+        const hits = store
+          .search(qvec, {
+            scope: { kind: "this-chat", chatGuid: opts.chatGuid },
+            rowKinds: RECALL_KINDS,
+            queryText: text,
+            sparseRescue: false,
+            sparseRefsRanked: sparse,
+            limit: (opts.timeScopedLimit ?? TIME_SCOPED_LIMIT) * 2,
+            minScore: opts.timeScopedMinScore ?? TIME_SCOPED_MIN_SCORE,
+            sinceMs: w.sinceMs,
+            untilMs,
+            nowMs: now,
+            mmrLambda: opts.mmrLambda,
+            dedupThreshold: opts.dedupThreshold,
+          })
+          .filter((h) => !seen.has(h.ref) && !isLiveProfileChunk(h.ref))
+          .slice(0, opts.timeScopedLimit ?? TIME_SCOPED_LIMIT);
+        for (const h of hits) seen.add(h.ref);
+        if (hits.length > 0) {
+          timeScoped = [...timeScoped, ...hits];
+          timeScopeLabel = timeScopeLabel ? `${timeScopeLabel}, ${w.label}` : w.label;
+        }
+      } catch {
+        // A failed window costs the block, never the turn.
+      }
+    }
+    // Shown once: in the block that says why it was found.
+    recent = recent.filter((h) => !seen.has(h.ref));
+    deep = deep.filter((h) => !seen.has(h.ref));
+  }
+
   // Sender-in-chat block (group chats): hits authored by the current
   // inbound sender within this chat. Pure cosine ranking — we don't
   // apply a recency boost here because the value of this block is
@@ -373,7 +447,12 @@ export async function autoRecall(
     );
   }
 
-  if (recent.length === 0 && deep.length === 0 && senderInChat.length === 0) {
+  if (
+    recent.length === 0 &&
+    deep.length === 0 &&
+    senderInChat.length === 0 &&
+    timeScoped.length === 0
+  ) {
     return { ...EMPTY, embedMs, searchMs };
   }
 
@@ -408,6 +487,9 @@ export async function autoRecall(
     senderInChatLines: senderInChat.map((h) => formatLine(h, opts.speakerLabel)),
     recentLines: recent.map((h) => formatLine(h, opts.speakerLabel)),
     deepLines: deep.map((h) => formatLine(h, opts.speakerLabel)),
+    timeScoped,
+    timeScopedLines: timeScoped.map((h) => formatLine(h, opts.speakerLabel)),
+    timeScopeLabel,
     skillSuggestions: skillLines,
     embedMs,
     searchMs,
