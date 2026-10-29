@@ -195,6 +195,9 @@ export async function runModel(
   }
 
   noteScreenTurn(config, rawInput.sessionKey, rawInput.cronJob ?? null);
+  // The relay tools read this when the model calls them (bridge/relay.ts).
+  // Turns of one session run under its lock, so this is the running turn's.
+  store.setTurnDepth(rawInput.sessionKey, rawInput.inboundDepth ?? 0);
   const startedAtMs = Date.now();
   let result: RunResult;
   try {

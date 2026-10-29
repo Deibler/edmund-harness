@@ -256,7 +256,6 @@ export async function runCodex(
     config,
     input.sessionKey,
     input.sandboxPath,
-    input.inboundDepth ?? 0,
     isGuest ? (input.guest?.tier ?? null) : null,
   );
   if (isGuest) scrubGuestSecrets(env);

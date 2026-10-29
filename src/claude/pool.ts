@@ -16,7 +16,7 @@ import { Worker, type WorkerResult, type WorkerSpawnArgs, type WorkerTurn } from
  *    LRU idle entry when an acquire would push us past the cap.
  *  - Recycle a worker when its bind state no longer matches the requested
  *    turn — different sandbox path, different sender identity (group only,
- *    rare), different inboundDepth, etc. Determined by `rebindKey`.
+ *    rare), different loadout, etc. Determined by `rebindKey`.
  *
  * Concurrency: the pool itself is single-threaded JS; acquire/release pair
  * around an `await` inside the runner. The `busy` flag prevents two turns
@@ -198,7 +198,7 @@ export class WorkerPool {
     }
     let entry = this.entries.get(args.sessionKey);
 
-    // Recycle on bind-key mismatch (depth changed, sandbox changed, etc.)
+    // Recycle on bind-key mismatch (loadout changed, sandbox changed, etc.)
     if (entry && entry.rebindKey !== args.rebindKey) {
       log.info("claude-pool", "recycling worker (rebindKey mismatch)", {
         session: args.sessionKey,

@@ -18,9 +18,11 @@ paths, and the `edmund` command wraps it.
 
 Two things about the daemon plist. It launches `bun` through a bash wrapper
 because launching bun directly as the program hung at startup. And it sets
-`ProcessType Background`, which on Apple Silicon pins the process to
-efficiency cores; if you run local speech models, expect them to be several
-times slower under launchd than in a terminal until that is changed.
+`ProcessType Interactive`. `Background` pins the daemon and everything it
+spawns (model workers, MCP servers, Messages) to the efficiency cores with
+throttled I/O, and `Adaptive` never leaves Background for this daemon. A test
+pins the template, and the daemon logs `[boot] qos` when it finds itself
+throttled anyway.
 
 `edmund stop` sends SIGTERM and launchd restarts the job in about thirty
 seconds. `edmund kill` removes the job. `edmund start --local --harness` runs

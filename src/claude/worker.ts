@@ -23,8 +23,7 @@ import { type InjectResult, recordSeenMidTurn } from "./mid-turn.ts";
  * Anthropic prompt caching kicks in: the second turn in the same process
  * reads tens of thousands of tokens from cache instead of re-tokenizing.
  *
- * Worker is bound to one (sessionKey, sandboxPath, sender identity,
- * inboundDepth) tuple. If any of those change, the WorkerPool recycles it.
+ * Worker is bound to one (sessionKey, sandboxPath, sender identity) tuple. If any of those change, the WorkerPool recycles it.
  * Note that `senderLabel`/`senderHandle` are NOT really per-turn — for DM
  * sessions they're constant; for group sessions they're whoever sent the
  * triggering message in this batch. We handle that by passing the sender

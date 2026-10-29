@@ -21,7 +21,6 @@ type JsonMcpConfig = { mcpServers?: Record<string, JsonMcpServer> };
 const HARNESS_MCP_ENV_VARS = [
   "EDMUND_CONFIG_PATH",
   "EDMUND_SESSION_KEY",
-  "EDMUND_INBOUND_DEPTH",
   "EDMUND_SESSION_TIER",
   "EDMUND_AGENT_MODEL",
   "EDMUND_AGENT_EFFORT",
