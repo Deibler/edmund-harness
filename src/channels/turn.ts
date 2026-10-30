@@ -9,6 +9,7 @@ import {
   pendingToInbound,
   splitSeenMidTurn,
 } from "../bridge/session-queue.ts";
+import { isVoiceLive, voiceBindingFor } from "../calls/binding.ts";
 import { contextTokens, shouldCompact } from "../claude/auto-compact.ts";
 import { envelopeNeedsBrowser } from "../claude/mcp-config.ts";
 import { takeSeenMidTurn } from "../claude/mid-turn.ts";
@@ -183,6 +184,15 @@ export function passesGroupRegate(
   return isAssistantMentioned([...messages.map((m) => m.text), ...transcripts].join("\n"), names);
 }
 
+/** What each running turn was asked, by session: the texts of its batch.
+ *  Read when a FaceTime call needs the session and the turn cannot hand its
+ *  own work off in time (calls/takeover.ts). */
+const inFlight = new Map<SessionKey, string>();
+
+export function inFlightRequest(key: SessionKey): string | null {
+  return inFlight.get(key) || null;
+}
+
 /** Who wrote these messages, for the envelope's From line. */
 export function senderLabelFor(
   messages: InboundMessage[],
@@ -203,6 +213,13 @@ export async function handleBatch(
   const turnController = new AbortController();
   const turnId = genId("model_turn");
   deps.turnControllers.set(key, turnController);
+  inFlight.set(
+    key,
+    batch
+      .map((m) => m.text)
+      .filter(Boolean)
+      .join("\n"),
+  );
   // Mark this session as active so the watcher can route follow-up messages
   // to the pending queue while Claude is running.
   deps.activeSessions.add(key);
@@ -251,10 +268,17 @@ export async function handleBatch(
     deps.activeSessions.delete(key);
     if (deps.turnControllers.get(key) === turnController) {
       deps.turnControllers.delete(key);
+      inFlight.delete(key);
     }
     // AFTER the leftover re-enqueue above, so the compact section can see
     // that work is already waiting (queuedCount) and yield to it.
-    if (compactPlan.wanted) {
+    // Never mid-call: compacting recycles the worker, and the caller would
+    // hear a cold start. The first turn after the call re-trips the threshold.
+    if (compactPlan.wanted && isVoiceLive(key)) {
+      log.info("auto-compact", "deferred — the conversation is on a call", {
+        session: shortSession(key),
+      });
+    } else if (compactPlan.wanted) {
       if (compactPlan.backend === "codex") reanchorCodexThread(key, deps);
       else scheduleDeferredCompact(key, deps);
     }
@@ -425,6 +449,10 @@ async function handleBatchInner(
   const first = batch[0]!;
   const isGroup = first.isGroup;
   const mirrorTurn = isMirrorSession(key);
+  // A conversation on a call speaks its replies. Latched once, like
+  // mirrorTurn: a call that ends mid-turn makes the binding answer
+  // "unavailable", and the reply goes out as a text instead.
+  const callVoice = voiceBindingFor(key);
 
   const session = state.getSession(key);
   const stale = isSessionStale(session, config.behavior.session_idle_hours);
@@ -621,7 +649,7 @@ async function handleBatchInner(
   const typing =
     // SMS has no typing-indicator concept and the TypingSession target would
     // be a synthetic `sms:` guid the iMessage bridge cannot resolve.
-    config.behavior.auto_typing && !mirrorTurn && !isSmsSession(key)
+    config.behavior.auto_typing && !mirrorTurn && !callVoice && !isSmsSession(key)
       ? new TypingSession({
           isGroup,
           // The GUID the message arrived on, for DMs as much as groups: a bare
@@ -651,7 +679,8 @@ async function handleBatchInner(
   };
   const armLivenessTyping = () => {
     const seconds = config.behavior.liveness_typing_seconds;
-    if (seconds <= 0 || mirrorTurn || opts?.catchUp || livenessTypingArmedThisBatch) return;
+    if (seconds <= 0 || mirrorTurn || callVoice || opts?.catchUp || livenessTypingArmedThisBatch)
+      return;
     if (!typing) return;
     livenessTypingArmedThisBatch = true;
     livenessTypingTimer = setTimeout(() => {
@@ -708,7 +737,8 @@ async function handleBatchInner(
         text,
         chatGuid: first.chatGuid,
         replyTo: isGroup && threadAnchor ? threadAnchor : undefined,
-        turnId: mirrorTurn ? modelTurn.id : undefined,
+        turnId: mirrorTurn || callVoice ? modelTurn.id : undefined,
+        sessionKey: key,
       },
       config,
       echoes,
@@ -783,11 +813,14 @@ async function handleBatchInner(
       // Recorded unconditionally (cheap, pruned with message_routing) so
       // history stays attributable even if orchestrators are configured
       // after the fact.
-      state.recordSentAttribution(
-        first.chatGuid,
-        viewerForSession(key) ?? "main",
-        delivery.sentChunks,
-      );
+      // A spoken reply has no chat.db row to attribute.
+      if (delivery.medium !== "voice") {
+        state.recordSentAttribution(
+          first.chatGuid,
+          viewerForSession(key) ?? "main",
+          delivery.sentChunks,
+        );
+      }
       state.upsertSession({
         sessionKey: key,
         claudeSessionId,
@@ -809,7 +842,10 @@ async function handleBatchInner(
       // follow-up lands first. Guest/vouched conversations are never
       // ghost-outreach targets (the observer also excludes them; this is
       // the cheap first line).
-      if (!guest) deps.ghostObserver?.onMainReplied(key);
+      // Both read the exchange from chat.db, where a spoken reply never lands;
+      // a call reaches them through its own end-of-call path instead.
+      const texted = delivery.medium !== "voice";
+      if (!guest && texted) deps.ghostObserver?.onMainReplied(key);
       // Persona-file maintainer: same trigger shape (60-120s deferred,
       // dedup'd per session). Updates persona/people/<handle>.md (DMs)
       // or persona/groups/<slug>.md (groups). Runs regardless of
@@ -819,7 +855,7 @@ async function handleBatchInner(
       // the primary's system prompt auto-injects — a secondary's private
       // exchange must not leak there. (Ghost guards orch: internally.)
       // Skipped for guest tiers too: conversation-scoped memory only.
-      if (!key.startsWith("orch:") && !guest) deps.personMaintainer?.onMainReplied(key);
+      if (!key.startsWith("orch:") && !guest && texted) deps.personMaintainer?.onMainReplied(key);
     }
   };
 
@@ -1153,14 +1189,15 @@ async function handleBatchInner(
           )?.(config) ?? ""
         }`
       : withAnnouncement;
+    const withCall = callVoice ? `${withMirror}\n${callVoice.envelopeBlock()}` : withMirror;
     // The activating guest turn folds in whatever the sender said BEFORE
     // presenting their key — drained once, clearly labeled as untrusted.
     const bufferedGuest: BufferedMessage[] =
       guest && deps.guests && iter === 0 ? deps.guests.drainBuffered(first.fromHandle) : [];
     const withGuestBuffer =
       bufferedGuest.length > 0
-        ? `${guestBufferNote(bufferedGuest)}\n\n---\n\n${withMirror}`
-        : withMirror;
+        ? `${guestBufferNote(bufferedGuest)}\n\n---\n\n${withCall}`
+        : withCall;
     const envelope =
       isCoalesce && prevDraft
         ? `${coalesceNote(prevDraft)}\n\n---\n\n${withGuestBuffer}`
@@ -1226,6 +1263,7 @@ async function handleBatchInner(
       lastInboundMs,
     });
 
+    callVoice?.onTurnStarted(modelTurn.id);
     if (mirrorTurn) {
       await deps.mirrorLifecycle?.onStarted(modelTurn.id);
       await deps.mirrorLifecycle?.onActivity(modelTurn.id, "thinking");
@@ -1272,6 +1310,7 @@ async function handleBatchInner(
         },
         onTextDelta: (text) => {
           if (mirrorTurn) void deps.mirrorLifecycle?.onTextDelta(modelTurn.id, text);
+          callVoice?.onTextDelta(modelTurn.id, text);
         },
         // Liveness lease: every stream event from the subprocess re-arms this
         // session's lock timer, so a long-but-active turn (a 40-minute video
@@ -1323,6 +1362,7 @@ async function handleBatchInner(
         if (mirrorTurn) {
           await deps.mirrorLifecycle?.onSettled(modelTurn.id, "interrupted");
         }
+        callVoice?.onTurnSettled(modelTurn.id, "interrupted");
         return;
       }
       console.error(`[model] error for ${key}: ${result.error}`);
@@ -1345,6 +1385,7 @@ async function handleBatchInner(
       // current burst; acks survive so the retry turn can clear them.
       if (isCoalesce && prevDraft) await sendDeliver(prevDraft, lastInboundMs);
       else if (mirrorTurn) await deps.mirrorLifecycle?.onSettled(modelTurn.id, "error");
+      callVoice?.onTurnSettled(modelTurn.id, "error");
       return;
     }
     claudeSessionId = result.claudeSessionId;
@@ -1420,6 +1461,7 @@ async function handleBatchInner(
       cancelInboundRetries(deps.crons, key);
       console.log(`[outbound] ${shortSession(key)} tool-only (no text reply)`);
       if (mirrorTurn) await deps.mirrorLifecycle?.onSettled(modelTurn.id, "tool-only");
+      callVoice?.onTurnSettled(modelTurn.id, "tool-only");
       maybeAutoCompact();
       // Anything parked during this turn still needs a turn of its own.
       reEnqueue(drainUnanswered().map((e) => pendingToInbound(e, first)));
@@ -1474,6 +1516,7 @@ async function handleBatchInner(
     // the audio, so speech is still in flight here — the orchestrator settles
     // the volley when playback finishes, exactly as before.
     if (mirrorTurn) await deps.mirrorLifecycle?.onSettled(modelTurn.id, "delivered");
+    callVoice?.onTurnSettled(modelTurn.id, "delivered");
     // Reply is on the wire — record the compact trip if usage warrants it.
     // (The coalesce `continue` path above deliberately skips this: it hasn't
     // delivered anything yet, and the next iteration re-evaluates the

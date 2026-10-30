@@ -474,6 +474,42 @@ export const ConfigSchema = z.object({
       allow_unknown_senders: z.boolean().default(false),
     })
     .default({}),
+  /**
+   * FaceTime calls (src/calls/). A call is a voice mode of an existing
+   * conversation, not a conversation of its own: a contact's call runs in
+   * their DM session and a group's in the group session, so what was said on
+   * the call and in Messages is one history. Off by default.
+   */
+  facetime: z
+    .object({
+      enabled: z.boolean().default(false),
+      /** Who Edmund may call and whose calls he answers. Entries: a handle, a
+       *  group chat GUID, "operator" (the [security] operator handles), or
+       *  "contacts" (anyone in his contacts). Empty admits nobody. */
+      allow: z.array(z.string()).default([]),
+      /** Never called and never answered. Wins over `allow`. */
+      deny: z.array(z.string()).default([]),
+      /** Hard cap on one call. The model gets a warning a minute before. */
+      max_call_minutes: z.number().int().positive().default(30),
+      /** Longest an incoming call rings while Edmund gets ready to speak. */
+      ring_answer_ms: z.number().int().positive().default(6000),
+      /** Silence after the caller's speech that ends their turn. */
+      endpoint_ms: z.number().int().positive().default(700),
+      /** Where Edmund's voice plays: the play-only half of the split virtual
+       *  mic (native/facetime/driver/build.sh). */
+      mouth_device: z.string().default("Edmund Feed"),
+      /** The record-only half, which hears mouth_device. FaceTime must be
+       *  listening on exactly this device before Edmund speaks. */
+      mic_device: z.string().default("Edmund Mic"),
+      /** Bundle IDs of the processes that render call audio. Their output
+       *  is tapped for recognition and muted on every speaker. */
+      call_audio_processes: z.array(z.string()).default(["com.apple.avconferenced"]),
+      /** Recognition locale for the caller's speech. */
+      locale: z.string().default("en-US"),
+      /** Kokoro voice for Edmund. Empty means bm_daniel, his mirror voice. */
+      kokoro_voice: z.string().default(""),
+    })
+    .default({}),
   triggers: z
     .object({
       /** Model-authored data triggers (URL/app_js probes + predicates),

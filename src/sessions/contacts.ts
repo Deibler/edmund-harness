@@ -1,5 +1,5 @@
 import type { Contact } from "../config/config.ts";
-import type { AddressBook } from "./address-book.ts";
+import type { AddressBook, ContactCard } from "./address-book.ts";
 import { normalizeHandle } from "./key.ts";
 
 /** Where `label` finds a name Edmund was told (see learned-names.ts). */
@@ -94,6 +94,32 @@ export class ContactBook {
     const names = new Set<string>(this.canonToName.values());
     for (const n of this.addressBook?.allNames() ?? []) names.add(n);
     return [...names];
+  }
+
+  /**
+   * Everyone this book can put to `name`: config contacts and address-book
+   * cards whose full or first name matches. One entry per person, never
+   * merged across people, so an ambiguous name comes back as several
+   * candidates for the caller to choose between. A name that matches is not
+   * yet an identity; whoever acts on it should confirm when there are two.
+   */
+  peopleNamed(name: string): ContactCard[] {
+    const wanted = name.trim().toLowerCase();
+    const out: ContactCard[] = [];
+    const seen = new Set<string>();
+    for (const [canon, configName] of this.canonToName) {
+      const full = configName.toLowerCase();
+      if (full !== wanted && full.split(/\s+/)[0] !== wanted) continue;
+      seen.add(canon);
+      out.push({ name: configName, handles: this.aliasesFor(canon) });
+    }
+    for (const card of this.addressBook?.cardsNamed(name) ?? []) {
+      const canon = this.canon(card.handles[0]!);
+      if (seen.has(canon)) continue;
+      seen.add(canon);
+      out.push(card);
+    }
+    return out;
   }
 
   /**

@@ -51,6 +51,16 @@ export type HistoryBundle = {
 };
 
 /**
+ * The chat.db ROWID history runs up to (exclusive). A chat.db message bounds
+ * history at itself. A call utterance has no row (its id is negative, see
+ * calls/binding.ts), so its history runs up to the latest message; bounding at
+ * the negative id would return nothing and present the call as a first meeting.
+ */
+export function historyBefore(msg: Pick<InboundMessage, "rowId">): number {
+  return msg.rowId > 0 ? msg.rowId : Number.MAX_SAFE_INTEGER;
+}
+
+/**
  * Resolve threaded replies: if the inbound message has `replyToGuid`, fetch
  * the parent text/sender/attachments and copy any attachments into the sandbox
  * so the model can Read them just like current-batch attachments.
@@ -168,7 +178,7 @@ export function buildHistoryBundle(
     const lines = getRecentMessages(
       chatDb,
       first.chatGuid,
-      first.rowId,
+      historyBefore(first),
       config.behavior.history_messages,
     ).filter(visible);
     return {
@@ -183,9 +193,12 @@ export function buildHistoryBundle(
 
   // ---- Group path: segment + classify ----
   const candidateLimit = config.behavior.history_candidate_window;
-  const candidates = getRecentMessages(chatDb, first.chatGuid, first.rowId, candidateLimit).filter(
-    visible,
-  );
+  const candidates = getRecentMessages(
+    chatDb,
+    first.chatGuid,
+    historyBefore(first),
+    candidateLimit,
+  ).filter(visible);
   if (candidates.length === 0) {
     return {
       lines: [],

@@ -18,6 +18,7 @@ import { backgroundTools } from "./tools/background.ts";
 import { blindCheckTools } from "./tools/blind-check.ts";
 import { brownNoseTools } from "./tools/brown-nose.ts";
 import { calendarTools } from "./tools/calendar.ts";
+import { callTools } from "./tools/calls.ts";
 import { contactsTools } from "./tools/contacts.ts";
 import { cronTools } from "./tools/cron.ts";
 import { deepResearchTools } from "./tools/deep-research.ts";
@@ -229,6 +230,7 @@ function assembleByTier(ctx: ToolContext): ToolDef[] {
     ...(guest ? [] : skillRegistryTools(ctx)),
     ...typingTools(ctx),
     ...(subagent || guest ? [] : agentTools(ctx)),
+    ...(subagent || guest ? [] : callTools(ctx)),
     ...(subagent || guest ? [] : deepResearchTools(ctx)),
     ...(guest ? [] : annotateTools(ctx)),
     ...generationTools(ctx),

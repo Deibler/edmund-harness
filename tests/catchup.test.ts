@@ -379,13 +379,20 @@ describe("runCatchUp hands the watcher its cursor before any turn finishes", () 
     const main = readFileSync(join(import.meta.dir, "../src/main.ts"), "utf8");
     expect(main).not.toMatch(/await catchUp\.drained/);
     expect(main).toContain("void catchUp.drained.then(startRecovery)");
-    // Absorb before the pipeline, after the durable ack.
+    // Absorb before the pipeline, after the durable ack. The enqueue itself
+    // lives in deliverToSession (shared with FaceTime utterances), which
+    // routeAccepted calls last.
     const route = main.slice(main.indexOf("const routeAccepted"));
     const ack = route.indexOf("state.writeInboundAck(");
     const absorb = route.indexOf("catchUp?.absorb(key, msg)");
-    const enqueue = route.indexOf("pipeline.enqueue(key, msg)");
+    const handOff = route.indexOf("deliverToSession(key, msg)");
     expect(ack).toBeGreaterThan(0);
     expect(absorb).toBeGreaterThan(ack);
-    expect(enqueue).toBeGreaterThan(absorb);
+    expect(handOff).toBeGreaterThan(absorb);
+    const deliver = main.slice(
+      main.indexOf("const deliverToSession"),
+      main.indexOf("const routeAccepted"),
+    );
+    expect(deliver).toContain("pipeline.enqueue(key, msg)");
   });
 });

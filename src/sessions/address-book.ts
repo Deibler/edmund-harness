@@ -13,8 +13,12 @@ import { normalizeHandle } from "./key.ts";
  *
  * Loaded once at startup. Graceful no-op if the DB isn't accessible.
  */
+/** One address-book card: a person's name and the handles to reach them. */
+export type ContactCard = { name: string; handles: string[] };
+
 export class AddressBook {
   private handleToName = new Map<string, string>();
+  private cards: ContactCard[] = [];
 
   constructor(dbPath?: string) {
     const path = dbPath ?? findAddressBookPath();
@@ -43,6 +47,19 @@ export class AddressBook {
    * see contacts declared in config.toml — one, in this deployment — so its
    * contact-name check was very nearly a no-op while reporting clean.
    */
+  /**
+   * Cards whose full name, or first name, is `name` (case-insensitive). Every
+   * match is returned: two people called Chris are two answers, never one.
+   */
+  cardsNamed(name: string): ContactCard[] {
+    const wanted = name.trim().toLowerCase();
+    if (!wanted) return [];
+    return this.cards.filter((card) => {
+      const full = card.name.toLowerCase();
+      return full === wanted || full.split(/\s+/)[0] === wanted;
+    });
+  }
+
   allNames(): string[] {
     return [...new Set(this.handleToName.values())];
   }
@@ -64,15 +81,21 @@ export class AddressBook {
       for (const r of rows) {
         const name = (r.name ?? "").trim();
         if (!name) continue;
+        const card: ContactCard = { name, handles: [] };
         for (const ph of (r.phones ?? "").split("|").filter(Boolean)) {
-          for (const variant of phoneVariants(ph)) {
+          const variants = phoneVariants(ph);
+          for (const variant of variants) {
             if (!this.handleToName.has(variant)) this.handleToName.set(variant, name);
           }
+          // Dial in E.164 when the card's number can be written that way.
+          card.handles.push(variants.find((v) => v.startsWith("+")) ?? variants[0]!);
         }
         for (const em of (r.emails ?? "").split("|").filter(Boolean)) {
           const key = em.toLowerCase().trim();
           if (key && !this.handleToName.has(key)) this.handleToName.set(key, name);
+          if (key) card.handles.push(key);
         }
+        if (card.handles.length > 0) this.cards.push(card);
       }
     } finally {
       db.close();
