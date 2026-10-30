@@ -48,6 +48,8 @@ export type ProviderEvent =
   | { type: "pause"; stoppedAtMs: number; audioMs: number; probability: number | null }
   /** The other side started or stopped talking. */
   | { type: "speech"; talking: boolean; atMs: number }
+  /** Recognition of the other side stopped working; nothing they say is heard until it restarts. */
+  | { type: "hearing-failed"; detail: string }
   /** One chunk of Edmund's speech finished; `played` is false if flushed. */
   | { type: "spoken"; chunkId: string; played: boolean }
   /** A physical output was audible and has been silenced again. */

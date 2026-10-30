@@ -103,12 +103,16 @@ type Live = {
   turnEnd: "complete" | "incomplete" | null;
   /** The exchange in progress, logged at Edmund's first sound in reply. */
   trace: ExchangeTrace;
+  /** Fresh recognition sessions started because one failed mid-call. */
+  hearingRestarts: number;
 };
 
 /** Two words of new speech while Edmund talks is a barge-in; a cough is not. */
 const BARGE_IN_WORDS = 2;
 /** Longest end_call waits for Edmund's last words to finish playing. */
 const HANGUP_DRAIN_MS = 15_000;
+/** Recognition restarts allowed per call before giving up on hearing it. */
+const MAX_HEARING_RESTARTS = 3;
 
 function duration(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -158,6 +162,8 @@ export class CallManager {
           return this.onSpeech(event.talking);
         case "spoken":
           return this.live?.voice.onSpoken(event.chunkId, event.played);
+        case "hearing-failed":
+          return await this.onHearingFailed(event.detail);
         case "silence-breach":
           return await this.onSilenceBreach(event.device, event.detail);
         case "readiness":
@@ -486,6 +492,33 @@ export class CallManager {
     });
   }
 
+  /**
+   * Recognition died mid-call. On 2026-10-29 Apple's recogniser rejected a
+   * session ("RecogRejected") two seconds into a call, which ends its
+   * results, and the caller went unheard for the remaining 28 s. A fresh
+   * session costs about a second. If it keeps failing, the call ends and the
+   * operator hears why, rather than leaving someone talking to nobody.
+   */
+  private async onHearingFailed(detail: string): Promise<void> {
+    const live = this.live;
+    if (!live || live.phase !== "active") return;
+    live.hearingRestarts += 1;
+    if (live.hearingRestarts > MAX_HEARING_RESTARTS) {
+      this.deps.alert(
+        `${this.deps.provider.name} call with ${live.record.conversation.label}: hearing kept failing (${detail}); hung up.`,
+      );
+      return this.end("Edmund could not hear them", { hangup: true });
+    }
+    log.warn("calls", "hearing failed; starting it again", {
+      call: live.record.id,
+      attempt: live.hearingRestarts,
+      detail,
+    });
+    await this.deps.provider.stopListening().catch(() => {});
+    if (this.live !== live) return;
+    await this.deps.provider.listen();
+  }
+
   // ── Ending ────────────────────────────────────────────────────────────
 
   private async onSilenceBreach(device: string, detail: string): Promise<void> {
@@ -613,6 +646,7 @@ export class CallManager {
       timers: [],
       turnEnd: null,
       trace: newTrace(),
+      hearingRestarts: 0,
     };
     // Nothing on a call should wait for something to load.
     this.deps.speaker.warm?.();
