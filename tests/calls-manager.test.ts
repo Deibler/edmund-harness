@@ -373,6 +373,19 @@ describe("turn-taking", () => {
     await until(() => routed.length === 1, 1_000);
   });
 
+  test("an unfinished pause that stays quiet is taken as the end, and its transcript asked for then", async () => {
+    // The detector called half of a live call's finished sentences unfinished;
+    // waiting out the recogniser's own final cost 1.0-2.0 s each time.
+    await onCall();
+    pause(0.1, 777);
+    await tick(100);
+    expect(provider.finalized).toEqual([]);
+    await until(() => provider.finalized.length === 1, 1_000);
+    expect(provider.finalized).toEqual([777]);
+    final("I think it's fine for right now.");
+    await until(() => routed.length === 1);
+  });
+
   test("without a verdict, the silence timer decides, as before", async () => {
     await onCall();
     pause(null);

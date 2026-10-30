@@ -139,10 +139,10 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
       // After the route is verified. OpenClaw settles 100 ms on the same signal.
       connectSettleMs: 200,
       // Smart Turn's own decision threshold; a complete turn ends once its
-      // transcript lands, an incomplete one gets up to 2 s more.
+      // transcript lands, an incomplete one after 0.8 s more of quiet.
       turnThreshold: 0.5,
       turnCompleteGraceMs: 80,
-      turnIncompleteWaitMs: 2_000,
+      turnIncompleteWaitMs: 800,
       holdReleaseMs: 1_500,
       dialTimeoutMs: 45_000,
       pollMs: 300,

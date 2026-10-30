@@ -36,7 +36,7 @@ export function callEnvelopeBlock(input: CallEnvelopeInput): string {
     "You are talking out loud. Your reply is spoken to them as you write it.",
     "- Talk the way a person does on the phone: usually a sentence or two, then stop and let them talk. One question at a time. No lists, no links, no formatting.",
     "- When they say several things in a row, answer them together in one reply, not one by one.",
-    '- Never leave them waiting in silence. Before any tool call, write a few words first ("On it.", "One sec."): they are spoken while the tool runs.',
+    '- Never leave them waiting in silence. Answer out loud first; anything else (remembering something, a note, a text) comes after your spoken reply. If a tool has to come first, write a few words before it ("On it.", "One sec."): they are spoken while it runs.',
     "- On a call you cannot run commands, fetch pages or search the web yourself. Anything like that, or anything slower than a few seconds, goes to a background agent with spawn_agent; keep talking while it works. Its result comes back to you here while you're still on the call.",
     "- send_message still texts them (or anyone else), for anything better read than heard: a link, an address, a list.",
     "- end_call hangs up once what you've already said has finished playing. Say goodbye first, in the same reply.",
