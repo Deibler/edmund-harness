@@ -149,3 +149,46 @@ describe("barge-in", () => {
     expect(queued.map((q) => q.text)).toContain("Oh, sorry, go ahead.");
   });
 });
+
+describe("after the call ends", () => {
+  test("a reply still streaming is not spoken, and goes out as a text", async () => {
+    // The first live call played 36 s of a reply into a line nobody was on.
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    voice.close("text");
+    voice.delta("t1", "Okay, I hung up. Here's what I found. It was the cable.");
+    await settle();
+    expect(queued).toEqual([]);
+    expect(await voice.deliver("Okay, I hung up. Here's what I found.", "t1")).toBe("unavailable");
+  });
+});
+
+describe("drained", () => {
+  test("waits for the last sentence, even one still being written, to finish playing", async () => {
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    voice.delta("t1", "Okay, talk soon. Bye Dana");
+    let done = false;
+    const drained = voice.drained(2_000).then(() => {
+      done = true;
+    });
+    await settle();
+    expect(queued.map((q) => q.text)).toEqual(["Okay, talk soon.", "Bye Dana"]);
+    expect(done).toBe(false);
+    voice.onSpoken(queued[0]!.chunkId, true);
+    await settle();
+    expect(done).toBe(false); // one still playing
+    voice.onSpoken(queued[1]!.chunkId, true);
+    await drained;
+    expect(done).toBe(true);
+  });
+
+  test("gives up after its timeout", async () => {
+    const { voice } = harness();
+    voice.beginTurn("t1");
+    voice.delta("t1", "This one never reports back.");
+    const started = Date.now();
+    await voice.drained(100);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+});

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withCallBlocks } from "../calls/loadout.ts";
 import type { Config } from "../config/config.ts";
 import { deriveGuestLoadout } from "../guests/access.ts";
 import { buildRunSystemPrompt } from "../model/context.ts";
@@ -477,8 +478,13 @@ export async function runClaude(
     // still work (they're inlined as content
     // blocks) and web/generation/voice tools stay. ToolSearch stays too —
     // it's how deferred MCP schemas load.
+    //
+    // On a live call the tools that block for seconds are off too, so slow
+    // work goes to background agents while Edmund keeps talking
+    // (calls/loadout.ts). This list is in the rebind key, so the worker is
+    // respawned as a call starts and again after it ends.
     "--disallowedTools",
-    disallowedBuiltinTools(hostAccess(config), isGuest),
+    withCallBlocks(disallowedBuiltinTools(hostAccess(config), isGuest), input.sessionKey, config),
     "--model",
     profile.model,
     "--effort",

@@ -105,13 +105,27 @@ export class VoiceOut {
     return this.pending.size > 0;
   }
 
+  /**
+   * Resolves once everything Edmund has said so far has played, including a
+   * last sentence still being written and speech still being synthesised, or
+   * after `timeoutMs`. Hanging up waits on it: the first live call hung up
+   * the instant end_call ran, mid-sentence.
+   */
+  async drained(timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    if (this.currentTurn) this.flushBuffer(this.currentTurn);
+    await Promise.race([this.chain, pause(timeoutMs)]);
+    while (this.pending.size > 0 && Date.now() < deadline) await pause(50);
+  }
+
   beginTurn(turnId: string): void {
     this.currentTurn = turnId;
     this.buffer = "";
   }
 
   delta(turnId: string, text: string): void {
-    if (turnId !== this.currentTurn || this.muted.has(turnId)) return;
+    if (this.closed || turnId !== this.currentTurn || this.muted.has(turnId)) return;
     this.streamed.add(turnId);
     this.buffer += text;
     const { sentences, rest } = takeSentences(this.buffer);
@@ -204,6 +218,10 @@ export class VoiceOut {
   }
 
   private enqueue(raw: string, label: string): void {
+    // After the call ends a reply still streaming must not be synthesised and
+    // played into a line nobody is on (the first live call played 36 s of
+    // one); deliver() reports it unavailable and it goes out as a text.
+    if (this.closed) return;
     const text = toSpeech(raw);
     if (!text) return;
     const generation = this.generation;

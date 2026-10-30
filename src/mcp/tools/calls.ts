@@ -100,7 +100,8 @@ export function callTools(ctx: ToolContext): ToolDef[] {
     },
     {
       name: "end_call",
-      description: "Hang up the FaceTime call this conversation is on. Say goodbye first.",
+      description:
+        "Hang up the FaceTime call this conversation is on, once what you have already said has finished playing. Say goodbye first, in the same reply.",
       inputSchema: NoInput,
       handler: async () => {
         withStore((store) => store.addCommand(genId("call_command"), ctx.sessionKey, "hangup"));
