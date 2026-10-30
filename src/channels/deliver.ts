@@ -1,3 +1,4 @@
+import { voiceBindingFor } from "../calls/binding.ts";
 import type { Config } from "../config/config.ts";
 import { chunkForIMessage } from "../imessage/chunk.ts";
 import { ChatDb } from "../imessage/db.ts";
@@ -5,7 +6,7 @@ import { hasMapsLink, looksLikeStreetAddress } from "../imessage/maps-link.ts";
 import { type SendArgs, sendMessage } from "../imessage/send.ts";
 import { ContactBook } from "../sessions/contacts.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
-import { dmKeyFor } from "../sessions/key.ts";
+import { type SessionKey, dmKeyFor } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import { log } from "../util/log.ts";
 import { keepQuietVeto, markdownToPlaintext, sanitizeOutbound } from "./sanitize-outbound.ts";
@@ -51,8 +52,23 @@ export type DeliverArgs = {
   replyTo?: string;
   /** Expressive-send effect id (impact, confetti, lasers, …). */
   effect?: string;
-  /** Mirror-only model turn identity for generation-fenced delivery. */
+  /** Model turn identity: generation-fences mirror delivery, and tells a
+   *  call's voice which streamed turn this reply closes. */
   turnId?: string;
+  /** The conversation this reply belongs to. Set only by paths whose reply
+   *  should be SPOKEN when that conversation is on a call (turns, cron
+   *  fires). Paths that leave it unset always text: a stale outbox reply
+   *  flushed mid-call is still a text. */
+  sessionKey?: SessionKey;
+};
+
+export type DeliveryResult = {
+  sent: number;
+  sentChunks: string[];
+  errors: string[];
+  silenced: boolean;
+  /** "voice" when the reply was spoken on a call rather than texted. */
+  medium?: "voice";
 };
 
 /**
@@ -110,7 +126,7 @@ export async function deliverReply(
   args: DeliverArgs,
   config: Config,
   echoes: EchoCache,
-): Promise<{ sent: number; sentChunks: string[]; errors: string[]; silenced: boolean }> {
+): Promise<DeliveryResult> {
   const cleaned = markdownToPlaintext(sanitizeOutbound(args.text));
   if (!cleaned) {
     // A veto with narration beside the sentinel was one exact-match away from
@@ -136,6 +152,19 @@ export async function deliverReply(
     log.info("deliver", "address sent as text — send_location would render a tappable card", {
       to: args.to,
     });
+  }
+
+  // On a call: the reply is spoken to the person instead of texted. A call
+  // that ended before the reply was ready, or a voice that cannot speak right
+  // now, falls through to the text path below, so nothing said to the person
+  // is lost.
+  const voice = args.sessionKey ? voiceBindingFor(args.sessionKey) : null;
+  if (voice) {
+    const outcome = await voice.deliver(cleaned, args.turnId);
+    if (outcome === "spoken") {
+      return { sent: 1, sentChunks: [cleaned], errors: [], silenced: false, medium: "voice" };
+    }
+    if (outcome === "silent") return { sent: 0, sentChunks: [], errors: [], silenced: true };
   }
 
   // Mirror channel: rendered on the glass and spoken only inside a user-opened

@@ -1,3 +1,4 @@
+import { isCallUtterance } from "../calls/binding.ts";
 import type { InboundMessage } from "../imessage/types.ts";
 import { isMirrorSession } from "../sessions/key.ts";
 import type { SessionKey } from "../sessions/key.ts";
@@ -138,7 +139,11 @@ export class SessionPipeline {
    * those still want the "caption is probably coming" grace period.
    */
   private windowFor(key: SessionKey, msg: InboundMessage): number {
-    if (isMirrorSession(key) && msg.attachments.length === 0) return this.voiceDebounceMs;
+    // A caller's utterance gets it too. Keyed on the message, not the session:
+    // a text typed into the same conversation during a call still waits out
+    // the typing window.
+    const voice = isMirrorSession(key) || isCallUtterance(msg);
+    if (voice && msg.attachments.length === 0) return this.voiceDebounceMs;
     return messageWindow(msg, {
       debounceMs: this.debounceMs,
       captionedAttachmentMs: this.captionedAttachmentMs,

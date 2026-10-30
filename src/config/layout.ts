@@ -74,6 +74,10 @@ export const CONFIG_LAYOUT: LayoutTier[] = [
       },
       { name: "mirror", note: "The smart mirror: its own model, voice and connection." },
       { name: "sms", note: "The SMS line (Twilio)." },
+      {
+        name: "facetime",
+        note: "FaceTime calls: who Edmund may call and answer, and his voice on a call.",
+      },
       { name: "fishing", note: "The fishing data service." },
       { name: "radaromega", note: "The RadarOmega weather app Edmund drives." },
       {

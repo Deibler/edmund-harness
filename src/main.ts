@@ -22,6 +22,7 @@ import { missingStorage } from "./boot/storage.ts";
 import { wireRecall } from "./boot/wire-recall.ts";
 import { wireRecovery } from "./boot/wire-recovery.ts";
 import { toPendingEntry, writePending } from "./bridge/session-queue.ts";
+import { startCallRuntime } from "./calls/runtime.ts";
 import { isBargeIn } from "./channels/barge-in.ts";
 import { deliverReply, setSmsDeliverer } from "./channels/deliver.ts";
 import type { Deps } from "./channels/deps.ts";
@@ -967,6 +968,55 @@ async function main() {
   if (catchUp) void catchUp.drained.then(startRecovery);
   else startRecovery();
 
+  /**
+   * Hand a message to its session: shown to a turn already running there
+   * (and parked behind it), or queued for a turn of its own. Shared by texts
+   * and FaceTime utterances, so a caller's words take exactly the path a
+   * text would: mid-turn showing, barge-in and coalescing included.
+   */
+  const deliverToSession = (key: SessionKey, msg: InboundMessage): void => {
+    if (activeSessions.has(key)) {
+      const bargeIn = isBargeIn(msg.text);
+      // Shown to the running turn at its next tool step, so the model can
+      // answer it now instead of when the turn ends (mid-turn.ts). Parked as
+      // well: the turn's end drops it if the model saw it, and answers it if
+      // not or if the turn failed.
+      const shown = bargeIn
+        ? null
+        : showToRunningTurn(key, msg, {
+            label: (handle) => contacts.label(handle),
+            inject: injectIntoRunningTurn,
+          });
+      writePending(key, msg, config.paths.data_dir, shown ?? undefined);
+      // Barge-in: a clear cancel/redirect aborts the in-flight turn NOW
+      // instead of letting doomed work finish (or a slow tool chain run
+      // minutes past a "stop"). The abort path disposes the old batch
+      // (ack-covered — user superseded it) and handleBatch's finally
+      // re-enqueues this parked message as its own fresh turn, so the
+      // model answers the cancel/pivot in seconds.
+      if (bargeIn) {
+        const controller = turnControllers.get(key);
+        if (controller && !controller.signal.aborted) {
+          console.log(
+            `[barge-in] aborting in-flight turn for ${key}: "${(msg.text ?? "").slice(0, 80)}"`,
+          );
+          controller.abort(`user barge-in: ${(msg.text ?? "").slice(0, 80)}`);
+        }
+      }
+      // With the coalesce gate on, the parked message is folded into the
+      // current turn's reply (or re-enqueued by the gate if the model
+      // keeps its draft). With the gate off, fall back to legacy behavior:
+      // it becomes the next proper turn.
+      if (config.behavior.coalesce_pending) {
+        return;
+      }
+    }
+    // A new turn's recall runs when the debounce window closes; load the
+    // embedding model meanwhile if it was released (embed-provider.ts warm).
+    recall.provider?.warm?.();
+    pipeline.enqueue(key, msg);
+  };
+
   // Everything after the gate: which session owns the message, durable ack,
   // park-or-enqueue. It never moves the watcher cursor; the watcher does,
   // once this returns. The address check calls it too, for an un-named group
@@ -1070,46 +1120,7 @@ async function main() {
     // that turn: routed on its own it could run first, answering the newest
     // message before the older backlog.
     if (catchUp?.absorb(key, msg)) return;
-    if (activeSessions.has(key)) {
-      const bargeIn = isBargeIn(msg.text);
-      // Shown to the running turn at its next tool step, so the model can
-      // answer it now instead of when the turn ends (mid-turn.ts). Parked as
-      // well: the turn's end drops it if the model saw it, and answers it if
-      // not or if the turn failed.
-      const shown = bargeIn
-        ? null
-        : showToRunningTurn(key, msg, {
-            label: (handle) => contacts.label(handle),
-            inject: injectIntoRunningTurn,
-          });
-      writePending(key, msg, config.paths.data_dir, shown ?? undefined);
-      // Barge-in: a clear cancel/redirect aborts the in-flight turn NOW
-      // instead of letting doomed work finish (or a slow tool chain run
-      // minutes past a "stop"). The abort path disposes the old batch
-      // (ack-covered — user superseded it) and handleBatch's finally
-      // re-enqueues this parked message as its own fresh turn, so the
-      // model answers the cancel/pivot in seconds.
-      if (bargeIn) {
-        const controller = turnControllers.get(key);
-        if (controller && !controller.signal.aborted) {
-          console.log(
-            `[barge-in] aborting in-flight turn for ${key}: "${(msg.text ?? "").slice(0, 80)}"`,
-          );
-          controller.abort(`user barge-in: ${(msg.text ?? "").slice(0, 80)}`);
-        }
-      }
-      // With the coalesce gate on, the parked message is folded into the
-      // current turn's reply (or re-enqueued by the gate if the model
-      // keeps its draft). With the gate off, fall back to legacy behavior:
-      // it becomes the next proper turn.
-      if (config.behavior.coalesce_pending) {
-        return;
-      }
-    }
-    // A new turn's recall runs when the debounce window closes; load the
-    // embedding model meanwhile if it was released (embed-provider.ts warm).
-    recall.provider?.warm?.();
-    pipeline.enqueue(key, msg);
+    deliverToSession(key, msg);
   };
 
   const stop = startWatcher({
@@ -1161,6 +1172,23 @@ async function main() {
     },
   });
 
+  // FaceTime calls (src/calls/), off unless [facetime].enabled. A call runs
+  // inside the caller's own conversation, so it uses the same inbound path a
+  // text takes and the same wake-up path cron jobs and agents use.
+  const callRuntime = await startCallRuntime({
+    config,
+    chatDb,
+    contacts,
+    deliverToSession,
+    fireSystemEvent: (sessionKey, systemEvent) => {
+      crons.create({ sessionKey, systemEvent, schedule: { kind: "once", atMs: Date.now() } });
+      scheduler.poke();
+    },
+    alert: (message) => void alert.notify({ category: "facetime", error: message }),
+    activeSessions,
+    turnControllers,
+  });
+
   const shutdown = async () => {
     console.log("[edmund-harness] shutting down");
     shuttingDown = true;
@@ -1173,6 +1201,7 @@ async function main() {
     // plugin can't block the rest of shutdown.
     await stopIntegrationRuntimes(integrationRuntimes);
     smsRuntime?.stop();
+    await callRuntime?.stop();
     creditsMaintenance.stop();
     dataTriggerWatcher?.stop();
     dataTriggerStore?.close();

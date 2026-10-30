@@ -313,6 +313,33 @@ allow_unknown_senders = false
 # Lines of SMS transcript shown on a cold start (chat.db knows nothing here).
 history_messages = 20
 
+# FaceTime calls. A call runs inside the caller's existing conversation: a
+# contact's DM session, or a group's session for a Group FaceTime. Needs the
+# native pieces built (make -C native/facetime) and the split virtual mic
+# installed (make -C native/facetime driver; the Makefile has the install
+# lines). Nothing is ever played on this Mac's speakers: call audio is tapped
+# muted and every physical output is held muted.
+[facetime]
+enabled = false
+# Who Edmund may call and whose calls he answers. Entries: a handle, a group
+# chat GUID, "operator" (the [security] operator handles), or "contacts"
+# (anyone in his contacts). Empty admits nobody. deny always wins.
+allow = []
+deny = []
+max_call_minutes = 30
+# Longest an incoming call rings while Edmund gets ready to speak.
+ring_answer_ms = 6000
+# Silence after the caller stops talking that ends their turn.
+endpoint_ms = 700
+# The split virtual mic (native/facetime/driver/build.sh): Edmund's voice plays
+# into mouth_device and FaceTime listens on mic_device. A call is not spoken on
+# until FaceTime is listening on exactly mic_device.
+mouth_device = "Edmund Feed"
+mic_device = "Edmund Mic"
+call_audio_processes = ["com.apple.avconferenced"]
+locale = "en-US"
+kokoro_voice = ""
+
 # Mid-Atlantic fishing data platform. Eligible model sessions get the direct
 # `fishing_query` and `fishing_viz` tools plus the `fishing` skill.
 # Requires ~/fishing-data-platform serving on api_url.

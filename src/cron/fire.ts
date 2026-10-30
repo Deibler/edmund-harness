@@ -298,6 +298,9 @@ async function runAndDeliver(
       // poisoned entry routes the send to the note-to-self thread. Both of
       // today's misdelivered sends were cron deliveries missing this pin.
       chatGuid,
+      // A wake-up landing while the conversation is on a call (an agent's
+      // result, a reminder) is spoken to the person on the call.
+      sessionKey: job.sessionKey,
     },
     config,
     echoes,

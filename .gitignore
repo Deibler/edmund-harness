@@ -1,6 +1,7 @@
 # ─── Dependencies / build artifacts ───
 node_modules
 dist/
+native/facetime/build/
 **/__pycache__/
 *.pyc
 

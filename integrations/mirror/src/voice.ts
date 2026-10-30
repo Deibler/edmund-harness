@@ -3,6 +3,9 @@ import { generateAudio } from "../../../src/tools/openrouter-http.ts";
 import { mirrorConfig } from "../config.ts";
 import { SpeechSidecar } from "./speech.ts";
 
+// Shared with FaceTime calls; they live in core so neither channel imports the other.
+export { speakable, speechChunks } from "../../../src/voice/text.ts";
+
 /**
  * Mirror voice I/O. Both directions run locally when [mirror].kokoro_enabled
  * and the sidecar is provisioned, with the hosted OpenRouter path kept as an
@@ -21,11 +24,6 @@ import { SpeechSidecar } from "./speech.ts";
 const STT_MODEL = "mistralai/voxtral-mini-transcribe";
 const STT_FALLBACK_MODEL = "openai/whisper-large-v3";
 const MAX_UTTERANCE_BYTES = 8 * 1024 * 1024;
-/** Below this, a sentence is not worth its own request and audible seam. */
-const MIN_CHUNK_CHARS = 24;
-/** Trailing tokens whose period ends an abbreviation, not a sentence. */
-const ABBREVIATION_END =
-  /\b(?:mr|mrs|ms|dr|prof|sr|jr|st|ave|rd|vs|etc|approx|no|fig|inc|ltd|co|dept|est|min|max|[a-z])\.$/i;
 const MAX_TTS_BYTES = 8 * 1024 * 1024;
 const PROVIDER_TIMEOUT_MS = 45_000;
 
@@ -215,76 +213,4 @@ function pcm16ToWav(pcm: Uint8Array, sampleRate: number): Uint8Array {
   header.write("data", 36);
   header.writeUInt32LE(pcm.length, 40);
   return Buffer.concat([header, Buffer.from(pcm)]);
-}
-
-/**
- * Split a reply into utterances that can be synthesized and sent independently.
- *
- * Time-to-first-audio is what a conversation actually feels like, and it is
- * bounded by the FIRST chunk rather than the whole reply — a long answer starts
- * speaking in a few hundred milliseconds instead of a few seconds. The Pi
- * already queues and plays chunks back-to-back, so this needs no protocol
- * change.
- *
- * Splits on sentence ends only. Prosody carries across a comma but not a full
- * stop, so anything finer would be audible as chopped-up speech, and short
- * trailing fragments are merged back for the same reason.
- */
-export function speechChunks(text: string, maxChunks = 8): string[] {
-  const clean = text.trim();
-  if (!clean) return [];
-  // Split only at a terminator followed by whitespace and the start of the next
-  // sentence — never inside a token. Matching bare [.!?] would cut "82.4" into
-  // "82." and "4", which is audible as "eighty two. four degrees." Punctuation
-  // stays attached; the synthesizer needs it for falling intonation.
-  const sentences = clean.split(/(?<=[.!?]["')\]]*)\s+(?=["'([]*[A-Z0-9])/);
-  if (sentences.length === 0) return [clean];
-
-  const chunks: string[] = [];
-  for (const raw of sentences) {
-    const sentence = raw.trim();
-    if (!sentence) continue;
-    const previous = chunks.at(-1);
-    // "Dr." / "No." / an initial is a terminator by shape only — rejoin so the
-    // sentence is spoken as one breath.
-    if (previous !== undefined && ABBREVIATION_END.test(previous)) {
-      chunks[chunks.length - 1] = `${previous} ${sentence}`;
-      continue;
-    }
-    // A lone "Sure." or "1998." is too short to be worth its own request and
-    // its own audible gap; fold it into its neighbour.
-    if (
-      previous !== undefined &&
-      (sentence.length < MIN_CHUNK_CHARS || previous.length < MIN_CHUNK_CHARS)
-    ) {
-      chunks[chunks.length - 1] = `${previous} ${sentence}`;
-      continue;
-    }
-    chunks.push(sentence);
-  }
-  if (chunks.length === 0) return [clean];
-  // The screen's audio queue is bounded; past that, pack the remainder into the
-  // last chunk rather than dropping any of the reply.
-  if (chunks.length > maxChunks) {
-    const head = chunks.slice(0, maxChunks - 1);
-    head.push(chunks.slice(maxChunks - 1).join(" "));
-    return head;
-  }
-  return chunks;
-}
-
-/**
- * Strip markdown and other chat-formatting the TTS would read literally.
- * The mirror reply is SPOKEN — asterisks, backticks, and link syntax all
- * turn into noise on the speaker.
- */
-export function speakable(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*?([^*]+)\*\*?/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/^#+\s*/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
