@@ -132,7 +132,10 @@ describe("barge-in", () => {
       { text: "The forecast for tomorrow is sunny.", heard: true },
       { text: "Highs in the seventies.", heard: false },
     ]);
-    expect(voice.takeCutOff()).toBe("Highs in the seventies. Pack");
+    expect(voice.takeCutOff()).toEqual({
+      kind: "talked-over",
+      text: "Highs in the seventies. Pack",
+    });
     expect(voice.takeCutOff()).toBeNull();
     expect(await voice.deliver("The forecast…", "t1")).toBe("silent");
   });
@@ -190,5 +193,36 @@ describe("drained", () => {
     const started = Date.now();
     await voice.drained(100);
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("they kept talking", () => {
+  test("a reply not yet begun goes unsaid, and the next turn learns what they missed", async () => {
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    expect(voice.awaitingFirstWords()).toBe(true);
+    voice.supersede();
+    voice.delta("t1", "Got it, the store was closed. ");
+    expect(await voice.deliver("Got it, the store was closed.", "t1")).toBe("silent");
+    await settle();
+    expect(queued).toEqual([]);
+    expect(voice.takeCutOff()).toEqual({
+      kind: "kept-talking",
+      text: "Got it, the store was closed.",
+    });
+    // The next turn speaks normally.
+    voice.beginTurn("t2");
+    expect(await voice.deliver("So you came home. Makes sense.", "t2")).toBe("spoken");
+  });
+
+  test("once Edmund has started speaking, it is talking over him instead, not this", async () => {
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    voice.delta("t1", "Sure thing. And");
+    await settle();
+    expect(queued.length).toBe(1);
+    expect(voice.awaitingFirstWords()).toBe(false);
+    voice.supersede();
+    expect(await voice.deliver("Sure thing. And then", "t1")).toBe("spoken");
   });
 });

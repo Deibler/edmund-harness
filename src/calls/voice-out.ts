@@ -44,6 +44,13 @@ export type VoiceOutDeps = {
 
 type TurnTally = { queued: number; failed: number };
 
+/**
+ * What the caller did not hear, and why: they talked over Edmund, or they
+ * kept talking before he answered and his reply to the earlier part was
+ * never said.
+ */
+export type CutOff = { kind: "talked-over" | "kept-talking"; text: string };
+
 export class VoiceOut {
   private readonly deps: VoiceOutDeps;
   private currentTurn: string | null = null;
@@ -56,7 +63,11 @@ export class VoiceOut {
   private chain: Promise<void> = Promise.resolve();
   /** Chunks handed to the provider and not yet reported played or dropped. */
   private readonly pending = new Map<string, string>();
-  private cutOff: string | null = null;
+  private cutOff: CutOff | null = null;
+  /** A reply in progress that the caller talked past before it was said. */
+  private superseded: string | null = null;
+  /** Whether the current turn has sent anything to be spoken yet. */
+  private turnQueued = false;
   /** Closed while the call rings: speech is synthesised but not yet sent. */
   private gate: Promise<void> = Promise.resolve();
   private closed: "text" | "drop" | null = null;
@@ -122,6 +133,29 @@ export class VoiceOut {
   beginTurn(turnId: string): void {
     this.currentTurn = turnId;
     this.buffer = "";
+    this.turnQueued = false;
+  }
+
+  /** A turn is under way and has not said anything yet. */
+  awaitingFirstWords(): boolean {
+    return this.currentTurn !== null && !this.turnQueued && !this.muted.has(this.currentTurn);
+  }
+
+  /**
+   * The caller started talking again before Edmund said a word of his reply.
+   * The reply is not said: answering each pause in turn made a call feel
+   * like a queue ("a to b to c to d"). It is not cancelled either, since an
+   * interrupt recycles the worker and costs a cold start. Its text becomes
+   * the next turn's cut-off, so Edmund knows they never heard it and answers
+   * everything they said in one reply.
+   */
+  supersede(): void {
+    const turn = this.currentTurn;
+    if (!turn || this.turnQueued) return;
+    this.muted.add(turn);
+    this.superseded = turn;
+    this.generation += 1;
+    this.buffer = "";
   }
 
   delta(turnId: string, text: string): void {
@@ -141,6 +175,11 @@ export class VoiceOut {
   async deliver(text: string, turnId?: string): Promise<VoiceOutcome> {
     if (this.closed) return this.closed === "text" ? "unavailable" : "silent";
     const label = turnId ?? genId("voice_reply");
+    if (turnId && turnId === this.superseded) {
+      this.superseded = null;
+      if (text.trim()) this.cutOff = { kind: "kept-talking", text: text.trim() };
+      return "silent";
+    }
     if (turnId && this.muted.has(turnId)) return "silent";
     if (turnId && this.streamed.has(turnId)) {
       this.flushBuffer(turnId);
@@ -181,14 +220,14 @@ export class VoiceOut {
     const unheard = [...this.pending.values()];
     if (this.buffer.trim()) unheard.push(this.buffer.trim());
     this.buffer = "";
-    if (unheard.length > 0) this.cutOff = unheard.join(" ");
+    if (unheard.length > 0) this.cutOff = { kind: "talked-over", text: unheard.join(" ") };
     await this.deps.provider.flush().catch((err: unknown) => {
       log.warn("calls", "flush failed", { err: (err as Error).message });
     });
   }
 
-  /** What Edmund was saying when last interrupted, once. */
-  takeCutOff(): string | null {
+  /** What the caller last did not hear, once. */
+  takeCutOff(): CutOff | null {
     const text = this.cutOff;
     this.cutOff = null;
     return text;
@@ -226,6 +265,7 @@ export class VoiceOut {
     if (!text) return;
     const generation = this.generation;
     const tally = this.tally(label);
+    if (label === this.currentTurn) this.turnQueued = true;
     this.chain = this.chain.then(async () => {
       if (generation !== this.generation) return;
       const audio = await this.deps.speaker.synthesize(text).catch(() => null);

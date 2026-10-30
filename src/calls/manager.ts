@@ -20,6 +20,7 @@ import { CALL_SERVICE, type VoiceBinding, bindVoice, callRowId, unbindVoice } fr
 import { callEnvelopeBlock } from "./envelope.ts";
 import type { CallTarget, Permission } from "./policy.ts";
 import type { CallRequest, CallStore } from "./store.ts";
+import { type ExchangeTrace, describeTrace, newTrace } from "./trace.ts";
 import type {
   CallCompanion,
   CallConversation,
@@ -44,6 +45,17 @@ export type CallSettings = {
    * (2026-10-29), and anything sent before that is lost.
    */
   connectSettleMs: number;
+  /**
+   * Turn-taking from the turn detector's verdict on each pause. At or above
+   * `turnThreshold` the caller has finished: the turn ends once their final
+   * transcript is in, after `turnCompleteGraceMs`. Below it they are mid-
+   * thought ("and then...", "um"), and Edmund keeps listening for up to
+   * `turnIncompleteWaitMs` of quiet. With no verdict, `endpointMs` after the
+   * final transcript, as before.
+   */
+  turnThreshold: number;
+  turnCompleteGraceMs: number;
+  turnIncompleteWaitMs: number;
   /** How long an outgoing call may ring before Edmund gives up. */
   dialTimeoutMs: number;
   /** How often the request and command queues are read. */
@@ -87,6 +99,10 @@ type Live = {
   heard: string[];
   endpointTimer: ReturnType<typeof setTimeout> | null;
   timers: ReturnType<typeof setTimeout>[];
+  /** The turn detector's verdict on the caller's latest pause; null once they talk again. */
+  turnEnd: "complete" | "incomplete" | null;
+  /** The exchange in progress, logged at Edmund's first sound in reply. */
+  trace: ExchangeTrace;
 };
 
 /** Two words of new speech while Edmund talks is a barge-in; a cough is not. */
@@ -135,7 +151,9 @@ export class CallManager {
         case "call":
           return await this.onCall(event.call);
         case "heard":
-          return this.onHeard(event.text, event.final);
+          return this.onHeard(event.text, event.final, event.spokeUntilMs);
+        case "pause":
+          return this.onPause(event.stoppedAtMs, event.audioMs, event.probability);
         case "speech":
           return this.onSpeech(event.talking);
         case "spoken":
@@ -285,6 +303,15 @@ export class CallManager {
       const call = await this.deps.provider.dial(request.handle);
       live.providerCallId = call.id;
       this.deps.store.finishRequest(request.id, "dialled");
+      // His opening line is written while it rings, so the conversation's
+      // worker moves to the call's model and the voice is synthesised before
+      // anyone answers. Waiting for "picked up" left the first people he
+      // called saying "hello?" into 3-7 s of silence while all that loaded.
+      const why = request.reason ? ` You are calling because: ${request.reason}` : "";
+      this.deps.fireSystemEvent(
+        conversation.sessionKey,
+        `[${this.deps.provider.name}] You are calling ${conversation.label}; it is ringing on their end.${why} What you write now is the first thing they hear when they pick up: hello and why you called, in a sentence or two.`,
+      );
       live.timers.push(
         setTimeout(() => {
           if (this.live === live && live.phase !== "active")
@@ -333,13 +360,6 @@ export class CallManager {
       setTimeout(() => void this.end("time limit", { hangup: true }), maxMs),
     );
 
-    if (live.record.direction === "outgoing") {
-      const why = live.record.reason ? ` You called because: ${live.record.reason}` : "";
-      this.deps.fireSystemEvent(
-        conversation.sessionKey,
-        `[${this.deps.provider.name}] ${conversation.label} picked up.${why} You speak first.`,
-      );
-    }
     log.info("calls", `on a call with ${conversation.label}`, { call: live.record.id });
   }
 
@@ -369,41 +389,82 @@ export class CallManager {
 
   // ── Hearing ───────────────────────────────────────────────────────────
 
-  private onHeard(text: string, final: boolean): void {
+  private onHeard(text: string, final: boolean, spokeUntilMs?: number): void {
     const live = this.live;
     if (!live || live.phase !== "active") return;
     if (!final) {
-      if (live.voice.speaking() && text.trim().split(/\s+/).length >= BARGE_IN_WORDS) {
-        void live.voice.bargeIn();
+      if (text.trim().split(/\s+/).length >= BARGE_IN_WORDS) {
+        // Talking over Edmund stops him; talking again before he has said a
+        // word means his reply to the earlier part goes unsaid, and the next
+        // one answers all of it.
+        if (live.voice.speaking()) void live.voice.bargeIn();
+        else if (live.voice.awaitingFirstWords()) live.voice.supersede();
       }
       return;
     }
     if (text.trim()) live.heard.push(text.trim());
-    this.armEndpoint(live);
+    live.trace.finalAt = this.now();
+    if (spokeUntilMs !== undefined) live.trace.stoppedAt ??= spokeUntilMs;
+    if (live.turnEnd === "complete") this.armEndpoint(live, this.deps.settings.turnCompleteGraceMs);
+    else if (live.turnEnd === null) this.armEndpoint(live, this.deps.settings.endpointMs);
+    // Incomplete: the wait armed at the pause stands.
+  }
+
+  /** The caller paused; the turn detector has judged whether they are done. */
+  private onPause(stoppedAtMs: number, audioMs: number, probability: number | null): void {
+    const live = this.live;
+    if (!live || live.phase !== "active" || probability === null) return;
+    live.trace.stoppedAt = stoppedAtMs;
+    live.trace.pausedAt = this.now();
+    live.trace.probability = probability;
+    if (probability >= this.deps.settings.turnThreshold) {
+      live.turnEnd = "complete";
+      // Their transcript settles now instead of after the recogniser's own
+      // pause (1.5-2.1 s). Only at a real turn end: forced mid-sentence it
+      // garbled the words either side.
+      void this.deps.provider.finalizeHearing(audioMs).catch(() => {});
+      if (live.heard.length > 0) this.armEndpoint(live, this.deps.settings.turnCompleteGraceMs);
+    } else {
+      live.turnEnd = "incomplete";
+      this.armEndpoint(live, this.deps.settings.turnIncompleteWaitMs);
+    }
   }
 
   private onSpeech(talking: boolean): void {
     const live = this.live;
     if (!live) return;
     if (talking) {
+      live.turnEnd = null;
       if (live.endpointTimer) clearTimeout(live.endpointTimer);
       live.endpointTimer = null;
-    } else {
-      this.armEndpoint(live);
+    } else if (live.turnEnd === null) {
+      this.armEndpoint(live, this.deps.settings.endpointMs);
     }
   }
 
-  private armEndpoint(live: Live): void {
+  private armEndpoint(live: Live, ms: number): void {
     if (live.endpointTimer) clearTimeout(live.endpointTimer);
-    live.endpointTimer = setTimeout(() => this.flushHeard(live), this.deps.settings.endpointMs);
+    live.endpointTimer = setTimeout(() => this.flushHeard(live), ms);
+  }
+
+  /** Edmund's first sound after the caller's turn closes the exchange's trace. */
+  private markSound(live: Live): void {
+    const trace = live.trace;
+    if (trace.handoffAt === null || trace.soundAt !== null) return;
+    trace.soundAt = this.now();
+    const fields = describeTrace(trace);
+    if (fields) log.info("calls", "exchange", { call: live.record.id, ...fields });
+    live.trace = newTrace();
   }
 
   /** The caller finished a turn: hand it to the conversation as a message. */
   private flushHeard(live: Live): void {
     live.endpointTimer = null;
+    live.turnEnd = null;
     const text = live.heard.join(" ").trim();
     live.heard = [];
     if (!text) return;
+    live.trace.handoffAt = this.now();
     const conversation = live.record.conversation;
     const atMs = this.now();
     this.record(live, { speaker: "caller", text, atMs, heard: true });
@@ -537,14 +598,24 @@ export class CallManager {
       requestId: opts.requestId ?? null,
       voice: new VoiceOut({
         speaker: this.deps.speaker,
-        provider: this.deps.provider,
+        provider: {
+          say: (chunkId, pcm, sampleRate) => {
+            this.markSound(live);
+            return this.deps.provider.say(chunkId, pcm, sampleRate);
+          },
+          flush: () => this.deps.provider.flush(),
+        },
         onSaid: (text, heard) =>
           this.record(live, { speaker: "edmund", text, atMs: this.now(), heard }),
       }),
       heard: [],
       endpointTimer: null,
       timers: [],
+      turnEnd: null,
+      trace: newTrace(),
     };
+    // Nothing on a call should wait for something to load.
+    this.deps.speaker.warm?.();
     // Speech waits for the call to connect; the greeting is synthesised while
     // it rings and sent the moment it does.
     live.voice.hold();
@@ -562,7 +633,10 @@ export class CallManager {
       // from a connected call is texted, a greeting for a missed one dropped.
       deliver: (text, turnId) => voice.deliver(text, turnId),
       onTurnStarted: (turnId) => voice.beginTurn(turnId),
-      onTextDelta: (turnId, text) => voice.delta(turnId, text),
+      onTextDelta: (turnId, text) => {
+        if (live.trace.handoffAt !== null) live.trace.wordsAt ??= this.now();
+        voice.delta(turnId, text);
+      },
       onTurnSettled: (turnId, outcome) => voice.settle(turnId, outcome),
       envelopeBlock: () =>
         callEnvelopeBlock({

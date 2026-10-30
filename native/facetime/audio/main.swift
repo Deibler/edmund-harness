@@ -66,6 +66,12 @@ final class Helper {
       listen(id: id, params: params)
     case "stopListening":
       stopListening(id: id)
+    case "finalize":
+      let throughMs = params["throughMs"] as? Int ?? 0
+      Task {
+        await hearing.finalize(throughMs: throughMs)
+        wire.reply(id, result: true)
+      }
     default:
       wire.reply(id, error: "unknown method \(message["method"] ?? "nil")")
     }

@@ -509,7 +509,7 @@ export class SpeechSidecar {
   }
 }
 
-function defaultPython(): string {
+export function defaultPython(): string {
   return join(homedir(), ".local", "share", "edmund-harness", "kokoro-venv", "bin", "python3");
 }
 

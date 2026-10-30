@@ -16,6 +16,8 @@ final class Hearing {
   private var tasks: [Task<Void, Never>] = []
   private let emit: (String, [String: Any]) -> Void
   private(set) var format: AVAudioFormat?
+  /// The caller's last 10 s, for the turn detector, on the analyzer's clock.
+  private let recent = RecentAudio(seconds: 10)
 
   /// True between start() and stop(). Not `format != nil`: the format outlives
   /// a stopped analyzer, and listening for a second call on that test fed
@@ -53,6 +55,28 @@ final class Hearing {
     self.format = format
 
     let emit = self.emit
+    let recent = self.recent
+    recent.reset()
+    // The caller just paused: hand the turn detector their last 8 s, ending a
+    // moment after the speech did. Whether the pause ends their turn, and so
+    // whether to finalize (below), is the daemon's call.
+    recent.onPause = { stopMs in
+      emit("pause", [
+        "stopMs": stopMs,
+        "originMs": recent.originMs ?? NSNull(),
+        "pcm": recent.clip(endingAtMs: stopMs + 200, seconds: 8) ?? NSNull(),
+      ])
+    }
+    // Talking again: whatever was decided about the last pause no longer holds.
+    recent.onSpeechStart = { startMs in
+      emit("speech", [
+        "detected": true,
+        "source": "activity",
+        "startMs": startMs,
+        "endMs": startMs,
+        "originMs": recent.originMs ?? NSNull(),
+      ])
+    }
     tasks.append(Task {
       do {
         for try await result in transcriber.results {
@@ -61,6 +85,7 @@ final class Hearing {
             "final": result.isFinal,
             "startMs": Self.ms(result.range.start),
             "endMs": Self.ms(result.range.end),
+            "originMs": recent.originMs ?? NSNull(),
           ])
         }
       } catch {
@@ -74,6 +99,7 @@ final class Hearing {
             "detected": result.speechDetected,
             "startMs": Self.ms(result.range.start),
             "endMs": Self.ms(result.range.end),
+            "originMs": recent.originMs ?? NSNull(),
           ])
         }
       } catch {
@@ -83,8 +109,17 @@ final class Hearing {
     return format
   }
 
+  /// The caller's turn ended at `throughMs`: publish its final transcript now
+  /// instead of after the transcriber's own pause (1.5-2.1 s measured). Only
+  /// at a real turn end: forcing it at a mid-sentence pause garbled the words
+  /// either side of it ("I'll meet you" came back as "....").
+  func finalize(throughMs: Int) async {
+    try? await analyzer?.finalize(through: CMTime(value: CMTimeValue(throughMs), timescale: 1000))
+  }
+
   func feed(_ buffer: AVAudioPCMBuffer) {
     input?.yield(AnalyzerInput(buffer: buffer))
+    recent.append(buffer)
   }
 
   func stop() async {

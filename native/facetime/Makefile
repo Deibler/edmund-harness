@@ -16,7 +16,7 @@ CONTROL   := $(BUILD_DIR)/FaceTimeControl.dylib
 AUDIO_APP := $(BUILD_DIR)/EdmundCallAudio.app
 MOUTH     := $(BUILD_DIR)/EdmundMouth
 
-.PHONY: all control audio mouth driver clean
+.PHONY: all control audio mouth driver turn-model clean
 all: control audio mouth
 
 control:
@@ -47,6 +47,18 @@ mouth:
 		-o $(MOUTH) audio/HAL.swift audio/Wire.swift mouth/*.swift
 	codesign -f -s - $(MOUTH)
 	@echo "built $(MOUTH)"
+
+# Smart Turn v3.2 (pipecat-ai/smart-turn, BSD-2): decides whether a caller's
+# pause ends their turn. Downloaded at a pinned hash; not part of `all`.
+TURN_MODEL := $(BUILD_DIR)/smart-turn-v3.2-cpu.onnx
+TURN_MODEL_SHA256 := 2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f
+turn-model:
+	@mkdir -p $(BUILD_DIR)
+	curl -fsSL --connect-timeout 30 --max-time 120 -o $(TURN_MODEL).tmp \
+		https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx
+	echo "$(TURN_MODEL_SHA256)  $(TURN_MODEL).tmp" | shasum -a 256 -c -
+	mv $(TURN_MODEL).tmp $(TURN_MODEL)
+	@echo "fetched $(TURN_MODEL)"
 
 # The split virtual mic (see driver/build.sh). Not part of `all`: it downloads
 # BlackHole source, and installing it needs an administrator:
