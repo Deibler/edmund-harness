@@ -75,6 +75,7 @@ final class Helper {
     [
       "guard": outputGuard.reports().map(\.json),
       "listening": state.sync { listening },
+      "hearing": hearing.isRunning,
       "tapped": state.sync { tappedProcesses },
     ]
   }
@@ -93,7 +94,7 @@ final class Helper {
     Task {
       do {
         let format: AVAudioFormat
-        if let ready = hearing.format {
+        if hearing.isRunning, let ready = hearing.format {
           format = ready
         } else {
           format = try await hearing.start(locale: locale)

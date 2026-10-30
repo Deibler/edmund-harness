@@ -17,6 +17,12 @@ final class Hearing {
   private let emit: (String, [String: Any]) -> Void
   private(set) var format: AVAudioFormat?
 
+  /// True between start() and stop(). Not `format != nil`: the format outlives
+  /// a stopped analyzer, and listening for a second call on that test fed
+  /// every buffer to an analyzer that no longer existed (2026-10-29: the
+  /// first call after launch heard the caller, the next heard nothing).
+  var isRunning: Bool { analyzer != nil }
+
   init(emit: @escaping (String, [String: Any]) -> Void) {
     self.emit = emit
   }
@@ -86,6 +92,7 @@ final class Hearing {
     input = nil
     try? await analyzer?.finalizeAndFinishThroughEndOfInput()
     analyzer = nil
+    format = nil
     for task in tasks { task.cancel() }
     tasks = []
   }

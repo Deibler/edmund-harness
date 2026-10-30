@@ -85,6 +85,8 @@ type Live = {
 
 /** Two words of new speech while Edmund talks is a barge-in; a cough is not. */
 const BARGE_IN_WORDS = 2;
+/** Longest end_call waits for Edmund's last words to finish playing. */
+const HANGUP_DRAIN_MS = 15_000;
 
 function duration(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -226,11 +228,15 @@ export class CallManager {
   private async drainQueues(): Promise<void> {
     try {
       for (const command of this.deps.store.claimCommands(this.now())) {
+        const live = this.live;
         if (
           command.command === "hangup" &&
-          this.live?.record.conversation.sessionKey === command.sessionKey
+          live?.record.conversation.sessionKey === command.sessionKey
         ) {
-          await this.end("Edmund hung up", { hangup: true });
+          // Let the goodbye finish playing first, but never hold a call open
+          // on it for long.
+          await live.voice.drained(HANGUP_DRAIN_MS);
+          if (this.live === live) await this.end("Edmund hung up", { hangup: true });
         }
       }
       for (const request of this.deps.store.claimRequests(this.now()))
@@ -431,6 +437,9 @@ export class CallManager {
     // greeting for a call that never connected is dropped: it was for a
     // conversation that did not happen.
     live.voice.close(answered ? "text" : "drop");
+    // Speech already handed to the provider would otherwise keep playing into
+    // a line nobody is on.
+    await this.deps.provider.flush().catch(() => {});
     const conversation = live.record.conversation;
     unbindVoice(conversation.sessionKey, live.record.id);
 

@@ -1,3 +1,4 @@
+import { callLoadout } from "../calls/loadout.ts";
 import type { Config } from "../config/config.ts";
 import * as intSettings from "../integrations/settings.ts";
 import type { SessionKey } from "../sessions/key.ts";
@@ -6,11 +7,22 @@ import { isTradingSession } from "../sessions/key.ts";
 export type ModelEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelProfile = { model: string; effort: ModelEffort };
 
-/** Resolve the effective model after session-specific overrides. */
+/** Resolve the effective model after session-specific overrides. A session on
+ *  a live call keeps its model and takes the call's effort (calls/loadout.ts). */
 export function modelProfileForSession(
   sessionKey: SessionKey,
   config: Config,
   orchestratorModel: string | null = null,
+): ModelProfile {
+  const profile = baseProfile(sessionKey, config, orchestratorModel);
+  const call = callLoadout(sessionKey, config);
+  return call ? { ...profile, effort: call.effort } : profile;
+}
+
+function baseProfile(
+  sessionKey: SessionKey,
+  config: Config,
+  orchestratorModel: string | null,
 ): ModelProfile {
   if (isTradingSession(sessionKey) && intSettings.trading(config).model) {
     return {

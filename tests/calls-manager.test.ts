@@ -296,6 +296,39 @@ describe("an incoming call", () => {
   });
 });
 
+describe("hanging up", () => {
+  test("end_call waits for the goodbye to finish playing, then hangs up", async () => {
+    // The first live call hung up the instant end_call ran, mid-sentence.
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listening);
+    const binding = voiceBindingFor(dm(DANA))!;
+    binding.onTurnStarted("t1");
+    binding.onTextDelta("t1", "Okay, talk soon. Bye");
+    store.addCommand("cmd_1", dm(DANA), "hangup");
+    await until(() => provider.said.length === 2);
+    await tick(100);
+    expect(provider.hungUp).toEqual([]); // still saying goodbye
+    for (const s of provider.said)
+      provider.emit({ type: "spoken", chunkId: s.chunkId, played: true });
+    await until(() => ended.length === 1);
+    expect(provider.hungUp).toEqual(["in_1"]);
+    expect(store.getCall(ended[0]!.id)!.endReason).toBe("Edmund hung up");
+  });
+
+  test("speech still queued when a call ends is dropped, not played into the dead line", async () => {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listening);
+    const before = provider.flushes;
+    hangUp("in_1", DANA);
+    await until(() => ended.length === 1);
+    expect(provider.flushes).toBe(before + 1);
+  });
+});
+
 describe("an outgoing call", () => {
   function request(handle: string, requestedBy = dm(handle)) {
     store.addRequest({

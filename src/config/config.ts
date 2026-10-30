@@ -506,6 +506,10 @@ export const ConfigSchema = z.object({
       call_audio_processes: z.array(z.string()).default(["com.apple.avconferenced"]),
       /** Recognition locale for the caller's speech. */
       locale: z.string().default("en-US"),
+      /** Reasoning effort while a call is live: a spoken reply waits on the
+       *  model's thinking, and slow work goes to background agents anyway
+       *  (calls/loadout.ts). The model stays the conversation's own. */
+      effort: z.enum(["low", "medium", "high", "xhigh", "max"]).default("low"),
       /** Kokoro voice for Edmund. Empty means bm_daniel, his mirror voice. */
       kokoro_voice: z.string().default(""),
     })

@@ -338,6 +338,9 @@ mouth_device = "Edmund Feed"
 mic_device = "Edmund Mic"
 call_audio_processes = ["com.apple.avconferenced"]
 locale = "en-US"
+# Reasoning effort on a call. Replies are spoken as they are written, so this
+# is most of the wait before Edmund starts talking.
+effort = "low"
 kokoro_voice = ""
 
 # Mid-Atlantic fishing data platform. Eligible model sessions get the direct
