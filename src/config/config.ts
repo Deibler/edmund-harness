@@ -510,6 +510,10 @@ export const ConfigSchema = z.object({
        *  model's thinking, and slow work goes to background agents anyway
        *  (calls/loadout.ts). The model stays the conversation's own. */
       effort: z.enum(["low", "medium", "high", "xhigh", "max"]).default("low"),
+      /** Model while a call is live. Opus took 3-8 s to start each spoken
+       *  reply; Sonnet starts in under a second. Empty keeps the
+       *  conversation's own model. */
+      model: z.string().default("claude-sonnet-5-5"),
       /** Kokoro voice for Edmund. Empty means bm_daniel, his mirror voice. */
       kokoro_voice: z.string().default(""),
     })

@@ -189,6 +189,17 @@ export function passesGroupRegate(
  *  own work off in time (calls/takeover.ts). */
 const inFlight = new Map<SessionKey, string>();
 
+/**
+ * Whether a turn gets automatic recall. Guest tiers get conversation-scoped
+ * memory ONLY — no semantic recall over the operator's message history,
+ * however chat-scoped the query. Call turns skip it too: each spoken reply
+ * waited on it (~0.6 s on the first live calls), and the model can still
+ * search when it needs to. Only the first iteration of a batch recalls.
+ */
+export function wantsAutoRecall(turn: { iter: number; guest: boolean; onCall: boolean }): boolean {
+  return turn.iter === 0 && !turn.guest && !turn.onCall;
+}
+
 export function inFlightRequest(key: SessionKey): string | null {
   return inFlight.get(key) || null;
 }
@@ -978,9 +989,13 @@ async function handleBatchInner(
           )
         : { lines: [], scope: undefined, invocation: undefined, catchUpNudge: undefined };
 
-    // Guest tiers get conversation-scoped memory ONLY — no semantic recall
-    // over the operator's message history, however chat-scoped the query.
-    const autoRecallFn = iter === 0 && !guest ? deps.autoRecall : undefined;
+    const autoRecallFn = wantsAutoRecall({
+      iter,
+      guest: Boolean(guest),
+      onCall: Boolean(callVoice),
+    })
+      ? deps.autoRecall
+      : undefined;
     const autoRecallPromise: Promise<AutoRecallResult> = autoRecallFn
       ? (async () => {
           const queryText = cleaned

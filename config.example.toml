@@ -341,6 +341,9 @@ locale = "en-US"
 # Reasoning effort on a call. Replies are spoken as they are written, so this
 # is most of the wait before Edmund starts talking.
 effort = "low"
+# Model on a call; empty keeps the conversation's own. Same conversation and
+# memory either way.
+model = "claude-sonnet-5-5"
 kokoro_voice = ""
 
 # Mid-Atlantic fishing data platform. Eligible model sessions get the direct
