@@ -14,8 +14,8 @@ export type CallEnvelopeInput = {
   direction: "incoming" | "outgoing";
   answeredAtMs: number | null;
   nowMs: number;
-  /** What Edmund said that the caller did not hear, if they cut him off. */
-  cutOff: string | null;
+  /** What the caller did not hear, and why. */
+  cutOff: { kind: "talked-over" | "kept-talking"; text: string } | null;
 };
 
 function minutes(ms: number): string {
@@ -34,7 +34,8 @@ export function callEnvelopeBlock(input: CallEnvelopeInput): string {
   const lines = [
     `[On a ${input.provider} call with ${who}: ${state}]`,
     "You are talking out loud. Your reply is spoken to them as you write it.",
-    "- Talk the way a person does on the phone: a sentence or three, no lists, no links, no formatting.",
+    "- Talk the way a person does on the phone: usually a sentence or two, then stop and let them talk. One question at a time. No lists, no links, no formatting.",
+    "- When they say several things in a row, answer them together in one reply, not one by one.",
     '- Never leave them waiting in silence. Before any tool call, write a few words first ("On it.", "One sec."): they are spoken while the tool runs.',
     "- On a call you cannot run commands, fetch pages or search the web yourself. Anything like that, or anything slower than a few seconds, goes to a background agent with spawn_agent; keep talking while it works. Its result comes back to you here while you're still on the call.",
     "- send_message still texts them (or anyone else), for anything better read than heard: a link, an address, a list.",
@@ -43,8 +44,12 @@ export function callEnvelopeBlock(input: CallEnvelopeInput): string {
   if (input.isGroup) {
     lines.push("- Several people may be talking; you hear them mixed, without names.");
   }
-  if (input.cutOff) {
-    lines.push(`They talked over you. They did not hear: "${input.cutOff.slice(0, 400)}"`);
+  if (input.cutOff?.kind === "talked-over") {
+    lines.push(`They talked over you. They did not hear: "${input.cutOff.text.slice(0, 400)}"`);
+  } else if (input.cutOff?.kind === "kept-talking") {
+    lines.push(
+      `They kept talking before you answered, so they never heard your last reply: "${input.cutOff.text.slice(0, 400)}". Answer everything they have said since then as one reply.`,
+    );
   }
   return lines.join("\n");
 }

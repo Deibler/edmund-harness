@@ -57,6 +57,10 @@ export type FaceTimeOptions = {
   reconnectGraceMs?: number;
   /** How long after connecting FaceTime may take to open the microphone. */
   routeTimeoutMs?: number;
+  /** Scores each pause: has the caller finished their turn? Absent, none are scored. */
+  turnDetector?: {
+    verdict(pcmBase64: string): Promise<{ probability: number; ms: number } | null>;
+  };
 };
 
 /**
@@ -164,6 +168,10 @@ export class FaceTimeProvider implements CallProvider {
     await this.audio.request("stopListening", {}, 15_000);
   }
 
+  async finalizeHearing(audioMs: number): Promise<void> {
+    await this.audio.request("finalize", { throughMs: Math.round(audioMs) }, 2_000);
+  }
+
   /**
    * Polls the call's per-process route until FaceTime is listening on
    * Edmund's microphone and playing to a real speaker. Measured 2026-10-29:
@@ -238,13 +246,21 @@ export class FaceTimeProvider implements CallProvider {
         log.info("facetime", "call audio connected", { guard: JSON.stringify(message.guard) });
         void this.readiness();
         return;
-      case "transcript":
+      case "transcript": {
+        const origin = typeof message.originMs === "number" ? message.originMs : null;
         this.onEvent({
           type: "heard",
           text: String(message.text ?? ""),
           final: message.final === true,
           atMs: now,
+          ...(origin !== null && typeof message.endMs === "number"
+            ? { spokeUntilMs: origin + message.endMs }
+            : {}),
         });
+        return;
+      }
+      case "pause":
+        void this.onPause(message, now);
         return;
       case "speech":
         this.onEvent({ type: "speech", talking: message.detected === true, atMs: now });
@@ -269,6 +285,26 @@ export class FaceTimeProvider implements CallProvider {
         });
         return;
     }
+  }
+
+  /**
+   * The listener heard the caller pause. Smart Turn scores the last 8 s of
+   * their speech (~12 ms, plus the round trip) before the manager hears of
+   * the pause, so it can end the turn at once or keep listening.
+   */
+  private async onPause(message: JsonMessage, arrivedMs: number): Promise<void> {
+    const audioMs = Number(message.stopMs);
+    if (!Number.isFinite(audioMs)) return;
+    const origin = typeof message.originMs === "number" ? message.originMs : null;
+    const pcm = typeof message.pcm === "string" ? message.pcm : "";
+    const verdict =
+      pcm && this.options.turnDetector ? await this.options.turnDetector.verdict(pcm) : null;
+    this.onEvent({
+      type: "pause",
+      stoppedAtMs: origin !== null ? origin + audioMs : arrivedMs,
+      audioMs,
+      probability: verdict?.probability ?? null,
+    });
   }
 
   private onMouth(message: JsonMessage): void {

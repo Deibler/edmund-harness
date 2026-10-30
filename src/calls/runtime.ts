@@ -19,7 +19,8 @@ import { ensureSandbox } from "../persona/sandbox.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { log } from "../util/log.ts";
-import { SpeechSidecar } from "../voice/speech-sidecar.ts";
+import { SpeechSidecar, defaultPython } from "../voice/speech-sidecar.ts";
+import { TurnDetector } from "../voice/turn-detector.ts";
 import { conversationForPeer } from "./conversation.ts";
 import { CallManager } from "./manager.ts";
 import { CallPolicy } from "./policy.ts";
@@ -49,7 +50,7 @@ export type CallRuntimeDeps = {
 
 export type CallRuntime = { stop: () => Promise<void> };
 
-function nativeBuild(): { dylib: string; audioApp: string; mouth: string } {
+function nativeBuild(): { dylib: string; audioApp: string; mouth: string; turnModel: string } {
   const root = resolve(
     dirname(fileURLToPath(import.meta.url)),
     "..",
@@ -62,6 +63,8 @@ function nativeBuild(): { dylib: string; audioApp: string; mouth: string } {
     dylib: join(root, "FaceTimeControl.dylib"),
     audioApp: join(root, "EdmundCallAudio.app"),
     mouth: join(root, "EdmundMouth"),
+    // Smart Turn v3.2 (pipecat-ai/smart-turn-v3), fetched at a pinned hash.
+    turnModel: join(root, "smart-turn-v3.2-cpu.onnx"),
   };
 }
 
@@ -96,7 +99,20 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
       const audio = await sidecar.synthesize(text);
       return audio ? { pcm: audio.pcm, sampleRate: audio.sampleRate } : null;
     },
+    // It unloads after 15 idle minutes; the first sentence of a call paid
+    // ~0.5 s to load it again.
+    warm: () => void sidecar.warmup(),
   };
+  // Resident for as long as calls are on: ~9 MB, and a verdict is ~12 ms.
+  // Without the model (make -C native/facetime turn-model) every pause falls
+  // back to the fixed silence timer.
+  const turnDetector = new TurnDetector({ python: defaultPython(), model: native.turnModel });
+  if (turnDetector.installed()) turnDetector.start();
+  else
+    log.warn("calls", "turn detection off: no model or python", {
+      model: native.turnModel,
+      hint: "make -C native/facetime turn-model",
+    });
 
   const store = new CallStore(dataDir);
   const agents = new AgentStore(dataDir);
@@ -111,6 +127,7 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
     sampleRate: SAMPLE_RATE,
     callAudioProcesses: settings.call_audio_processes,
     locale: settings.locale,
+    turnDetector,
   });
 
   const manager = new CallManager({
@@ -120,6 +137,11 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
       endpointMs: settings.endpoint_ms,
       // After the route is verified. OpenClaw settles 100 ms on the same signal.
       connectSettleMs: 200,
+      // Smart Turn's own decision threshold; a complete turn ends once its
+      // transcript lands, an incomplete one gets up to 2 s more.
+      turnThreshold: 0.5,
+      turnCompleteGraceMs: 80,
+      turnIncompleteWaitMs: 2_000,
       dialTimeoutMs: 45_000,
       pollMs: 300,
     },
@@ -180,6 +202,7 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
     stop: async () => {
       await manager.stop();
       sidecar.stop();
+      turnDetector.stop();
       store.close();
       agents.close();
     },

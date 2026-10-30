@@ -66,6 +66,10 @@ class FakeProvider implements CallProvider {
   async audioReady() {
     return this.route;
   }
+  finalized: number[] = [];
+  async finalizeHearing(audioMs: number) {
+    this.finalized.push(audioMs);
+  }
   async say(chunkId: string, pcm: Uint8Array) {
     this.said.push({ chunkId, text: new TextDecoder().decode(pcm) });
   }
@@ -95,6 +99,7 @@ let ended: CallRecord[];
 let allowed: Set<string>;
 let handedOff: string[];
 let expedited: string[];
+let warmed: number;
 
 function conversationFor(peer: Peer): CallConversation | null {
   if (peer.kind === "group") return null;
@@ -119,6 +124,7 @@ beforeEach(async () => {
   allowed = new Set([DANA, FRIEND]);
   handedOff = [];
   expedited = [];
+  warmed = 0;
   const deps: CallManagerDeps = {
     settings: {
       maxCallMinutes: 30,
@@ -127,11 +133,15 @@ beforeEach(async () => {
       dialTimeoutMs: 400,
       pollMs: 15,
       connectSettleMs: 0,
+      turnThreshold: 0.5,
+      turnCompleteGraceMs: 10,
+      turnIncompleteWaitMs: 300,
     },
     provider,
     store,
     speaker: {
       synthesize: async (text) => ({ pcm: new TextEncoder().encode(text), sampleRate: 24_000 }),
+      warm: () => void warmed++,
     },
     conversationFor,
     policy: {
@@ -315,6 +325,72 @@ describe("agent results on a call", () => {
   });
 });
 
+describe("turn-taking", () => {
+  async function onCall() {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listening);
+  }
+  const pause = (probability: number | null, audioMs = 1_000) =>
+    provider.emit({ type: "pause", stoppedAtMs: Date.now(), audioMs, probability });
+  const final = (text: string) =>
+    provider.emit({ type: "heard", text, final: true, atMs: Date.now() });
+
+  test("a pause that sounds finished ends the turn, and its transcript is asked for at once", async () => {
+    await onCall();
+    pause(0.92, 4_321);
+    expect(provider.finalized).toEqual([4_321]);
+    final("That's all I wanted.");
+    await until(() => routed.length === 1);
+    expect(routed[0]!.msg.text).toBe("That's all I wanted.");
+  });
+
+  test("a pause mid-thought keeps listening, so what follows is one message, not two", async () => {
+    // Answering every pause in turn made calls feel like a queue: a, then b.
+    await onCall();
+    pause(0.1);
+    final("So I was thinking");
+    await tick(100);
+    expect(routed).toEqual([]); // still their turn
+    expect(provider.finalized).toEqual([]); // never forced mid-sentence
+    provider.emit({ type: "speech", talking: true, atMs: Date.now() });
+    final("we could go tomorrow.");
+    pause(0.9);
+    await until(() => routed.length === 1);
+    expect(routed[0]!.msg.text).toBe("So I was thinking we could go tomorrow.");
+    await tick(50);
+    expect(routed.length).toBe(1);
+  });
+
+  test("an unfinished pause still ends the turn if they stay quiet", async () => {
+    await onCall();
+    pause(0.1);
+    final("Hmm, let me think");
+    await until(() => routed.length === 1, 1_000);
+  });
+
+  test("without a verdict, the silence timer decides, as before", async () => {
+    await onCall();
+    pause(null);
+    final("Hello?");
+    await until(() => routed.length === 1);
+    expect(provider.finalized).toEqual([]);
+  });
+
+  test("talking again before Edmund answered: that reply goes unsaid, and the next turn knows", async () => {
+    await onCall();
+    const binding = voiceBindingFor(dm(DANA))!;
+    binding.onTurnStarted("t1");
+    provider.emit({ type: "heard", text: "and also", final: false, atMs: Date.now() });
+    expect(await binding.deliver("The store closes at nine.", "t1")).toBe("silent");
+    expect(provider.said).toEqual([]);
+    binding.onTurnSettled("t1", "delivered");
+    expect(binding.envelopeBlock()).toContain("They kept talking before you answered");
+    expect(binding.envelopeBlock()).not.toContain("kept talking"); // told once
+  });
+});
+
 describe("hanging up", () => {
   test("end_call waits for the goodbye to finish playing, then hangs up", async () => {
     // The first live call hung up the instant end_call ran, mid-sentence.
@@ -360,16 +436,27 @@ describe("an outgoing call", () => {
     });
   }
 
-  test("dials, and once the right person picks up Edmund opens with why he called", async () => {
+  test("writes its opening line while it rings, says it the moment they pick up, and reports back", async () => {
     request(FRIEND, dm(DANA));
     await until(() => provider.dialled.length === 1);
+    // Asked for while it rings: the first calls he placed waited for "picked
+    // up" and left people saying "hello?" into 3-7 s of silence.
+    await until(() => events.some((e) => e.text.includes("You are calling")));
+    const opener = events.find((e) => e.text.includes("You are calling"))!;
+    expect(opener.key).toBe(dm(FRIEND));
+    expect(opener.text).toContain("the package arrived");
+    expect(warmed).toBe(1);
+    const line = voiceBindingFor(dm(FRIEND))!.deliver("Hey, your package arrived.");
+    await tick(30);
+    expect(provider.said).toEqual([]); // held until they answer
     connect("out_1", FRIEND);
-    await until(() => events.some((e) => e.text.includes("picked up")));
-    const opened = events.find((e) => e.text.includes("picked up"))!;
-    expect(opened.key).toBe(dm(FRIEND));
-    expect(opened.text).toContain("the package arrived");
+    expect(await line).toBe("spoken");
+    expect(provider.said.map((s) => s.text)).toEqual(["Hey, your package arrived."]);
+    expect(events.some((e) => e.text.includes("picked up"))).toBe(false);
 
     store.addCommand("cmd_1", dm(FRIEND), "hangup");
+    for (const s of provider.said)
+      provider.emit({ type: "spoken", chunkId: s.chunkId, played: true });
     await until(() => provider.hungUp.length === 1);
     await until(() => ended.length === 1);
     // The person who asked hears how it went.
@@ -382,7 +469,6 @@ describe("an outgoing call", () => {
     connect("out_1", OTHER);
     await until(() => provider.hungUp.length === 1);
     expect(alerts.join(" ")).toContain("instead of");
-    expect(events.some((e) => e.text.includes("picked up"))).toBe(false);
     expect(voiceBindingFor(dm(FRIEND))).toBeNull();
   });
 

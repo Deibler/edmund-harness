@@ -36,8 +36,16 @@ export type ProviderCall = {
 /** What a provider reports. Times are unix ms. */
 export type ProviderEvent =
   | { type: "call"; call: ProviderCall }
-  /** Recognised speech from the other side. `final` text is settled. */
-  | { type: "heard"; text: string; final: boolean; atMs: number }
+  /** Recognised speech from the other side. `final` text is settled.
+   *  `spokeUntilMs` is when its last word was spoken, when the provider knows. */
+  | { type: "heard"; text: string; final: boolean; atMs: number; spokeUntilMs?: number }
+  /**
+   * The other side paused. `probability` is the turn detector's confidence
+   * that they have finished their turn (null when it could not say);
+   * `audioMs` is the pause on the provider's hearing clock, for
+   * finalizeHearing.
+   */
+  | { type: "pause"; stoppedAtMs: number; audioMs: number; probability: number | null }
   /** The other side started or stopped talking. */
   | { type: "speech"; talking: boolean; atMs: number }
   /** One chunk of Edmund's speech finished; `played` is false if flushed. */
@@ -63,6 +71,8 @@ export interface CallProvider {
    * resolves is lost: a call reports active before its microphone opens.
    */
   audioReady(): Promise<{ ok: true } | { ok: false; detail: string }>;
+  /** The caller's turn ended at `audioMs` (a pause's): settle its transcript now. */
+  finalizeHearing(audioMs: number): Promise<void>;
   stopListening(): Promise<void>;
   /** Queue 16-bit mono PCM for the other side to hear. */
   say(chunkId: string, pcm: Uint8Array, sampleRate: number): Promise<void>;
@@ -73,6 +83,8 @@ export interface CallProvider {
 /** Text to speech. Null means it could not speak this time. */
 export interface Speaker {
   synthesize(text: string): Promise<{ pcm: Uint8Array; sampleRate: number } | null>;
+  /** Load the voice now, so the first sentence of a call does not wait on it. */
+  warm?(): void;
 }
 
 /** The conversation a call belongs to. Derived from keyed sources only. */
