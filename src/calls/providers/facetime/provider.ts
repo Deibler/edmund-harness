@@ -10,6 +10,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { log } from "../../../util/log.ts";
@@ -57,6 +58,8 @@ export type FaceTimeOptions = {
   reconnectGraceMs?: number;
   /** How long after connecting FaceTime may take to open the microphone. */
   routeTimeoutMs?: number;
+  /** When set, the last 30 scored clips are kept here as WAV with their scores (diagnosis only). */
+  turnClipDir?: string;
   /** Scores each pause: has the caller finished their turn? Absent, none are scored. */
   turnDetector?: {
     verdict(pcmBase64: string): Promise<{ probability: number; ms: number } | null>;
@@ -99,6 +102,37 @@ export function toProviderCall(raw: JsonMessage): ProviderCall | null {
     peer,
     raw: { status: raw.status, state: raw.state, disconnectedReason: raw.disconnectedReason },
   };
+}
+
+/** A scored clip as a 16 kHz mono WAV named for its time and score; the oldest beyond 30 go. */
+function keepTurnClip(dir: string, pcmBase64: string, probability: number | null): void {
+  try {
+    mkdirSync(dir, { recursive: true });
+    const pcm = Buffer.from(pcmBase64, "base64");
+    const header = Buffer.alloc(44);
+    header.write("RIFF", 0);
+    header.writeUInt32LE(36 + pcm.length, 4);
+    header.write("WAVEfmt ", 8);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(1, 22);
+    header.writeUInt32LE(16_000, 24);
+    header.writeUInt32LE(32_000, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write("data", 36);
+    header.writeUInt32LE(pcm.length, 40);
+    const score = probability === null ? "none" : probability.toFixed(3);
+    writeFileSync(join(dir, `${Date.now()}-p${score}.wav`), Buffer.concat([header, pcm]));
+    const clips = readdirSync(dir)
+      .filter((f) => f.endsWith(".wav"))
+      .sort();
+    for (const old of clips.slice(0, Math.max(0, clips.length - 30))) {
+      rmSync(join(dir, old), { force: true });
+    }
+  } catch (err) {
+    log.warn("facetime", "could not keep turn clip", { err: (err as Error).message });
+  }
 }
 
 export class FaceTimeProvider implements CallProvider {
@@ -311,6 +345,9 @@ export class FaceTimeProvider implements CallProvider {
     const pcm = typeof message.pcm === "string" ? message.pcm : "";
     const verdict =
       pcm && this.options.turnDetector ? await this.options.turnDetector.verdict(pcm) : null;
+    if (this.options.turnClipDir && pcm) {
+      keepTurnClip(this.options.turnClipDir, pcm, verdict?.probability ?? null);
+    }
     this.onEvent({
       type: "pause",
       stoppedAtMs: origin !== null ? origin + audioMs : arrivedMs,

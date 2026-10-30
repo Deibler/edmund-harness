@@ -128,6 +128,7 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
     callAudioProcesses: settings.call_audio_processes,
     locale: settings.locale,
     turnDetector,
+    ...(settings.keep_turn_clips ? { turnClipDir: join(dataDir, "facetime", "turn-clips") } : {}),
   });
 
   const manager = new CallManager({
@@ -142,6 +143,7 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
       turnThreshold: 0.5,
       turnCompleteGraceMs: 80,
       turnIncompleteWaitMs: 2_000,
+      holdReleaseMs: 1_500,
       dialTimeoutMs: 45_000,
       pollMs: 300,
     },

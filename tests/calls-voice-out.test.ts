@@ -197,7 +197,7 @@ describe("drained", () => {
 });
 
 describe("they kept talking", () => {
-  test("a reply not yet begun goes unsaid, and the next turn learns what they missed", async () => {
+  test("a reply not yet begun is held; if they took their turn it goes unsaid, and the next turn learns what they missed", async () => {
     const { voice, queued } = harness();
     voice.beginTurn("t1");
     expect(voice.awaitingFirstWords()).toBe(true);
@@ -206,13 +206,40 @@ describe("they kept talking", () => {
     expect(await voice.deliver("Got it, the store was closed.", "t1")).toBe("silent");
     await settle();
     expect(queued).toEqual([]);
+    expect(voice.holding()).toBe(true);
+    voice.dropHeld();
     expect(voice.takeCutOff()).toEqual({
       kind: "kept-talking",
       text: "Got it, the store was closed.",
     });
-    // The next turn speaks normally.
     voice.beginTurn("t2");
     expect(await voice.deliver("So you came home. Makes sense.", "t2")).toBe("spoken");
+  });
+
+  test("if what they said was not a turn (background talk, a cough), the held reply is said after all", async () => {
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    voice.supersede();
+    expect(await voice.deliver("Glad it works. Hi to Kayla.", "t1")).toBe("silent");
+    voice.releaseHeld();
+    await settle();
+    expect(queued.map((q) => q.text).join(" ")).toBe("Glad it works. Hi to Kayla.");
+    expect(voice.takeCutOff()).toBeNull();
+  });
+
+  test("released or dropped before the reply was written, it is decided when it arrives", async () => {
+    const released = harness();
+    released.voice.beginTurn("t1");
+    released.voice.supersede();
+    released.voice.releaseHeld();
+    expect(await released.voice.deliver("Sure thing.", "t1")).toBe("spoken");
+
+    const dropped = harness();
+    dropped.voice.beginTurn("t1");
+    dropped.voice.supersede();
+    dropped.voice.dropHeld();
+    expect(await dropped.voice.deliver("Sure thing.", "t1")).toBe("silent");
+    expect(dropped.voice.takeCutOff()).toEqual({ kind: "kept-talking", text: "Sure thing." });
   });
 
   test("once Edmund has started speaking, it is talking over him instead, not this", async () => {
@@ -223,6 +250,7 @@ describe("they kept talking", () => {
     expect(queued.length).toBe(1);
     expect(voice.awaitingFirstWords()).toBe(false);
     voice.supersede();
+    expect(voice.holding()).toBe(false);
     expect(await voice.deliver("Sure thing. And then", "t1")).toBe("spoken");
   });
 });
