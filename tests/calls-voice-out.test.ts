@@ -254,3 +254,28 @@ describe("they kept talking", () => {
     expect(await voice.deliver("Sure thing. And then", "t1")).toBe("spoken");
   });
 });
+
+describe("a finished sentence before a pause in the text", () => {
+  test("is said without waiting for the next sentence (or the tool call in between)", async () => {
+    // "On it, texting you now." waited 4.8 s for send_message to be written
+    // and sent, because a sentence was only known to end when the next began.
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    voice.delta("t1", "On it, texting you now.");
+    await settle();
+    expect(queued).toEqual([]);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(queued.map((q) => q.text)).toEqual(["On it, texting you now."]);
+    voice.delta("t1", " Sent.");
+    expect(await voice.deliver("On it, texting you now. Sent.", "t1")).toBe("spoken");
+    expect(queued.map((q) => q.text)).toEqual(["On it, texting you now.", "Sent."]);
+  });
+
+  test("an unfinished one is not said early", async () => {
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    voice.delta("t1", "So the thing about the");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(queued).toEqual([]);
+  });
+});

@@ -48,10 +48,10 @@ export type CallSettings = {
   /**
    * Turn-taking from the turn detector's verdict on each pause. At or above
    * `turnThreshold` the caller has finished: the turn ends once their final
-   * transcript is in, after `turnCompleteGraceMs`. Below it they are mid-
-   * thought ("and then...", "um"), and Edmund keeps listening for up to
-   * `turnIncompleteWaitMs` of quiet. With no verdict, `endpointMs` after the
-   * final transcript, as before.
+   * transcript is in, after `turnCompleteGraceMs`. Below it they may be mid-
+   * thought ("and then...", "um"), and Edmund listens for `turnIncompleteWaitMs`
+   * more of quiet before taking it as the end. With no verdict, `endpointMs`
+   * after the final transcript, as before.
    */
   turnThreshold: number;
   turnCompleteGraceMs: number;
@@ -439,8 +439,21 @@ export class CallManager {
       void this.deps.provider.finalizeHearing(audioMs).catch(() => {});
       if (live.heard.length > 0) this.armEndpoint(live, this.deps.settings.turnCompleteGraceMs);
     } else {
+      // Mid-thought, by the detector. It was wrong about half of a live
+      // call's finished sentences (13/21 right overall on 2026-10-29), so the
+      // wait is short: if they were not done, the reply Edmund starts is held
+      // and folded into his answer to the rest. Past it, the pause is a real
+      // break, so the transcript is settled then rather than after the
+      // recogniser's own 1.0-2.0 s.
       live.turnEnd = "incomplete";
-      this.armEndpoint(live, this.deps.settings.turnIncompleteWaitMs);
+      if (live.endpointTimer) clearTimeout(live.endpointTimer);
+      live.endpointTimer = setTimeout(() => {
+        live.endpointTimer = null;
+        if (this.live !== live || live.turnEnd !== "incomplete") return;
+        live.turnEnd = "complete";
+        void this.deps.provider.finalizeHearing(audioMs).catch(() => {});
+        if (live.heard.length > 0) this.flushHeard(live);
+      }, this.deps.settings.turnIncompleteWaitMs);
     }
   }
 

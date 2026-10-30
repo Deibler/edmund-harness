@@ -51,6 +51,9 @@ type TurnTally = { queued: number; failed: number };
  */
 export type CutOff = { kind: "talked-over" | "kept-talking"; text: string };
 
+/** How long the text may pause on a finished sentence before it is said. */
+const SENTENCE_IDLE_MS = 200;
+
 export class VoiceOut {
   private readonly deps: VoiceOutDeps;
   private currentTurn: string | null = null;
@@ -79,6 +82,8 @@ export class VoiceOut {
   } | null = null;
   /** Whether the current turn has sent anything to be spoken yet. */
   private turnQueued = false;
+  /** Speaks a finished last sentence once the text stops coming (see delta). */
+  private idleFlush: ReturnType<typeof setTimeout> | null = null;
   /** Closed while the call rings: speech is synthesised but not yet sent. */
   private gate: Promise<void> = Promise.resolve();
   private closed: "text" | "drop" | null = null;
@@ -205,6 +210,18 @@ export class VoiceOut {
     const { sentences, rest } = takeSentences(this.buffer);
     this.buffer = rest;
     for (const sentence of sentences) this.enqueue(sentence, turnId);
+    // A sentence is only known to be over when the next one begins, so the
+    // last one before a tool call waited for the whole tool: "On it,
+    // texting you now." sat 4.8 s while the text was written and sent. If
+    // the text pauses on a finished sentence, say it.
+    if (this.idleFlush) clearTimeout(this.idleFlush);
+    this.idleFlush = null;
+    if (/[.!?]["')\]]*\s*$/.test(this.buffer)) {
+      this.idleFlush = setTimeout(() => {
+        this.idleFlush = null;
+        if (this.currentTurn === turnId && !this.muted.has(turnId)) this.flushBuffer(turnId);
+      }, SENTENCE_IDLE_MS);
+    }
   }
 
   /**
