@@ -94,6 +94,7 @@ let alerts: string[];
 let ended: CallRecord[];
 let allowed: Set<string>;
 let handedOff: string[];
+let expedited: string[];
 
 function conversationFor(peer: Peer): CallConversation | null {
   if (peer.kind === "group") return null;
@@ -117,6 +118,7 @@ beforeEach(async () => {
   ended = [];
   allowed = new Set([DANA, FRIEND]);
   handedOff = [];
+  expedited = [];
   const deps: CallManagerDeps = {
     settings: {
       maxCallMinutes: 30,
@@ -141,6 +143,7 @@ beforeEach(async () => {
     canon: normalizeHandle,
     routeInbound: (key, msg) => routed.push({ key, msg }),
     fireSystemEvent: (key, text) => events.push({ key, text }),
+    expediteWakeUps: (key) => expedited.push(key),
     clearForCall: async () => handedOff,
     companions: [{ name: "probe", onEnd: (call) => void ended.push(call) }],
     alert: (message) => alerts.push(message),
@@ -293,6 +296,22 @@ describe("an incoming call", () => {
     await until(() => provider.said.length === 1);
     provider.emit({ type: "heard", text: "wait wait", final: false, atMs: Date.now() });
     await until(() => provider.flushes === 1);
+  });
+});
+
+describe("agent results on a call", () => {
+  test("while the call is up, its conversation's completions are fired at once", async () => {
+    ring(DANA);
+    await tick(50);
+    expect(expedited).toEqual([]); // not while it only rings
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => expedited.includes(dm(DANA)));
+    hangUp("in_1", DANA);
+    await until(() => ended.length === 1);
+    const after = expedited.length;
+    await tick(60);
+    expect(expedited.length).toBe(after); // and not after it ends
   });
 });
 

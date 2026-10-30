@@ -377,6 +377,43 @@ export class CronStore {
       .immediate();
   }
 
+  /**
+   * Bring a session's pending one-shot wake-ups that `matches` forward to now,
+   * each event passed through `rewrite`. Returns how many moved. For a
+   * conversation that cannot wait out a debounce meant for texting: on a live
+   * call, an agent completion sat 27 s (agents/messages.ts
+   * COMPLETION_DEBOUNCE_MS, then the turn in flight) while the caller waited.
+   * Only rows still in the future move, so each is rewritten once.
+   */
+  expedite(
+    sessionKey: string,
+    matches: (event: string) => boolean,
+    rewrite: (event: string) => string = (event) => event,
+  ): number {
+    return this.db
+      .transaction((): number => {
+        const now = Date.now();
+        const rows = this.db
+          .query(
+            "SELECT * FROM jobs WHERE status='active' AND session_key = ? AND next_fire_ms > ?",
+          )
+          .all(sessionKey, now) as RawRow[];
+        let moved = 0;
+        for (const job of rows.map((r) => this.hydrate(r))) {
+          if (!job || job.schedule.kind !== "once" || !matches(job.systemEvent)) continue;
+          const schedule: JobSchedule = { kind: "once", atMs: now };
+          this.db
+            .query(
+              "UPDATE jobs SET system_event = ?, next_fire_ms = ?, schedule_json = ? WHERE id = ?",
+            )
+            .run(rewrite(job.systemEvent), now, JSON.stringify(schedule), job.id);
+          moved += 1;
+        }
+        return moved;
+      })
+      .immediate();
+  }
+
   markFired(job: CronJob, firedAtMs: number): CronJob {
     const next = nextFire(job.schedule, firedAtMs);
     const status: CronJob["status"] = job.schedule.kind === "once" || !next ? "done" : "active";
