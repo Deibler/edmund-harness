@@ -55,8 +55,10 @@ class FakeProvider implements CallProvider {
   async hangup(id: string) {
     this.hungUp.push(id);
   }
+  listens = 0;
   async listen() {
     this.listening = true;
+    this.listens += 1;
   }
   async stopListening() {
     this.listening = false;
@@ -388,6 +390,33 @@ describe("turn-taking", () => {
     binding.onTurnSettled("t1", "delivered");
     expect(binding.envelopeBlock()).toContain("They kept talking before you answered");
     expect(binding.envelopeBlock()).not.toContain("kept talking"); // told once
+  });
+});
+
+describe("hearing", () => {
+  test("if recognition fails mid-call it is started again, not left deaf", async () => {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listens === 1);
+    provider.emit({ type: "hearing-failed", detail: "transcriber: RecogRejected" });
+    await until(() => provider.listens === 2);
+    expect(provider.listening).toBe(true);
+    expect(provider.hungUp).toEqual([]);
+  });
+
+  test("if it keeps failing, the call ends and the operator is told", async () => {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listens === 1);
+    for (let i = 0; i < 4; i++) {
+      provider.emit({ type: "hearing-failed", detail: "transcriber: RecogRejected" });
+      await tick(20);
+    }
+    await until(() => provider.hungUp.length === 1);
+    expect(alerts.join(" ")).toContain("hearing kept failing");
+    expect(provider.listens).toBe(4);
   });
 });
 

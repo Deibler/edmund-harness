@@ -110,6 +110,8 @@ export class FaceTimeProvider implements CallProvider {
   private onEvent: (event: ProviderEvent) => void = () => {};
   private supervisor: ReturnType<typeof setInterval> | null = null;
   private disconnectedSince = { control: 0, audio: 0, mouth: 0 };
+  /** Set once recognition fails in a listening session, so it is reported once. */
+  private hearingFailed = false;
 
   constructor(options: FaceTimeOptions) {
     this.options = options;
@@ -157,6 +159,7 @@ export class FaceTimeProvider implements CallProvider {
   }
 
   async listen(): Promise<void> {
+    this.hearingFailed = false;
     await this.audio.request(
       "listen",
       { bundleIds: this.options.callAudioProcesses, locale: this.options.locale },
@@ -283,6 +286,15 @@ export class FaceTimeProvider implements CallProvider {
           where: message.where,
           message: message.message,
         });
+        // A transcriber or detector error ends that session's results:
+        // nothing more the caller says is heard until it is restarted.
+        if (
+          (message.where === "transcriber" || message.where === "detector") &&
+          !this.hearingFailed
+        ) {
+          this.hearingFailed = true;
+          this.onEvent({ type: "hearing-failed", detail: `${message.where}: ${message.message}` });
+        }
         return;
     }
   }
