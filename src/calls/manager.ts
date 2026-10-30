@@ -62,6 +62,12 @@ export type CallManagerDeps = {
   routeInbound: (sessionKey: SessionKey, msg: InboundMessage) => void;
   /** Wake a conversation's model with a one-line event. */
   fireSystemEvent: (sessionKey: SessionKey, text: string) => void;
+  /**
+   * Fire the session's pending agent-completion wake-ups now, results
+   * included. Texting debounces them 20 s so a burst becomes one reply; on a
+   * call that was 20 s of silence before Edmund could pass a result on.
+   */
+  expediteWakeUps: (sessionKey: SessionKey) => void;
   /** Free a busy session for the call; returns the agents now carrying its work. */
   clearForCall: (sessionKey: SessionKey, label: string, deadlineMs: number) => Promise<string[]>;
   companions: CallCompanion[];
@@ -227,6 +233,9 @@ export class CallManager {
 
   private async drainQueues(): Promise<void> {
     try {
+      if (this.live?.phase === "active") {
+        this.deps.expediteWakeUps(this.live.record.conversation.sessionKey);
+      }
       for (const command of this.deps.store.claimCommands(this.now())) {
         const live = this.live;
         if (

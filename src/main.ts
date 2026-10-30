@@ -3,6 +3,7 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { finishedResult, isCompletionEvent, withInlineResults } from "./agents/messages.ts";
 import { AgentStore } from "./agents/store.ts";
 import { OperatorAlert } from "./alerts/operator-alert.ts";
 import { AlertStore } from "./alerts/store.ts";
@@ -1183,6 +1184,12 @@ async function main() {
     fireSystemEvent: (sessionKey, systemEvent) => {
       crons.create({ sessionKey, systemEvent, schedule: { kind: "once", atMs: Date.now() } });
       scheduler.poke();
+    },
+    expediteWakeUps: (sessionKey) => {
+      const moved = crons.expedite(sessionKey, isCompletionEvent, (event) =>
+        withInlineResults(event, (id) => finishedResult(agentStore, id, sessionKey)),
+      );
+      if (moved > 0) scheduler.poke();
     },
     alert: (message) => void alert.notify({ category: "facetime", error: message }),
     activeSessions,

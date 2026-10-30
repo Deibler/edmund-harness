@@ -40,6 +40,8 @@ export type CallRuntimeDeps = {
   /** Deliver a message into a session exactly as an arriving text would be. */
   deliverToSession: (sessionKey: SessionKey, msg: InboundMessage) => void;
   fireSystemEvent: (sessionKey: SessionKey, text: string) => void;
+  /** Fire the session's pending agent-completion wake-ups now (see CallManagerDeps). */
+  expediteWakeUps: (sessionKey: SessionKey) => void;
   alert: (message: string) => void;
   activeSessions: Set<SessionKey>;
   turnControllers: Map<SessionKey, AbortController>;
@@ -130,6 +132,7 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
     canon: (handle) => deps.contacts.canon(handle),
     routeInbound: deps.deliverToSession,
     fireSystemEvent: deps.fireSystemEvent,
+    expediteWakeUps: deps.expediteWakeUps,
     clearForCall: (sessionKey, label, deadlineMs) => {
       // The ring is the cue to load the voice, while nobody is waiting yet.
       void sidecar.warmup();

@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import type { CronStore } from "../cron/store.ts";
 import type { AgentStore } from "./store.ts";
 
@@ -117,4 +118,48 @@ export function queueCompletionWakeUp(
   });
   // A self-poke was only a safety net for the work that just finished.
   return crons.cancelPokes(sessionKey);
+}
+
+const INLINE_HEAD = "[You are on a call, so each result is right here";
+
+/**
+ * A completion wake-up with each finished agent's result written in, for a
+ * conversation on a call. Reading it with read_agent_result was one more
+ * model round trip (7-10 s on the first live call) of silence before Edmund
+ * could say anything. Team completions keep read_team_results. Idempotent.
+ */
+export function withInlineResults(
+  event: string,
+  read: (agentId: string) => { status: string; body: string } | null,
+  maxChars = 4_000,
+): string {
+  if (event.includes(INLINE_HEAD)) return event;
+  const blocks = [...event.matchAll(/^Agent id: (\S+)$/gm)].flatMap((match) => {
+    const result = read(match[1]!);
+    if (!result) return [];
+    const body = result.body.length > maxChars ? `${result.body.slice(0, maxChars)}…` : result.body;
+    return [`--- ${match[1]} (${result.status}) ---\n${body.trim()}`];
+  });
+  if (blocks.length === 0) return event;
+  return [
+    event,
+    "",
+    `${INLINE_HEAD}; no need to read_agent_result. Say the takeaway out loud.]`,
+    ...blocks,
+  ].join("\n");
+}
+
+/** A finished agent's result, if it belongs to `sessionKey`; marks it delivered. */
+export function finishedResult(
+  agents: Pick<AgentStore, "get" | "markDelivered">,
+  agentId: string,
+  sessionKey: string,
+): { status: string; body: string } | null {
+  const agent = agents.get(agentId);
+  if (!agent || agent.parentSessionKey !== sessionKey) return null;
+  if (agent.status !== "done" && agent.status !== "failed") return null;
+  if (!existsSync(agent.resultPath)) return null;
+  const body = readFileSync(agent.resultPath, "utf8");
+  agents.markDelivered(agent.id);
+  return { status: agent.status, body };
 }
