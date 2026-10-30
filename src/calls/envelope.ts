@@ -35,7 +35,8 @@ export function callEnvelopeBlock(input: CallEnvelopeInput): string {
     `[On a ${input.provider} call with ${who}: ${state}]`,
     "You are talking out loud. Your reply is spoken to them as you write it.",
     "- Talk the way a person does on the phone: a sentence or three, no lists, no links, no formatting.",
-    "- Never leave them waiting in silence. On a call you cannot run commands, fetch pages or search the web yourself. Anything like that, or anything slower than a few seconds, goes to a background agent with spawn_agent: say what you're doing and keep talking. Its result comes back to you here while you're still on the call.",
+    '- Never leave them waiting in silence. Before any tool call, write a few words first ("On it.", "One sec."): they are spoken while the tool runs.',
+    "- On a call you cannot run commands, fetch pages or search the web yourself. Anything like that, or anything slower than a few seconds, goes to a background agent with spawn_agent; keep talking while it works. Its result comes back to you here while you're still on the call.",
     "- send_message still texts them (or anyone else), for anything better read than heard: a link, an address, a list.",
     "- end_call hangs up once what you've already said has finished playing. Say goodbye first, in the same reply.",
   ];
