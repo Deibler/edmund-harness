@@ -138,6 +138,7 @@ beforeEach(async () => {
       turnThreshold: 0.5,
       turnCompleteGraceMs: 10,
       turnIncompleteWaitMs: 300,
+      holdReleaseMs: 100,
     },
     provider,
     store,
@@ -380,16 +381,41 @@ describe("turn-taking", () => {
     expect(provider.finalized).toEqual([]);
   });
 
-  test("talking again before Edmund answered: that reply goes unsaid, and the next turn knows", async () => {
+  test("talking again before Edmund answered: once they take their turn, that reply goes unsaid and the next turn knows", async () => {
     await onCall();
     const binding = voiceBindingFor(dm(DANA))!;
     binding.onTurnStarted("t1");
     provider.emit({ type: "heard", text: "and also", final: false, atMs: Date.now() });
     expect(await binding.deliver("The store closes at nine.", "t1")).toBe("silent");
-    expect(provider.said).toEqual([]);
     binding.onTurnSettled("t1", "delivered");
+    final("and also the pharmacy.");
+    pause(0.9);
+    await until(() => routed.length === 1);
+    await tick(150); // past the hold: still unsaid, because they took their turn
+    expect(provider.said).toEqual([]);
     expect(binding.envelopeBlock()).toContain("They kept talking before you answered");
     expect(binding.envelopeBlock()).not.toContain("kept talking"); // told once
+  });
+
+  test("talk that never becomes their turn (someone in the background) does not silence him", async () => {
+    // 2026-10-29: background talk cancelled his reply, never became a turn,
+    // and the caller sat in 18 s of silence.
+    await onCall();
+    const binding = voiceBindingFor(dm(DANA))!;
+    binding.onTurnStarted("t1");
+    provider.emit({ type: "heard", text: "is that him", final: false, atMs: Date.now() });
+    expect(await binding.deliver("Glad it works now.", "t1")).toBe("silent");
+    binding.onTurnSettled("t1", "delivered");
+    await until(() => provider.said.length === 1);
+    expect(provider.said[0]!.text).toBe("Glad it works now.");
+    expect(routed).toEqual([]);
+  });
+
+  test("a final transcript with no words is not a turn", async () => {
+    await onCall();
+    final(".");
+    await tick(100);
+    expect(routed).toEqual([]);
   });
 });
 

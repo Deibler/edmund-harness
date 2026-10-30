@@ -64,8 +64,19 @@ export class VoiceOut {
   /** Chunks handed to the provider and not yet reported played or dropped. */
   private readonly pending = new Map<string, string>();
   private cutOff: CutOff | null = null;
-  /** A reply in progress that the caller talked past before it was said. */
-  private superseded: string | null = null;
+  /**
+   * A reply the caller talked past before it was said, held until it is
+   * clear whether what they said next was for Edmund: if it becomes their
+   * turn the reply is dropped and the next one answers everything; if it was
+   * not (someone in the background, a cough) it is said after all. Dropping
+   * it outright left a caller in 18 s of silence on 2026-10-29: background
+   * talk cancelled Edmund's reply and never became a turn of its own.
+   */
+  private superseded: {
+    turnId: string;
+    text: string | null;
+    decision: "hold" | "release" | "drop";
+  } | null = null;
   /** Whether the current turn has sent anything to be spoken yet. */
   private turnQueued = false;
   /** Closed while the call rings: speech is synthesised but not yet sent. */
@@ -151,11 +162,40 @@ export class VoiceOut {
    */
   supersede(): void {
     const turn = this.currentTurn;
-    if (!turn || this.turnQueued) return;
+    if (!turn || this.turnQueued || this.superseded) return;
     this.muted.add(turn);
-    this.superseded = turn;
+    this.superseded = { turnId: turn, text: null, decision: "hold" };
     this.generation += 1;
     this.buffer = "";
+  }
+
+  /** A reply is being held (see `superseded`). */
+  holding(): boolean {
+    return this.superseded !== null;
+  }
+
+  /** What they said was not a turn after all: say the held reply. */
+  releaseHeld(): void {
+    const held = this.superseded;
+    if (!held) return;
+    if (held.text === null) {
+      held.decision = "release";
+      return;
+    }
+    this.superseded = null;
+    for (const chunk of speechChunks(toSpeech(held.text))) this.enqueue(chunk, genId("held_reply"));
+  }
+
+  /** They took their turn: the held reply goes unsaid, and the next turn is told. */
+  dropHeld(): void {
+    const held = this.superseded;
+    if (!held) return;
+    if (held.text === null) {
+      held.decision = "drop";
+      return;
+    }
+    this.superseded = null;
+    if (held.text.trim()) this.cutOff = { kind: "kept-talking", text: held.text.trim() };
   }
 
   delta(turnId: string, text: string): void {
@@ -175,10 +215,20 @@ export class VoiceOut {
   async deliver(text: string, turnId?: string): Promise<VoiceOutcome> {
     if (this.closed) return this.closed === "text" ? "unavailable" : "silent";
     const label = turnId ?? genId("voice_reply");
-    if (turnId && turnId === this.superseded) {
+    const held = this.superseded;
+    if (turnId && held?.turnId === turnId) {
+      if (held.decision === "hold") {
+        held.text = text;
+        return "silent";
+      }
       this.superseded = null;
-      if (text.trim()) this.cutOff = { kind: "kept-talking", text: text.trim() };
-      return "silent";
+      if (held.decision === "drop") {
+        if (text.trim()) this.cutOff = { kind: "kept-talking", text: text.trim() };
+        return "silent";
+      }
+      // Released before it was written: say it now, as any reply.
+      this.muted.delete(turnId);
+      this.streamed.delete(turnId);
     }
     if (turnId && this.muted.has(turnId)) return "silent";
     if (turnId && this.streamed.has(turnId)) {

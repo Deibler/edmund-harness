@@ -56,6 +56,8 @@ export type CallSettings = {
   turnThreshold: number;
   turnCompleteGraceMs: number;
   turnIncompleteWaitMs: number;
+  /** Quiet after the caller's last sound before a held reply is said after all. */
+  holdReleaseMs: number;
   /** How long an outgoing call may ring before Edmund gives up. */
   dialTimeoutMs: number;
   /** How often the request and command queues are read. */
@@ -105,6 +107,8 @@ type Live = {
   trace: ExchangeTrace;
   /** Fresh recognition sessions started because one failed mid-call. */
   hearingRestarts: number;
+  /** Says a held reply once the caller has been quiet without taking a turn. */
+  holdTimer: ReturnType<typeof setTimeout> | null;
 };
 
 /** Two words of new speech while Edmund talks is a barge-in; a cough is not. */
@@ -406,9 +410,13 @@ export class CallManager {
         if (live.voice.speaking()) void live.voice.bargeIn();
         else if (live.voice.awaitingFirstWords()) live.voice.supersede();
       }
+      if (live.voice.holding()) this.armHold(live);
       return;
     }
-    if (text.trim()) live.heard.push(text.trim());
+    // A final with no words (".", noise) is not something they said: it
+    // started a turn on 2026-10-29 that Edmund answered with an apology.
+    if (!/[\p{L}\p{N}]/u.test(text)) return;
+    live.heard.push(text.trim());
     live.trace.finalAt = this.now();
     if (spokeUntilMs !== undefined) live.trace.stoppedAt ??= spokeUntilMs;
     if (live.turnEnd === "complete") this.armEndpoint(live, this.deps.settings.turnCompleteGraceMs);
@@ -440,12 +448,30 @@ export class CallManager {
     const live = this.live;
     if (!live) return;
     if (talking) {
+      // A new utterance after Edmund's turn began starts a new exchange.
+      if (live.trace.handoffAt !== null) live.trace = newTrace();
+      if (live.voice.holding()) this.armHold(live);
       live.turnEnd = null;
       if (live.endpointTimer) clearTimeout(live.endpointTimer);
       live.endpointTimer = null;
     } else if (live.turnEnd === null) {
       this.armEndpoint(live, this.deps.settings.endpointMs);
     }
+  }
+
+  /**
+   * A held reply is said once the caller has been quiet for a moment without
+   * forming a turn of their own. While they are mid-turn it keeps waiting:
+   * their turn will either come (and the reply is dropped) or not.
+   */
+  private armHold(live: Live): void {
+    if (live.holdTimer) clearTimeout(live.holdTimer);
+    live.holdTimer = setTimeout(() => {
+      live.holdTimer = null;
+      if (this.live !== live || !live.voice.holding()) return;
+      if (live.heard.length > 0 || live.turnEnd !== null) return this.armHold(live);
+      live.voice.releaseHeld();
+    }, this.deps.settings.holdReleaseMs);
   }
 
   private armEndpoint(live: Live, ms: number): void {
@@ -470,7 +496,12 @@ export class CallManager {
     const text = live.heard.join(" ").trim();
     live.heard = [];
     if (!text) return;
+    if (live.holdTimer) clearTimeout(live.holdTimer);
+    live.holdTimer = null;
+    live.voice.dropHeld();
     live.trace.handoffAt = this.now();
+    live.trace.wordsAt = null;
+    live.trace.soundAt = null;
     const conversation = live.record.conversation;
     const atMs = this.now();
     this.record(live, { speaker: "caller", text, atMs, heard: true });
@@ -531,6 +562,7 @@ export class CallManager {
     if (!live) return;
     this.live = null;
     for (const timer of live.timers) clearTimeout(timer);
+    if (live.holdTimer) clearTimeout(live.holdTimer);
     const answered = live.record.answeredAtMs !== null;
     // Anything the caller said just before it ended still reaches the
     // conversation; with the voice gone, the reply to it is texted.
@@ -647,6 +679,7 @@ export class CallManager {
       turnEnd: null,
       trace: newTrace(),
       hearingRestarts: 0,
+      holdTimer: null,
     };
     // Nothing on a call should wait for something to load.
     this.deps.speaker.warm?.();

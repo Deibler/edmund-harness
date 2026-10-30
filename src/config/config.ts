@@ -514,6 +514,10 @@ export const ConfigSchema = z.object({
        *  reply; Sonnet starts in under a second. Empty keeps the
        *  conversation's own model. */
       model: z.string().default("claude-sonnet-5-5"),
+      /** Keep the last 30 audio clips the turn detector scored, with their
+       *  scores, in data/facetime/turn-clips, to tune turn-taking. These are
+       *  recordings of callers: leave off unless diagnosing. */
+      keep_turn_clips: z.boolean().default(false),
       /** Kokoro voice for Edmund. Empty means bm_daniel, his mirror voice. */
       kokoro_voice: z.string().default(""),
     })
