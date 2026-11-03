@@ -66,7 +66,14 @@ export type CallSettings = {
 
 export type CallManagerDeps = {
   settings: CallSettings;
+  /** How Edmund is on a call, and the way he dials out. */
   provider: CallProvider;
+  /**
+   * Further ways to be on a call that only take incoming ones (the voice
+   * lab). Each call is served start to finish by the provider it came in on,
+   * under the same rules and the same one call at a time.
+   */
+  inboundProviders?: CallProvider[];
   store: CallStore;
   speaker: Speaker;
   conversationFor: (peer: Peer) => CallConversation | null;
@@ -86,11 +93,15 @@ export type CallManagerDeps = {
   clearForCall: (sessionKey: SessionKey, label: string, deadlineMs: number) => Promise<string[]>;
   companions: CallCompanion[];
   alert: (message: string) => void;
+  /** Each exchange's timings (trace.ts), as they are logged. */
+  onExchange?: (call: CallRecord, fields: Record<string, number | string>) => void;
   now?: () => number;
 };
 
 type Live = {
   record: CallRecord;
+  /** The provider this call is on. */
+  provider: CallProvider;
   providerCallId: string | null;
   phase: "ringing" | "dialing" | "active";
   /** Outgoing: the canonical handle Edmund meant to reach. */
@@ -105,8 +116,6 @@ type Live = {
   turnEnd: "complete" | "incomplete" | null;
   /** The exchange in progress, logged at Edmund's first sound in reply. */
   trace: ExchangeTrace;
-  /** Fresh recognition sessions started because one failed mid-call. */
-  hearingRestarts: number;
   /** Says a held reply once the caller has been quiet without taking a turn. */
   holdTimer: ReturnType<typeof setTimeout> | null;
 };
@@ -115,8 +124,6 @@ type Live = {
 const BARGE_IN_WORDS = 2;
 /** Longest end_call waits for Edmund's last words to finish playing. */
 const HANGUP_DRAIN_MS = 15_000;
-/** Recognition restarts allowed per call before giving up on hearing it. */
-const MAX_HEARING_RESTARTS = 3;
 
 function duration(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -134,8 +141,16 @@ export class CallManager {
     this.now = deps.now ?? Date.now;
   }
 
+  private providers(): CallProvider[] {
+    return [this.deps.provider, ...(this.deps.inboundProviders ?? [])];
+  }
+
   async start(): Promise<void> {
-    await this.deps.provider.start((event) => void this.onEvent(event));
+    const unfinished = this.deps.store.endUnfinished(this.now(), "Edmund restarted");
+    if (unfinished > 0) log.warn("calls", "ended calls left open by the last run", { unfinished });
+    for (const provider of this.providers()) {
+      await provider.start((event) => void this.onEvent(provider, event));
+    }
     this.poller = setInterval(() => void this.drainQueues(), this.deps.settings.pollMs);
   }
 
@@ -143,7 +158,7 @@ export class CallManager {
     if (this.poller) clearInterval(this.poller);
     this.poller = null;
     if (this.live) await this.end("Edmund shut down", { hangup: true });
-    await this.deps.provider.stop();
+    for (const provider of this.providers()) await provider.stop();
   }
 
   /** The live call's conversation, if any. */
@@ -153,28 +168,32 @@ export class CallManager {
 
   // ── Events ────────────────────────────────────────────────────────────
 
-  private async onEvent(event: ProviderEvent): Promise<void> {
+  private async onEvent(from: CallProvider, event: ProviderEvent): Promise<void> {
     try {
       switch (event.type) {
         case "call":
-          return await this.onCall(event.call);
+          return await this.onCall(from, event.call);
+        case "readiness":
+          log.info("calls", `${from.name} ${event.ready ? "ready" : "not ready"}`, {
+            detail: event.detail,
+          });
+          return;
+        case "silence-breach":
+          return await this.onSilenceBreach(event.device, event.detail);
+      }
+      // What a provider hears or plays belongs to its own call, never another's.
+      if (this.live?.provider !== from) return;
+      switch (event.type) {
         case "heard":
           return this.onHeard(event.text, event.final, event.spokeUntilMs);
         case "pause":
-          return this.onPause(event.stoppedAtMs, event.audioMs, event.probability);
+          return this.onPause(event.stoppedAtMs, event.probability);
         case "speech":
           return this.onSpeech(event.talking);
         case "spoken":
           return this.live?.voice.onSpoken(event.chunkId, event.played);
         case "hearing-failed":
           return await this.onHearingFailed(event.detail);
-        case "silence-breach":
-          return await this.onSilenceBreach(event.device, event.detail);
-        case "readiness":
-          log.info("calls", `${this.deps.provider.name} ${event.ready ? "ready" : "not ready"}`, {
-            detail: event.detail,
-          });
-          return;
       }
     } catch (err) {
       log.error("calls", "event handling failed", {
@@ -184,9 +203,9 @@ export class CallManager {
     }
   }
 
-  private async onCall(call: ProviderCall): Promise<void> {
+  private async onCall(from: CallProvider, call: ProviderCall): Promise<void> {
     const live = this.live;
-    if (live && call.id === live.providerCallId) {
+    if (live && live.provider === from && call.id === live.providerCallId) {
       if (call.state === "active" && live.phase !== "active") return this.connected(live, call);
       if (call.state === "ended")
         return this.end(live.phase === "active" ? "they hung up" : "not answered");
@@ -197,13 +216,13 @@ export class CallManager {
         log.info("calls", "second call ignored — already on one", { peer: call.peer });
         return;
       }
-      return this.ringing(call);
+      return this.ringing(from, call);
     }
   }
 
   // ── Incoming ──────────────────────────────────────────────────────────
 
-  private async ringing(call: ProviderCall): Promise<void> {
+  private async ringing(provider: CallProvider, call: ProviderCall): Promise<void> {
     if (!call.peer) {
       log.info("calls", "incoming call with no identifiable caller — not answering");
       return;
@@ -220,8 +239,22 @@ export class CallManager {
       log.info("calls", "not answering", { from: conversation.label, why: permission.reason });
       return;
     }
+    // Answered deaf, a call sounds like Edmund ignoring them; left ringing, it
+    // is a missed call.
+    const hearing = await this.canHear(provider);
+    if (!hearing.ok) {
+      this.deps.alert(
+        `${conversation.label} called on ${provider.name} and Edmund did not answer: he could not have heard them (${hearing.detail}).`,
+      );
+      return;
+    }
+    // Another call may have begun while that was asked.
+    if (this.current()) {
+      log.info("calls", "second call ignored — already on one", { peer: call.peer });
+      return;
+    }
 
-    const live = this.begin(conversation, "incoming", { providerCallId: call.id });
+    const live = this.begin(provider, conversation, "incoming", { providerCallId: call.id });
     const deadline = this.now() + this.deps.settings.ringAnswerMs;
     log.info("calls", `${conversation.label} is calling`, { session: conversation.sessionKey });
 
@@ -241,7 +274,7 @@ export class CallManager {
     }
     this.deps.fireSystemEvent(
       conversation.sessionKey,
-      `[${this.deps.provider.name}] ${conversation.label} is calling and you are picking up now. What you write is the first thing they hear: greet them the way you would answering the phone.`,
+      `[${provider.name}] ${conversation.label} is calling and you are picking up now. What you write is the first thing they hear: greet them the way you would answering the phone.`,
     );
     const remaining = Math.max(0, deadline - this.now());
     await Promise.race([
@@ -250,7 +283,7 @@ export class CallManager {
     ]);
     if (this.live !== live) return;
     try {
-      await this.deps.provider.answer(call.id);
+      await provider.answer(call.id);
     } catch (err) {
       log.error("calls", "answer failed", { err: (err as Error).message });
       await this.end("could not answer");
@@ -301,8 +334,16 @@ export class CallManager {
     // the tool runs in another process and its check is not a boundary.
     const permission = this.deps.policy.permits(this.targetFor(conversation));
     if (!permission.allowed) return this.refuse(request, permission.reason);
+    const hearing = await this.canHear(this.deps.provider);
+    if (!hearing.ok) {
+      this.deps.alert(
+        `Edmund did not call ${conversation.label}: he could not have heard them (${hearing.detail}).`,
+      );
+      return this.refuse(request, `you cannot hear calls right now (${hearing.detail})`);
+    }
+    if (this.current()) return this.refuse(request, "already on a call");
 
-    const live = this.begin(conversation, "outgoing", {
+    const live = this.begin(this.deps.provider, conversation, "outgoing", {
       providerCallId: null,
       expectedHandle: this.deps.canon(request.handle),
       requestId: request.id,
@@ -310,7 +351,7 @@ export class CallManager {
       reason: request.reason,
     });
     try {
-      const call = await this.deps.provider.dial(request.handle);
+      const call = await live.provider.dial(request.handle);
       live.providerCallId = call.id;
       this.deps.store.finishRequest(request.id, "dialled");
       // His opening line is written while it rings, so the conversation's
@@ -320,7 +361,7 @@ export class CallManager {
       const why = request.reason ? ` You are calling because: ${request.reason}` : "";
       this.deps.fireSystemEvent(
         conversation.sessionKey,
-        `[${this.deps.provider.name}] You are calling ${conversation.label}; it is ringing on their end.${why} What you write now is the first thing they hear when they pick up: hello and why you called, in a sentence or two.`,
+        `[${live.provider.name}] You are calling ${conversation.label}; it is ringing on their end.${why} What you write now is the first thing they hear when they pick up: hello and why you called, in a sentence or two.`,
       );
       live.timers.push(
         setTimeout(() => {
@@ -353,7 +394,7 @@ export class CallManager {
     live.phase = "active";
     live.record.answeredAtMs = this.now();
     this.deps.store.markAnswered(live.record.id, live.record.answeredAtMs);
-    await this.deps.provider.listen();
+    await live.provider.listen();
     void this.whenAudible(live);
     await this.forEachCompanion("onStart", (c) => c.onStart?.(live.record));
 
@@ -363,7 +404,7 @@ export class CallManager {
         () =>
           this.deps.fireSystemEvent(
             conversation.sessionKey,
-            `[${this.deps.provider.name}] One minute left on this call. Start wrapping up.`,
+            `[${live.provider.name}] One minute left on this call. Start wrapping up.`,
           ),
         Math.max(0, maxMs - 60_000),
       ),
@@ -380,13 +421,13 @@ export class CallManager {
    * know why.
    */
   private async whenAudible(live: Live): Promise<void> {
-    const route = await this.deps.provider
+    const route = await live.provider
       .audioReady()
       .catch((err: unknown) => ({ ok: false as const, detail: (err as Error).message }));
     if (this.live !== live) return;
     if (!route.ok) {
       this.deps.alert(
-        `${this.deps.provider.name} call with ${live.record.conversation.label}: the caller could not have heard Edmund (${route.detail}); hung up.`,
+        `${live.provider.name} call with ${live.record.conversation.label}: the caller could not have heard Edmund (${route.detail}); hung up.`,
       );
       return this.end("the caller could not hear Edmund", { hangup: true });
     }
@@ -425,7 +466,7 @@ export class CallManager {
   }
 
   /** The caller paused; the turn detector has judged whether they are done. */
-  private onPause(stoppedAtMs: number, audioMs: number, probability: number | null): void {
+  private onPause(stoppedAtMs: number, probability: number | null): void {
     const live = this.live;
     if (!live || live.phase !== "active" || probability === null) return;
     live.trace.stoppedAt = stoppedAtMs;
@@ -433,25 +474,18 @@ export class CallManager {
     live.trace.probability = probability;
     if (probability >= this.deps.settings.turnThreshold) {
       live.turnEnd = "complete";
-      // Their transcript settles now instead of after the recogniser's own
-      // pause (1.5-2.1 s). Only at a real turn end: forced mid-sentence it
-      // garbled the words either side.
-      void this.deps.provider.finalizeHearing(audioMs).catch(() => {});
       if (live.heard.length > 0) this.armEndpoint(live, this.deps.settings.turnCompleteGraceMs);
     } else {
       // Mid-thought, by the detector. It was wrong about half of a live
       // call's finished sentences (13/21 right overall on 2026-10-29), so the
       // wait is short: if they were not done, the reply Edmund starts is held
-      // and folded into his answer to the rest. Past it, the pause is a real
-      // break, so the transcript is settled then rather than after the
-      // recogniser's own 1.0-2.0 s.
+      // and folded into his answer to the rest.
       live.turnEnd = "incomplete";
       if (live.endpointTimer) clearTimeout(live.endpointTimer);
       live.endpointTimer = setTimeout(() => {
         live.endpointTimer = null;
         if (this.live !== live || live.turnEnd !== "incomplete") return;
         live.turnEnd = "complete";
-        void this.deps.provider.finalizeHearing(audioMs).catch(() => {});
         if (live.heard.length > 0) this.flushHeard(live);
       }, this.deps.settings.turnIncompleteWaitMs);
     }
@@ -498,7 +532,10 @@ export class CallManager {
     if (trace.handoffAt === null || trace.soundAt !== null) return;
     trace.soundAt = this.now();
     const fields = describeTrace(trace);
-    if (fields) log.info("calls", "exchange", { call: live.record.id, ...fields });
+    if (fields) {
+      log.info("calls", "exchange", { call: live.record.id, ...fields });
+      this.deps.onExchange?.(live.record, fields);
+    }
     live.trace = newTrace();
   }
 
@@ -537,30 +574,27 @@ export class CallManager {
   }
 
   /**
-   * Recognition died mid-call. On 2026-10-29 Apple's recogniser rejected a
-   * session ("RecogRejected") two seconds into a call, which ends its
-   * results, and the caller went unheard for the remaining 28 s. A fresh
-   * session costs about a second. If it keeps failing, the call ends and the
-   * operator hears why, rather than leaving someone talking to nobody.
+   * The call's audio stopped reaching the ear. Nothing on that path keeps
+   * state that a restart would clear (the recogniser that once did, and died
+   * mid-call, is gone), so trying again would fail the same way while the
+   * caller talks to nobody. The call ends and the operator hears why.
    */
   private async onHearingFailed(detail: string): Promise<void> {
     const live = this.live;
     if (!live || live.phase !== "active") return;
-    live.hearingRestarts += 1;
-    if (live.hearingRestarts > MAX_HEARING_RESTARTS) {
-      this.deps.alert(
-        `${this.deps.provider.name} call with ${live.record.conversation.label}: hearing kept failing (${detail}); hung up.`,
-      );
-      return this.end("Edmund could not hear them", { hangup: true });
-    }
-    log.warn("calls", "hearing failed; starting it again", {
-      call: live.record.id,
-      attempt: live.hearingRestarts,
-      detail,
-    });
-    await this.deps.provider.stopListening().catch(() => {});
-    if (this.live !== live) return;
-    await this.deps.provider.listen();
+    this.deps.alert(
+      `${live.provider.name} call with ${live.record.conversation.label}: Edmund stopped hearing them (${detail}); hung up.`,
+    );
+    return this.end("Edmund could not hear them", { hangup: true });
+  }
+
+  /** A provider that cannot answer the question cannot hear either. */
+  private async canHear(
+    provider: CallProvider,
+  ): Promise<{ ok: true } | { ok: false; detail: string }> {
+    return provider
+      .canHear()
+      .catch((err: unknown) => ({ ok: false as const, detail: (err as Error).message }));
   }
 
   // ── Ending ────────────────────────────────────────────────────────────
@@ -587,22 +621,22 @@ export class CallManager {
     live.voice.close(answered ? "text" : "drop");
     // Speech already handed to the provider would otherwise keep playing into
     // a line nobody is on.
-    await this.deps.provider.flush().catch(() => {});
+    await live.provider.flush().catch(() => {});
     const conversation = live.record.conversation;
     unbindVoice(conversation.sessionKey, live.record.id);
 
     if (opts.hangup && live.providerCallId) {
-      await this.deps.provider.hangup(live.providerCallId).catch((err: unknown) => {
+      await live.provider.hangup(live.providerCallId).catch((err: unknown) => {
         log.warn("calls", "hangup failed", { err: (err as Error).message });
       });
     }
-    await this.deps.provider.stopListening().catch(() => {});
+    await live.provider.stopListening().catch(() => {});
     live.record.endedAtMs = this.now();
     live.record.endReason = reason;
     this.deps.store.markEnded(live.record.id, live.record.endedAtMs, reason);
     log.info("calls", `call with ${conversation.label} ended`, { reason, call: live.record.id });
 
-    const name = this.deps.provider.name;
+    const name = live.provider.name;
     if (!answered) {
       const missed =
         live.record.direction === "incoming"
@@ -645,6 +679,7 @@ export class CallManager {
   }
 
   private begin(
+    provider: CallProvider,
     conversation: CallConversation,
     direction: CallRecord["direction"],
     opts: {
@@ -657,7 +692,7 @@ export class CallManager {
   ): Live {
     const record: CallRecord = {
       id: genId("call"),
-      provider: this.deps.provider.name,
+      provider: provider.name,
       direction,
       conversation,
       requestedBy: opts.requestedBy ?? null,
@@ -670,6 +705,7 @@ export class CallManager {
     };
     const live: Live = {
       record,
+      provider,
       providerCallId: opts.providerCallId,
       phase: direction === "incoming" ? "ringing" : "dialing",
       expectedHandle: opts.expectedHandle ?? null,
@@ -679,9 +715,9 @@ export class CallManager {
         provider: {
           say: (chunkId, pcm, sampleRate) => {
             this.markSound(live);
-            return this.deps.provider.say(chunkId, pcm, sampleRate);
+            return provider.say(chunkId, pcm, sampleRate);
           },
-          flush: () => this.deps.provider.flush(),
+          flush: () => provider.flush(),
         },
         onSaid: (text, heard) =>
           this.record(live, { speaker: "edmund", text, atMs: this.now(), heard }),
@@ -691,7 +727,6 @@ export class CallManager {
       timers: [],
       turnEnd: null,
       trace: newTrace(),
-      hearingRestarts: 0,
       holdTimer: null,
     };
     // Nothing on a call should wait for something to load.

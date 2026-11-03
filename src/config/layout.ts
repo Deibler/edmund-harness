@@ -78,6 +78,10 @@ export const CONFIG_LAYOUT: LayoutTier[] = [
         name: "facetime",
         note: "FaceTime calls: who Edmund may call and answer, and his voice on a call.",
       },
+      {
+        name: "voice_lab",
+        note: "A web page on the local network for talking to Edmund the way a call does.",
+      },
       { name: "fishing", note: "The fishing data service." },
       { name: "radaromega", note: "The RadarOmega weather app Edmund drives." },
       {

@@ -28,15 +28,19 @@ control:
 	@echo "built $(CONTROL)"
 
 # An app bundle, not a bare binary: macOS attributes the audio-capture
-# permission to the bundle, so the prompt names EdmundCallAudio and the grant
-# survives whoever launches it. Ad-hoc signing means a rebuild changes the
-# code identity, and macOS asks for the permission again after one.
+# permission to the bundle, so the grant survives whoever launches it. An
+# ad-hoc signature ties the grant to this exact build, and macOS never asks
+# again after a rebuild (tccd: "Policy disallows prompt"): the new build is
+# refused until it is added by hand in System Settings. sign-audio.sh signs
+# with a fixed identity instead when this Mac has one (signing-identity.sh),
+# and the grant then survives rebuilds. Either way the daemon asks the helper
+# before every call and refuses calls it could not hear.
 audio:
 	@mkdir -p $(AUDIO_APP)/Contents/MacOS
 	swiftc -O -swift-version 5 -target arm64-apple-macos26.0 \
 		-o $(AUDIO_APP)/Contents/MacOS/EdmundCallAudio audio/*.swift
 	cp audio/Info.plist $(AUDIO_APP)/Contents/Info.plist
-	codesign -f -s - $(AUDIO_APP)
+	./sign-audio.sh $(AUDIO_APP)
 	@echo "built $(AUDIO_APP)"
 
 # Edmund's voice. A plain binary: playing audio needs no permission, so it is

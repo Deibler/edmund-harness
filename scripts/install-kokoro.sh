@@ -52,6 +52,15 @@ if ! "$VENV/bin/python3" -c 'import faster_whisper' >/dev/null 2>&1; then
   "$VENV/bin/pip" install --quiet faster-whisper
 fi
 
+# A call's hearing (src/voice/transcriber.py): Parakeet on Apple's MLX. Picked
+# over Whisper on synthetic call clips (M4, 2026-10-30): 1.5% WER at 146 ms a
+# clip against base.en's 263 ms, and it wrote nothing on breath, hum or a
+# cough where Whisper wrote "You". Its ~2.5 GB of weights download on first use.
+if ! "$VENV/bin/python3" -c 'import parakeet_mlx' >/dev/null 2>&1; then
+  say 'installing parakeet-mlx for call hearing'
+  "$VENV/bin/pip" install --quiet parakeet-mlx
+fi
+
 # ~325 MB. The 92 MB int8 build is deliberately not used; see the header.
 fetch() {
   local name=$1 min_bytes=$2 path=$MODELS/$1
