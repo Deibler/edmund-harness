@@ -306,6 +306,12 @@ fieldset{border:none;margin-top:10px}
 const TAB_DEFS: Array<{ id: string; name: string; desc: string; dmOnly?: boolean }> = [
   { id: "home", name: "Home", desc: "Overview of everything on this page." },
   {
+    id: "ideas",
+    name: "Made for you",
+    desc: "Pages Edmund built around what you keep asking about.",
+    dmOnly: true,
+  },
+  {
     id: "proactive",
     name: "Proactive",
     desc: "Whether and when Edmund may text first, plus a standing note he always reads.",
@@ -369,10 +375,23 @@ const TAB_DEFS: Array<{ id: string; name: string; desc: string; dmOnly?: boolean
   },
 ];
 
+/** Whether this page shows a tab. The bar, the drawer and Home's cards all use it. */
+/** The ids of the tabs this page shows, in order. */
+export function shownTabIds(d: PortalPageData): string[] {
+  return TAB_DEFS.filter((t) => tabShown(t, d)).map((t) => t.id);
+}
+
+function tabShown(t: (typeof TAB_DEFS)[number], d: PortalPageData): boolean {
+  if (t.dmOnly && d.isGroup) return false;
+  if (t.id === "credits") return d.credits !== null;
+  // An archive, not a promise: shown once there is a page in it.
+  if (t.id === "ideas") return d.ideas.pages.length > 0;
+  return true;
+}
+
 export function renderPortalPage(d: PortalPageData): string {
-  const tabs = TAB_DEFS.filter(
-    (t) => (!t.dmOnly || !d.isGroup) && (t.id !== "credits" || d.credits !== null),
-  );
+  const tabs = TAB_DEFS.filter((t) => tabShown(t, d));
+  const shown = (id: string) => tabs.some((t) => t.id === id);
   const navLinks = (cls: string) =>
     tabs
       .map(
@@ -401,6 +420,7 @@ ${STYLE}
 
 <main class="wrap">
   ${overviewTab(d)}
+  ${shown("ideas") ? ideasTab(d) : ""}
   ${proactiveTab(d)}
   ${d.credits ? creditsTab(d, d.credits) : ""}
   ${mediaTab(d)}
@@ -429,7 +449,7 @@ function overviewTab(d: PortalPageData): string {
     d.isGroup && d.members.length > 0
       ? `<p class="hint" style="margin:6px 4px 0">In this group: ${esc(d.members.join(", "))}</p>`
       : "";
-  const navCards = TAB_DEFS.filter((t) => t.id !== "home" && (!t.dmOnly || !d.isGroup))
+  const navCards = TAB_DEFS.filter((t) => t.id !== "home" && tabShown(t, d))
     .map(
       (t) => `<a class="navcard" href="#${t.id}">
         <div class="nc-main"><b>${esc(t.name)}</b><span>${esc(t.desc)}</span></div>
@@ -771,6 +791,31 @@ function artifactsTab(d: PortalPageData): string {
     <input type="search" id="arts-q" placeholder="Search artifacts…">
     ${arts.length === 0 ? `<div class="empty">No artifacts yet — ask Edmund to research or write something up and the result appears here.</div>` : `${truncated > 0 ? `<p class="hint" style="margin-top:9px">Showing the newest ${shown.length.toLocaleString()} artifacts. ${truncated.toLocaleString()} older items remain in the workspace.</p>` : ""}<div class="flist" id="arts-list" style="margin-top:8px">${rows}</div><div class="empty" id="arts-none" style="display:none">No matches.</div>`}
   </div>
+</section>`;
+}
+
+// ─── tab: made for you ───────────────────────────────────────────────
+
+export function ideasTab(d: PortalPageData): string {
+  const pages = d.ideas.pages
+    .map(
+      (p) => `<a class="navcard" href="${esc(p.url)}" target="_blank" rel="noreferrer">
+        <div class="nc-main"><b>${esc(p.title)}</b><span>${esc(p.pitch)}</span><span class="hint">${esc(fmtDay(p.readyMs, d.tz))} · ${esc(p.thread)}</span></div>
+        <div class="nc-arrow">›</div>
+      </a>`,
+    )
+    .join("");
+  const threads = d.ideas.threads
+    .map(
+      (t) =>
+        `<div class="row"><div class="t">${esc(t.label)}</div><div class="w">${t.days} days</div></div>`,
+    )
+    .join("");
+  return `<section class="tab" id="tab-ideas">
+  <h1>Made for you</h1>
+  <p class="sub">When something keeps coming up in your texts, Edmund builds you a page for it: a thing to explore and come back to, not another message.</p>
+  <div class="navcards">${pages}</div>
+  ${threads ? `<div class="card" style="margin-top:18px"><h2>What you keep coming back to</h2>${threads}</div>` : ""}
 </section>`;
 }
 
