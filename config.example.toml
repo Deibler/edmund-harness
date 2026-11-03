@@ -337,7 +337,6 @@ endpoint_ms = 700
 mouth_device = "Edmund Feed"
 mic_device = "Edmund Mic"
 call_audio_processes = ["com.apple.avconferenced"]
-locale = "en-US"
 # Reasoning effort on a call. Replies are spoken as they are written, so this
 # is most of the wait before Edmund starts talking.
 effort = "low"
@@ -345,6 +344,16 @@ effort = "low"
 # memory either way.
 model = "claude-sonnet-5-5"
 kokoro_voice = ""
+
+# A page on the local network for talking to Edmund the way a FaceTime call
+# does (same conversation, model, voice and turn-taking) and for tuning his
+# voice. Whoever opens it talks to him as the operator: it needs the key in
+# data/voice-lab/key (bun scripts/voice-lab-link.ts prints the link) and a
+# private address.
+[voice_lab]
+enabled = false
+port = 4850
+host = "0.0.0.0"
 
 # Mid-Atlantic fishing data platform. Eligible model sessions get the direct
 # `fishing_query` and `fishing_viz` tools plus the `fishing` skill.

@@ -121,6 +121,12 @@ export class CallStore {
   constructor(dataDir: string) {
     this.db = openDb(callsDbPath(dataDir));
     this.db.exec(SCHEMA);
+    // The voice Edmund chose for this call (call_voice); null is his usual one.
+    try {
+      this.db.exec("ALTER TABLE calls ADD COLUMN voice TEXT");
+    } catch {
+      // Column already exists.
+    }
   }
 
   close(): void {
@@ -157,6 +163,43 @@ export class CallStore {
     this.db
       .query("UPDATE calls SET ended_at = ?, end_reason = ? WHERE id = ? AND ended_at IS NULL")
       .run(atMs, reason, id);
+  }
+
+  /**
+   * Ends every call left unfinished. Only for the daemon's start, when no call
+   * can be live: a daemon killed mid-call leaves its row open, and an open row
+   * reads as a call in progress forever.
+   */
+  endUnfinished(atMs: number, reason: string): number {
+    return this.db
+      .query("UPDATE calls SET ended_at = ?, end_reason = ? WHERE ended_at IS NULL")
+      .run(atMs, reason).changes;
+  }
+
+  /** The conversation's call that has not ended, if any. */
+  liveCall(sessionKey: SessionKey): CallRecord | null {
+    const row = this.db
+      .query<CallRow, [string]>(
+        "SELECT * FROM calls WHERE session_key = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+      )
+      .get(sessionKey);
+    return row ? toRecord(row) : null;
+  }
+
+  /** Sets the voice for the rest of a call; false once the call has ended. */
+  setVoice(id: string, voice: string | null): boolean {
+    return (
+      this.db.query("UPDATE calls SET voice = ? WHERE id = ? AND ended_at IS NULL").run(voice, id)
+        .changes > 0
+    );
+  }
+
+  voice(id: string): string | null {
+    return (
+      this.db
+        .query<{ voice: string | null }, [string]>("SELECT voice FROM calls WHERE id = ?")
+        .get(id)?.voice ?? null
+    );
   }
 
   setHandedOff(id: string, agentIds: string[]): void {

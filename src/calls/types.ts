@@ -41,11 +41,9 @@ export type ProviderEvent =
   | { type: "heard"; text: string; final: boolean; atMs: number; spokeUntilMs?: number }
   /**
    * The other side paused. `probability` is the turn detector's confidence
-   * that they have finished their turn (null when it could not say);
-   * `audioMs` is the pause on the provider's hearing clock, for
-   * finalizeHearing.
+   * that they have finished their turn (null when it could not say).
    */
-  | { type: "pause"; stoppedAtMs: number; audioMs: number; probability: number | null }
+  | { type: "pause"; stoppedAtMs: number; probability: number | null }
   /** The other side started or stopped talking. */
   | { type: "speech"; talking: boolean; atMs: number }
   /** Recognition of the other side stopped working; nothing they say is heard until it restarts. */
@@ -65,6 +63,12 @@ export interface CallProvider {
   dial(handle: string): Promise<ProviderCall>;
   answer(callId: string): Promise<void>;
   hangup(callId: string): Promise<void>;
+  /**
+   * Whether a call started now would be heard, asked right before one is
+   * placed or answered. Not ok means the call is not started at all: a call
+   * Edmund cannot hear looks like one he is ignoring.
+   */
+  canHear(): Promise<{ ok: true } | { ok: false; detail: string }>;
   /** Start reporting `heard` and `speech` for the call in progress. */
   listen(): Promise<void>;
   /**
@@ -73,8 +77,6 @@ export interface CallProvider {
    * resolves is lost: a call reports active before its microphone opens.
    */
   audioReady(): Promise<{ ok: true } | { ok: false; detail: string }>;
-  /** The caller's turn ended at `audioMs` (a pause's): settle its transcript now. */
-  finalizeHearing(audioMs: number): Promise<void>;
   stopListening(): Promise<void>;
   /** Queue 16-bit mono PCM for the other side to hear. */
   say(chunkId: string, pcm: Uint8Array, sampleRate: number): Promise<void>;

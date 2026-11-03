@@ -41,8 +41,10 @@ describe("a dated commitment gets a turn that drafts it", () => {
         .listActive(session)
         .filter((j) => j.systemEvent.startsWith(DEADLINE_PREFIX));
       expect(jobs).toHaveLength(1);
-      // 2026-11-12 10:00 EST = 15:00 UTC.
-      expect(jobs[0]?.nextFireMs).toBe(Date.UTC(2026, 10, 12, 15, 0));
+      // 2026-11-12 10:00 EST = 15:00 UTC. The requested time, not nextFireMs:
+      // the store moves a time already past on the real clock up to now, so
+      // asserting nextFireMs made this test fail once that date went by.
+      expect(jobs[0]?.schedule).toEqual({ kind: "once", atMs: Date.UTC(2026, 10, 12, 15, 0) });
       expect(jobs[0]?.systemEvent).toContain("Draft the form answers now");
       expect(jobs[0]?.systemEvent).toContain("KEEP_QUIET");
     } finally {
@@ -70,7 +72,7 @@ describe("a dated commitment gets a turn that drafts it", () => {
         ),
       ).toBe(1);
       const job = store.listActive(session)[0];
-      expect(job?.nextFireMs).toBe(now + 60 * 60_000);
+      expect(job?.schedule).toEqual({ kind: "once", atMs: now + 60 * 60_000 });
     } finally {
       store.close();
     }

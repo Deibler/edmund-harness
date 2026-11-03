@@ -2,8 +2,11 @@
  * FaceTime, as a CallProvider: the three native helpers behind one interface.
  *
  *   FaceTimeControl.dylib  injected into FaceTime.app; calls (TelephonyUtilities)
- *   EdmundCallAudio.app    hearing: the muted tap + recognition, and the speaker guard
+ *   EdmundCallAudio.app    the muted tap on the call's audio, and the speaker guard
  *   EdmundMouth            Edmund's voice, into the virtual microphone
+ *
+ * The tap's audio is heard here, by the same Ear the voice lab uses
+ * (calls/ear.ts), so a call hears exactly as the lab does.
  *
  * This file launches and supervises them and translates their messages. It
  * decides nothing about calls; the CallManager does.
@@ -14,11 +17,30 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { log } from "../../../util/log.ts";
+import { Ear, type EarDeps } from "../../ear.ts";
 import type { CallProvider, CallState, Peer, ProviderCall, ProviderEvent } from "../../types.ts";
 import { JsonLinesServer, type JsonMessage } from "./json-lines.ts";
 import { type RouteReport, type RouteVerdict, judgeRoute, parseRoute } from "./route.ts";
 
 const FACETIME_BINARY = "/System/Applications/FaceTime.app/Contents/MacOS/FaceTime";
+
+/** What the call-audio helper says it streams; an older build streams nothing. */
+const AUDIO_FORMAT = "pcm16k";
+
+/**
+ * The helper sends every buffer the tap converts, silence included: 11-21 ms
+ * apart across 24 probe cycles (2026-10-30). Audio missing for this long means
+ * the tap stopped, however it stopped. A helper that deadlocked stayed
+ * connected and sent nothing, so being connected says nothing about hearing.
+ */
+const AUDIO_STALL_MS = 2_000;
+
+/**
+ * Where the operator gives the helper its permission. Switching an existing
+ * entry back on is not enough after a rebuild: the entry names the old build.
+ */
+const CAPTURE_GRANT =
+  "System Settings > Privacy & Security > Screen & System Audio Recording > System Audio Recording Only: remove EdmundCallAudio, then add native/facetime/build/EdmundCallAudio.app";
 
 /**
  * FaceTime is sandboxed: the injected code can only reach a socket inside its
@@ -49,8 +71,10 @@ export type FaceTimeOptions = {
   /** Rate every speech chunk is synthesised at; the mouth is opened at it. */
   sampleRate: number;
   callAudioProcesses: string[];
-  locale: string;
-  /** Test seams: how the helpers are started. */
+  transcribe: EarDeps["transcribe"];
+  turnVerdict: EarDeps["turnVerdict"];
+  /** Test seams: how the helpers are started, and where FaceTime's dylib dials. */
+  controlSocketPath?: string;
   launchFaceTime?: () => void;
   launchAudio?: () => void;
   launchMouth?: () => void;
@@ -58,12 +82,10 @@ export type FaceTimeOptions = {
   reconnectGraceMs?: number;
   /** How long after connecting FaceTime may take to open the microphone. */
   routeTimeoutMs?: number;
+  /** How long a call's audio may stop arriving before the call counts as unheard. */
+  audioStallMs?: number;
   /** When set, the last 30 scored clips are kept here as WAV with their scores (diagnosis only). */
   turnClipDir?: string;
-  /** Scores each pause: has the caller finished their turn? Absent, none are scored. */
-  turnDetector?: {
-    verdict(pcmBase64: string): Promise<{ probability: number; ms: number } | null>;
-  };
 };
 
 /**
@@ -144,13 +166,30 @@ export class FaceTimeProvider implements CallProvider {
   private onEvent: (event: ProviderEvent) => void = () => {};
   private supervisor: ReturnType<typeof setInterval> | null = null;
   private disconnectedSince = { control: 0, audio: 0, mouth: 0 };
-  /** Set once recognition fails in a listening session, so it is reported once. */
-  private hearingFailed = false;
+  private readonly ear: Ear;
+  /** Between listen() and stopListening(): a helper that reconnects is told again. */
+  private listening = false;
+  /** Whether the connected call-audio helper streams the call's audio. */
+  private streamsAudio = false;
+  /** When the tap's audio last arrived, and the check that it keeps arriving. */
+  private lastAudioAt = 0;
+  private stallCheck: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: FaceTimeOptions) {
     this.options = options;
-    this.control = new JsonLinesServer(controlSocketPath(), "FaceTime control", (m) =>
-      this.onControl(m),
+    const clipDir = options.turnClipDir;
+    this.ear = new Ear({
+      transcribe: options.transcribe,
+      turnVerdict: options.turnVerdict,
+      emit: (event) => this.onEvent(event),
+      ...(clipDir
+        ? { onTurnClip: (pcm, probability) => keepTurnClip(clipDir, pcm, probability) }
+        : {}),
+    });
+    this.control = new JsonLinesServer(
+      options.controlSocketPath ?? controlSocketPath(),
+      "FaceTime control",
+      (m) => this.onControl(m),
     );
     this.audio = new JsonLinesServer(options.audioSocketPath, "call audio", (m) => this.onAudio(m));
     this.mouth = new JsonLinesServer(options.mouthSocketPath, "voice", (m) => this.onMouth(m));
@@ -171,6 +210,7 @@ export class FaceTimeProvider implements CallProvider {
   async stop(): Promise<void> {
     if (this.supervisor) clearInterval(this.supervisor);
     this.supervisor = null;
+    this.unwatchAudio();
     this.control.close();
     this.audio.close();
     this.mouth.close();
@@ -192,21 +232,81 @@ export class FaceTimeProvider implements CallProvider {
     await this.control.request("hangup", { id: callId });
   }
 
+  /**
+   * Asked of the helper each time rather than remembered from its hello: the
+   * permission can be switched off while it runs, and every rebuild loses it.
+   */
+  async canHear(): Promise<{ ok: true } | { ok: false; detail: string }> {
+    if (!this.audio.connected()) {
+      return { ok: false, detail: "the call-audio helper is not running" };
+    }
+    if (!this.streamsAudio) {
+      return {
+        ok: false,
+        detail:
+          "the call-audio helper is an old build that does not stream audio (make -C native/facetime audio)",
+      };
+    }
+    const status = (await this.audio.request("status", {}, 5_000)) as JsonMessage;
+    if (status.capture !== "granted") {
+      return {
+        ok: false,
+        detail: `macOS does not let the call-audio helper hear calls (permission ${String(status.capture ?? "not reported")}); ${CAPTURE_GRANT}`,
+      };
+    }
+    return { ok: true };
+  }
+
   async listen(): Promise<void> {
-    this.hearingFailed = false;
-    await this.audio.request(
-      "listen",
-      { bundleIds: this.options.callAudioProcesses, locale: this.options.locale },
-      30_000,
-    );
+    this.listening = true;
+    this.ear.begin();
+    this.watchAudio();
+    await this.tap();
   }
 
   async stopListening(): Promise<void> {
+    this.listening = false;
+    this.unwatchAudio();
+    this.ear.end();
     await this.audio.request("stopListening", {}, 15_000);
   }
 
-  async finalizeHearing(audioMs: number): Promise<void> {
-    await this.audio.request("finalize", { throughMs: Math.round(audioMs) }, 2_000);
+  /**
+   * A call whose audio stops arriving is a call Edmund cannot hear. Stale on
+   * two checks in a row before it counts: audio queued behind a daemon that
+   * was busy for a moment is read between them.
+   */
+  private watchAudio(): void {
+    this.unwatchAudio();
+    const stallMs = this.options.audioStallMs ?? AUDIO_STALL_MS;
+    this.lastAudioAt = Date.now();
+    let stale = false;
+    this.stallCheck = setInterval(() => {
+      const silentMs = Date.now() - this.lastAudioAt;
+      if (silentMs < stallMs) {
+        stale = false;
+        return;
+      }
+      if (!stale) {
+        stale = true;
+        return;
+      }
+      this.unwatchAudio();
+      this.onEvent({
+        type: "hearing-failed",
+        detail: `the call-audio helper sent no audio for ${(silentMs / 1000).toFixed(1)}s`,
+      });
+    }, stallMs / 4);
+    this.stallCheck.unref?.();
+  }
+
+  private unwatchAudio(): void {
+    if (this.stallCheck) clearInterval(this.stallCheck);
+    this.stallCheck = null;
+  }
+
+  private async tap(): Promise<void> {
+    await this.audio.request("listen", { bundleIds: this.options.callAudioProcesses }, 30_000);
   }
 
   /**
@@ -277,31 +377,33 @@ export class FaceTimeProvider implements CallProvider {
   }
 
   private onAudio(message: JsonMessage): void {
-    const now = Date.now();
     switch (message.event) {
       case "hello":
-        log.info("facetime", "call audio connected", { guard: JSON.stringify(message.guard) });
+        this.streamsAudio = message.audio === AUDIO_FORMAT;
+        log.info("facetime", "call audio connected", {
+          audio: message.audio ?? "none",
+          capture: message.capture ?? "not reported",
+          guard: JSON.stringify(message.guard),
+        });
+        // A helper relaunched mid-call starts deaf; the call still wants it.
+        if (this.listening && this.streamsAudio) {
+          void this.tap().catch((err) =>
+            log.warn("facetime", "could not re-open the call tap", {
+              err: (err as Error).message,
+            }),
+          );
+        }
         void this.readiness();
         return;
-      case "transcript": {
-        const origin = typeof message.originMs === "number" ? message.originMs : null;
-        this.onEvent({
-          type: "heard",
-          text: String(message.text ?? ""),
-          final: message.final === true,
-          atMs: now,
-          ...(origin !== null && typeof message.endMs === "number"
-            ? { spokeUntilMs: origin + message.endMs }
-            : {}),
-        });
+      case "audio": {
+        if (typeof message.pcm !== "string") return;
+        this.lastAudioAt = Date.now();
+        const bytes = Buffer.from(message.pcm, "base64");
+        const samples = new Int16Array(bytes.byteLength >> 1);
+        new Uint8Array(samples.buffer).set(bytes.subarray(0, samples.byteLength));
+        this.ear.feed(samples);
         return;
       }
-      case "pause":
-        void this.onPause(message, now);
-        return;
-      case "speech":
-        this.onEvent({ type: "speech", talking: message.detected === true, atMs: now });
-        return;
       case "guard":
         this.onEvent({
           type: "silence-breach",
@@ -314,46 +416,12 @@ export class FaceTimeProvider implements CallProvider {
           processes: message.processes,
           error: message.error,
         });
-        return;
-      case "error":
-        log.warn("facetime", "call audio error", {
-          where: message.where,
-          message: message.message,
-        });
-        // A transcriber or detector error ends that session's results:
-        // nothing more the caller says is heard until it is restarted.
-        if (
-          (message.where === "transcriber" || message.where === "detector") &&
-          !this.hearingFailed
-        ) {
-          this.hearingFailed = true;
-          this.onEvent({ type: "hearing-failed", detail: `${message.where}: ${message.message}` });
+        // The tap could not be built: nothing the caller says reaches the ear.
+        if (this.listening && typeof message.error === "string") {
+          this.onEvent({ type: "hearing-failed", detail: `call tap: ${message.error}` });
         }
         return;
     }
-  }
-
-  /**
-   * The listener heard the caller pause. Smart Turn scores the last 8 s of
-   * their speech (~12 ms, plus the round trip) before the manager hears of
-   * the pause, so it can end the turn at once or keep listening.
-   */
-  private async onPause(message: JsonMessage, arrivedMs: number): Promise<void> {
-    const audioMs = Number(message.stopMs);
-    if (!Number.isFinite(audioMs)) return;
-    const origin = typeof message.originMs === "number" ? message.originMs : null;
-    const pcm = typeof message.pcm === "string" ? message.pcm : "";
-    const verdict =
-      pcm && this.options.turnDetector ? await this.options.turnDetector.verdict(pcm) : null;
-    if (this.options.turnClipDir && pcm) {
-      keepTurnClip(this.options.turnClipDir, pcm, verdict?.probability ?? null);
-    }
-    this.onEvent({
-      type: "pause",
-      stoppedAtMs: origin !== null ? origin + audioMs : arrivedMs,
-      audioMs,
-      probability: verdict?.probability ?? null,
-    });
   }
 
   private onMouth(message: JsonMessage): void {
@@ -397,6 +465,17 @@ export class FaceTimeProvider implements CallProvider {
       }
     }
     const up = (server: JsonLinesServer) => (server.connected() ? "up" : "down");
+    if (this.audio.connected()) {
+      // Reported here so the log says why; calls are refused by canHear().
+      const hearing = await this.canHear().catch((err: unknown) => ({
+        ok: false as const,
+        detail: (err as Error).message,
+      }));
+      if (!hearing.ok) {
+        this.onEvent({ type: "readiness", ready: false, detail: hearing.detail });
+        return;
+      }
+    }
     if (!this.control.connected() || !this.audio.connected() || !this.mouth.connected()) {
       this.onEvent({
         type: "readiness",

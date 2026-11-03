@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -79,6 +79,13 @@ export type SpeechSidecarOptions = {
   sttModel: string;
   /** Log prefix: which channel this sidecar serves. */
   tag: string;
+  /**
+   * Never unload when idle, and recycle (the 500-request budget) only in
+   * warmup(), never in the middle of use. For calls: an unload or a recycle
+   * is a pause the caller hears, and calls warm the voice at ring time,
+   * before anyone is listening.
+   */
+  resident?: boolean;
 };
 
 export class SpeechSidecar {
@@ -89,6 +96,7 @@ export class SpeechSidecar {
   private readonly voicesPath: string;
   private readonly defaultVoice: string;
   private readonly sttModel: string;
+  private readonly stayResident: boolean;
   private proc: ChildProcessWithoutNullStreams | null = null;
   private booting: Promise<boolean> | null = null;
   private ready = false;
@@ -112,6 +120,7 @@ export class SpeechSidecar {
     this.defaultVoice = options.voice;
     this.sttModel = options.sttModel;
     this.tag = options.tag;
+    this.stayResident = options.resident === true;
     this.scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), "speech-sidecar.py");
   }
 
@@ -153,6 +162,14 @@ export class SpeechSidecar {
    */
   async warmup(): Promise<void> {
     if (this.stopped || !this.installed()) return;
+    if (
+      this.stayResident &&
+      this.servedSinceSpawn >= RESTART_AFTER_REQUESTS &&
+      this.pending.size + this.pendingText.size === 0
+    ) {
+      console.log(`[${this.tag}] kokoro recycling sidecar after 500 requests, while warming`);
+      this.restart("request budget reached");
+    }
     await this.ensureRunning().catch(() => false);
   }
 
@@ -160,7 +177,7 @@ export class SpeechSidecar {
    * Synthesize, or return null so the caller can fall back. Never throws:
    * losing local TTS is a latency regression, not a failed turn.
    */
-  async synthesize(text: string, voice?: string): Promise<KokoroAudio | null> {
+  async synthesize(text: string, voice?: string, speed?: number): Promise<KokoroAudio | null> {
     if (this.stopped) return null;
     const clean = text.trim();
     if (!clean) return null;
@@ -169,7 +186,7 @@ export class SpeechSidecar {
     const proc = this.proc;
     if (!proc?.stdin.writable) return null;
 
-    if (this.servedSinceSpawn >= RESTART_AFTER_REQUESTS) {
+    if (!this.stayResident && this.servedSinceSpawn >= RESTART_AFTER_REQUESTS) {
       console.log(`[${this.tag}] kokoro recycling sidecar after 500 requests`);
       this.restart("request budget reached");
       if (!(await this.ensureRunning())) return null;
@@ -180,6 +197,7 @@ export class SpeechSidecar {
       id,
       text: clean,
       voice: voice || this.defaultVoice,
+      ...(speed !== undefined ? { speed } : {}),
     });
 
     return new Promise<KokoroAudio | null>((resolvePromise) => {
@@ -236,6 +254,19 @@ export class SpeechSidecar {
     });
   }
 
+  /** Kokoro's voice names, or null when the sidecar cannot say. */
+  async voices(): Promise<string[] | null> {
+    if (this.stopped || !(await this.ensureRunning()) || !this.proc?.stdin.writable) return null;
+    const id = `v${++this.sequence}`;
+    const listed = await new Promise<string | null>((resolvePromise) => {
+      const timer = setTimeout(() => this.settleText(id, null), REQUEST_TIMEOUT_MS);
+      timer.unref?.();
+      this.pendingText.set(id, { resolve: resolvePromise, timer });
+      this.proc?.stdin.write(`${JSON.stringify({ id, voices: true })}\n`);
+    });
+    return listed === null ? null : (JSON.parse(listed) as string[]);
+  }
+
   stop(): void {
     this.stopped = true;
     this.clearIdleUnload();
@@ -250,6 +281,7 @@ export class SpeechSidecar {
   /** Measured from the last finished request, so a long exchange is never cut off. */
   private armIdleUnload(): void {
     this.clearIdleUnload();
+    if (this.stayResident) return;
     const timer = setTimeout(() => {
       this.idleTimer = null;
       if (this.pending.size + this.pendingText.size > 0 || this.booting) {
@@ -408,6 +440,7 @@ export class SpeechSidecar {
       rate?: unknown;
       ms?: unknown;
       text?: unknown;
+      voices?: unknown;
     };
     try {
       message = JSON.parse(line);
@@ -424,6 +457,11 @@ export class SpeechSidecar {
 
     const id = typeof message.id === "string" ? message.id : null;
     if (!id) return;
+
+    if (this.pendingText.has(id) && Array.isArray(message.voices)) {
+      this.settleText(id, JSON.stringify(message.voices.map(String)));
+      return;
+    }
 
     if (this.pendingText.has(id)) {
       if (message.ok !== true || typeof message.text !== "string") {
@@ -515,6 +553,22 @@ export function defaultPython(): string {
 
 function defaultModel(): string {
   return join(homedir(), ".local", "share", "edmund-harness", "kokoro-models", "kokoro-v1.0.onnx");
+}
+
+/**
+ * The voices in Kokoro's voices file, read without starting Kokoro. The file
+ * is a numpy .npz, a zip with one `<name>.npy` per voice, and those names are
+ * exactly what Kokoro's get_voices() lists (compared 2026-10-30). Empty when
+ * the file is missing or unreadable.
+ */
+export function kokoroVoices(path = defaultVoices()): string[] {
+  const listed = spawnSync("unzip", ["-Z1", path], { encoding: "utf8" });
+  if (listed.status !== 0) return [];
+  return listed.stdout
+    .split("\n")
+    .filter((entry) => entry.endsWith(".npy"))
+    .map((entry) => entry.slice(0, -".npy".length))
+    .sort();
 }
 
 function defaultVoices(): string {

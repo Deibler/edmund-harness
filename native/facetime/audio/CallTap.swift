@@ -6,7 +6,7 @@ import Foundation
 ///
 /// A Core Audio process tap with `muteBehavior = .muted` takes the tapped
 /// processes' output away from every output device and hands it to us instead.
-/// So the caller's voice reaches speech recognition and never reaches a
+/// So the caller's voice reaches Edmund's ear and never reaches a
 /// speaker. Which processes render FaceTime audio is configuration, not a
 /// guess baked in here: the daemon names their bundle IDs.
 ///
@@ -15,6 +15,13 @@ import Foundation
 /// process list changes and the set of matching processes is different.
 final class CallTap {
   private let queue = DispatchQueue(label: "edmund.callaudio.tap")
+  /// Where Core Audio delivers the tap's buffers, kept apart from `queue`.
+  /// It dispatches each buffer synchronously while holding the device's IO
+  /// lock, and AudioDeviceStop waits for that lock, so stopping from the
+  /// queue the buffers arrive on waits on itself. Sharing one queue hung the
+  /// helper on every teardown with audio flowing: 8 of 8 when a tapped
+  /// process exited mid-listen (2026-10-30), after which it answered nothing.
+  private let io = DispatchQueue(label: "edmund.callaudio.tap.io")
   private var bundleIDs: [String] = []
   private var tapped: [HAL.AudioProcess] = []
   private var tapID = AudioObjectID(kAudioObjectUnknown)
@@ -27,8 +34,8 @@ final class CallTap {
   private let onChange: ([HAL.AudioProcess], String?) -> Void
 
   /// - Parameters:
-  ///   - target: the format speech recognition wants (16 kHz mono Int16 here).
-  ///   - onAudio: converted buffers, on the tap's queue.
+  ///   - target: the format the daemon's ear takes (16 kHz mono Int16).
+  ///   - onAudio: converted buffers, on the tap's IO queue.
   ///   - onChange: the processes now tapped, and an error if rebuilding failed.
   init(
     target: AVAudioFormat,
@@ -131,7 +138,7 @@ final class CallTap {
     let target = self.target
     let onAudio = self.onAudio
     try check(
-      AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, queue) { _, input, _, _, _ in
+      AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, io) { _, input, _, _, _ in
         guard let buffer = AVAudioPCMBuffer(pcmFormat: source, bufferListNoCopy: input, deallocator: nil),
           buffer.frameLength > 0
         else { return }

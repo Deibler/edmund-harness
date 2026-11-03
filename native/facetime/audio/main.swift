@@ -1,7 +1,15 @@
-// EdmundCallAudio: Edmund's hearing on FaceTime calls.
+// EdmundCallAudio: Edmund's ears on FaceTime calls.
 //
-//   hearing  a muted process tap on the call audio -> on-device SpeechAnalyzer
-//   guard    every physical output stays muted; corrections are reported
+//   tap    a muted process tap on the call audio, sent to the daemon as
+//          16 kHz mono 16-bit PCM; the daemon's ear (src/calls/ear.ts) hears it
+//   guard  every physical output stays muted; corrections are reported
+//
+// It recognises nothing itself. Apple's SpeechAnalyzer used to run here and
+// could die mid-call (RecogRejected: 2 of 13 answered calls, even after the stale-analyzer fix),
+// leaving Edmund deaf until the caller hung up. A stream of samples has no
+// state to lose: the daemon transcribes each stretch of speech as its own
+// request, and the same ear serves the voice lab, so what is tested there is
+// what a call runs.
 //
 // Edmund's voice is a separate program (mouth/, EdmundMouth): this one holds
 // the audio-capture permission, which macOS ties to the exact build, so it is
@@ -15,10 +23,12 @@
 import AVFAudio
 import Foundation
 
+/// What the daemon's ear takes.
+let earFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
+
 final class Helper {
   private var wire: Wire!
   private var outputGuard: OutputGuard!
-  private var hearing: Hearing!
   private var tap: CallTap?
   private let state = DispatchQueue(label: "edmund.callaudio.state")
   private var listening = false
@@ -35,7 +45,6 @@ final class Helper {
       fields["reason"] = reason
       wire.event("guard", fields)
     }
-    hearing = Hearing { [unowned self] name, fields in wire.event(name, fields) }
   }
 
   func start() {
@@ -48,6 +57,10 @@ final class Helper {
   private func sayHello() {
     wire.event("hello", [
       "pid": Int(getpid()),
+      // What "audio" events carry; the daemon refuses calls from a helper
+      // that does not say this, rather than answer one it cannot hear.
+      "audio": "pcm16k",
+      "capture": CapturePermission.current(),
       "guard": outputGuard.reports().map(\.json),
     ])
   }
@@ -66,22 +79,17 @@ final class Helper {
       listen(id: id, params: params)
     case "stopListening":
       stopListening(id: id)
-    case "finalize":
-      let throughMs = params["throughMs"] as? Int ?? 0
-      Task {
-        await hearing.finalize(throughMs: throughMs)
-        wire.reply(id, result: true)
-      }
     default:
       wire.reply(id, error: "unknown method \(message["method"] ?? "nil")")
     }
   }
 
+  /// Asked again each time: the permission can be switched off while this runs.
   private func status() -> [String: Any] {
     [
+      "capture": CapturePermission.current(),
       "guard": outputGuard.reports().map(\.json),
       "listening": state.sync { listening },
-      "hearing": hearing.isRunning,
       "tapped": state.sync { tappedProcesses },
     ]
   }
@@ -96,32 +104,27 @@ final class Helper {
       wire.reply(id, error: "listen needs bundleIds")
       return
     }
-    let locale = Locale(identifier: params["locale"] as? String ?? "en-US")
-    Task {
-      do {
-        let format: AVAudioFormat
-        if hearing.isRunning, let ready = hearing.format {
-          format = ready
-        } else {
-          format = try await hearing.start(locale: locale)
-        }
-        if tap == nil {
-          tap = CallTap(
-            target: format,
-            onAudio: { [hearing] buffer in hearing?.feed(buffer) },
-            onChange: { [unowned self] processes, error in
-              let described = processes.map(Self.describe)
-              state.sync { tappedProcesses = described }
-              wire.event("listening", ["processes": described, "error": error ?? NSNull()])
-            })
-        }
-        state.sync { listening = true }
-        tap?.start(bundleIDs: bundleIDs)
-        wire.reply(id, result: ["format": "\(format)"])
-      } catch {
-        wire.reply(id, error: "\(error)")
-      }
+    if tap == nil {
+      tap = CallTap(
+        target: earFormat,
+        onAudio: { [unowned self] buffer in sendAudio(buffer) },
+        onChange: { [unowned self] processes, error in
+          let described = processes.map(Self.describe)
+          state.sync { tappedProcesses = described }
+          wire.event("listening", ["processes": described, "error": error ?? NSNull()])
+        })
     }
+    state.sync { listening = true }
+    tap?.start(bundleIDs: bundleIDs)
+    wire.reply(id, result: ["format": "\(earFormat)"])
+  }
+
+  /// Every buffer the tap converts, silence included, so the daemon's clock
+  /// of the caller's audio keeps pace with the call.
+  private func sendAudio(_ buffer: AVAudioPCMBuffer) {
+    guard let samples = buffer.int16ChannelData, buffer.frameLength > 0 else { return }
+    let bytes = Data(bytes: samples[0], count: Int(buffer.frameLength) * 2)
+    wire.event("audio", ["pcm": bytes.base64EncodedString()])
   }
 
   private func stopListening(id: Any?) {
@@ -130,10 +133,7 @@ final class Helper {
       listening = false
       tappedProcesses = []
     }
-    Task {
-      await hearing.stop()
-      wire.reply(id, result: true)
-    }
+    wire.reply(id, result: true)
   }
 }
 

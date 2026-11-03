@@ -28,7 +28,7 @@ const OTHER = "+15550100009";
 const dm = (h: string) => `imessage:dm:${h}`;
 
 class FakeProvider implements CallProvider {
-  readonly name = "FaceTime";
+  constructor(readonly name = "FaceTime") {}
   emit: (event: ProviderEvent) => void = () => {};
   answered: string[] = [];
   hungUp: string[] = [];
@@ -55,6 +55,14 @@ class FakeProvider implements CallProvider {
   async hangup(id: string) {
     this.hungUp.push(id);
   }
+  /** What canHear() answers; a pending promise holds it. */
+  hearing:
+    | { ok: true }
+    | { ok: false; detail: string }
+    | Promise<{ ok: true } | { ok: false; detail: string }> = { ok: true };
+  async canHear() {
+    return this.hearing;
+  }
   listens = 0;
   async listen() {
     this.listening = true;
@@ -67,10 +75,6 @@ class FakeProvider implements CallProvider {
   route: Promise<{ ok: true } | { ok: false; detail: string }> = Promise.resolve({ ok: true });
   async audioReady() {
     return this.route;
-  }
-  finalized: number[] = [];
-  async finalizeHearing(audioMs: number) {
-    this.finalized.push(audioMs);
   }
   async say(chunkId: string, pcm: Uint8Array) {
     this.said.push({ chunkId, text: new TextDecoder().decode(pcm) });
@@ -93,7 +97,10 @@ async function until(check: () => boolean, ms = 1_000): Promise<void> {
 let dir: string;
 let store: CallStore;
 let provider: FakeProvider;
+/** A second, answer-only provider (the voice lab). */
+let lab: FakeProvider;
 let manager: CallManager;
+let deps: CallManagerDeps;
 let routed: { key: string; msg: InboundMessage }[];
 let events: { key: string; text: string }[];
 let alerts: string[];
@@ -119,6 +126,7 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "edmund-calls-mgr-"));
   store = new CallStore(dir);
   provider = new FakeProvider();
+  lab = new FakeProvider("voice lab");
   routed = [];
   events = [];
   alerts = [];
@@ -127,7 +135,7 @@ beforeEach(async () => {
   handedOff = [];
   expedited = [];
   warmed = 0;
-  const deps: CallManagerDeps = {
+  deps = {
     settings: {
       maxCallMinutes: 30,
       ringAnswerMs: 400,
@@ -141,6 +149,7 @@ beforeEach(async () => {
       holdReleaseMs: 100,
     },
     provider,
+    inboundProviders: [lab],
     store,
     speaker: {
       synthesize: async (text) => ({ pcm: new TextEncoder().encode(text), sampleRate: 24_000 }),
@@ -172,22 +181,22 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function ring(handle: string, id = "in_1") {
-  provider.emit({
+function ring(handle: string, id = "in_1", on: FakeProvider = provider) {
+  on.emit({
     type: "call",
     call: { id, direction: "incoming", state: "ringing", peer: { kind: "person", handle } },
   });
 }
 
-function connect(id: string, handle: string) {
-  provider.emit({
+function connect(id: string, handle: string, on: FakeProvider = provider) {
+  on.emit({
     type: "call",
     call: { id, direction: "incoming", state: "active", peer: { kind: "person", handle } },
   });
 }
 
-function hangUp(id: string, handle: string) {
-  provider.emit({
+function hangUp(id: string, handle: string, on: FakeProvider = provider) {
+  on.emit({
     type: "call",
     call: { id, direction: "incoming", state: "ended", peer: { kind: "person", handle } },
   });
@@ -312,6 +321,54 @@ describe("an incoming call", () => {
   });
 });
 
+describe("a second provider", () => {
+  test("a call is served start to finish by the provider it came in on", async () => {
+    ring(DANA, "lab_1", lab);
+    await until(() => events.some((e) => e.text.startsWith("[voice lab] Dana is calling")));
+    await until(() => lab.answered.length === 1, 1_000);
+    expect(provider.answered).toEqual([]);
+    connect("lab_1", DANA, lab);
+    await until(() => lab.listening);
+    expect(provider.listening).toBe(false);
+
+    // Hearing from the other provider is not this call's.
+    provider.emit({ type: "heard", text: "not this call", final: true, atMs: Date.now() });
+    lab.emit({ type: "heard", text: "hello from the lab", final: true, atMs: Date.now() });
+    await until(() => routed.length === 1);
+    await tick(50);
+    expect(routed.map((r) => r.msg.text)).toEqual(["hello from the lab"]);
+
+    hangUp("lab_1", DANA, lab);
+    await until(() => ended.length === 1);
+    expect(ended[0]!.provider).toBe("voice lab");
+    expect(events.at(-1)!.text).toStartWith("[voice lab] The call with Dana ended");
+    expect(lab.flushes).toBeGreaterThan(0);
+    expect(provider.flushes).toBe(0);
+  });
+
+  test("a ring Edmund turned away on one provider does not take over the next call on another", async () => {
+    // A caller who is not allowed is left ringing on FaceTime...
+    ring(OTHER, "ft_spam");
+    await tick(30);
+    // ...while the operator calls from the lab.
+    ring(DANA, "lab_1", lab);
+    await until(() => lab.answered.length === 1, 1_000);
+    expect(lab.answered).toEqual(["lab_1"]);
+    expect(provider.answered).toEqual([]);
+    connect("lab_1", DANA, lab);
+    await until(() => lab.listening);
+
+    // A FaceTime call while the lab call is up is not answered.
+    ring(FRIEND, "ft_2");
+    await tick(100);
+    expect(provider.answered).toEqual([]);
+    // And the FaceTime caller hanging up does not end the lab call.
+    hangUp("ft_2", FRIEND);
+    await tick(30);
+    expect(manager.current()?.provider).toBe("voice lab");
+  });
+});
+
 describe("agent results on a call", () => {
   test("while the call is up, its conversation's completions are fired at once", async () => {
     ring(DANA);
@@ -335,15 +392,14 @@ describe("turn-taking", () => {
     connect("in_1", DANA);
     await until(() => provider.listening);
   }
-  const pause = (probability: number | null, audioMs = 1_000) =>
-    provider.emit({ type: "pause", stoppedAtMs: Date.now(), audioMs, probability });
+  const pause = (probability: number | null) =>
+    provider.emit({ type: "pause", stoppedAtMs: Date.now(), probability });
   const final = (text: string) =>
     provider.emit({ type: "heard", text, final: true, atMs: Date.now() });
 
-  test("a pause that sounds finished ends the turn, and its transcript is asked for at once", async () => {
+  test("a pause that sounds finished ends the turn", async () => {
     await onCall();
-    pause(0.92, 4_321);
-    expect(provider.finalized).toEqual([4_321]);
+    pause(0.92);
     final("That's all I wanted.");
     await until(() => routed.length === 1);
     expect(routed[0]!.msg.text).toBe("That's all I wanted.");
@@ -356,7 +412,6 @@ describe("turn-taking", () => {
     final("So I was thinking");
     await tick(100);
     expect(routed).toEqual([]); // still their turn
-    expect(provider.finalized).toEqual([]); // never forced mid-sentence
     provider.emit({ type: "speech", talking: true, atMs: Date.now() });
     final("we could go tomorrow.");
     pause(0.9);
@@ -373,25 +428,11 @@ describe("turn-taking", () => {
     await until(() => routed.length === 1, 1_000);
   });
 
-  test("an unfinished pause that stays quiet is taken as the end, and its transcript asked for then", async () => {
-    // The detector called half of a live call's finished sentences unfinished;
-    // waiting out the recogniser's own final cost 1.0-2.0 s each time.
-    await onCall();
-    pause(0.1, 777);
-    await tick(100);
-    expect(provider.finalized).toEqual([]);
-    await until(() => provider.finalized.length === 1, 1_000);
-    expect(provider.finalized).toEqual([777]);
-    final("I think it's fine for right now.");
-    await until(() => routed.length === 1);
-  });
-
   test("without a verdict, the silence timer decides, as before", async () => {
     await onCall();
     pause(null);
     final("Hello?");
     await until(() => routed.length === 1);
-    expect(provider.finalized).toEqual([]);
   });
 
   test("talking again before Edmund answered: once they take their turn, that reply goes unsaid and the next turn knows", async () => {
@@ -433,29 +474,88 @@ describe("turn-taking", () => {
 });
 
 describe("hearing", () => {
-  test("if recognition fails mid-call it is started again, not left deaf", async () => {
+  const DEAF = { ok: false as const, detail: "permission undecided" };
+
+  test("a call Edmund could not hear is left ringing, and the operator is told", async () => {
+    provider.hearing = DEAF;
     ring(DANA);
-    await until(() => provider.answered.length === 1, 1_000);
-    connect("in_1", DANA);
-    await until(() => provider.listens === 1);
-    provider.emit({ type: "hearing-failed", detail: "transcriber: RecogRejected" });
-    await until(() => provider.listens === 2);
-    expect(provider.listening).toBe(true);
-    expect(provider.hungUp).toEqual([]);
+    await until(() => alerts.length === 1);
+    await tick(50);
+    expect(provider.answered).toEqual([]);
+    expect(alerts[0]).toContain("did not answer");
+    expect(alerts[0]).toContain("permission undecided");
+    expect(manager.current()).toBeNull();
   });
 
-  test("if it keeps failing, the call ends and the operator is told", async () => {
+  test("a call Edmund could not hear is never dialled, and he is told why", async () => {
+    provider.hearing = DEAF;
+    store.addRequest({
+      id: "req_deaf",
+      requestedBy: dm(FRIEND),
+      sessionKey: dm(FRIEND),
+      handle: FRIEND,
+      reason: "the package arrived",
+      createdAtMs: Date.now(),
+    });
+    await until(() => events.length === 1);
+    expect(provider.dialled).toEqual([]);
+    expect(events[0]!.text).toContain("Couldn't place that call");
+    expect(events[0]!.text).toContain("permission undecided");
+    expect(alerts.join(" ")).toContain("did not call");
+  });
+
+  test("a second call that rings while the first one's hearing is asked is not answered", async () => {
+    let heard!: (value: { ok: true }) => void;
+    provider.hearing = new Promise((resolve) => {
+      heard = resolve;
+    });
+    ring(DANA, "in_1");
+    ring(FRIEND, "in_2");
+    await tick(20);
+    heard({ ok: true });
+    await until(() => provider.answered.length === 1, 1_000);
+    await tick(100);
+    expect(provider.answered).toEqual(["in_1"]);
+    expect(manager.current()?.conversation.label).toBe("Dana");
+  });
+
+  test("hearing that fails mid-call ends the call at once and the operator is told", async () => {
     ring(DANA);
     await until(() => provider.answered.length === 1, 1_000);
     connect("in_1", DANA);
     await until(() => provider.listens === 1);
-    for (let i = 0; i < 4; i++) {
-      provider.emit({ type: "hearing-failed", detail: "transcriber: RecogRejected" });
-      await tick(20);
-    }
+    provider.emit({ type: "hearing-failed", detail: "call tap: AudioDeviceStart failed (-1)" });
     await until(() => provider.hungUp.length === 1);
-    expect(alerts.join(" ")).toContain("hearing kept failing");
-    expect(provider.listens).toBe(4);
+    expect(alerts.join(" ")).toContain("stopped hearing them");
+    // Not tried again: nothing on the path holds state a restart would clear.
+    expect(provider.listens).toBe(1);
+  });
+});
+
+describe("starting", () => {
+  test("a call the last run left open is ended, not left in progress", async () => {
+    // A daemon killed mid-call never ends its row, and call_voice and
+    // call_status take an open row for a live call.
+    store.createCall(
+      {
+        id: "call_left_open",
+        provider: "FaceTime",
+        direction: "inbound",
+        conversation: conversationFor({ kind: "person", handle: DANA })!,
+        requestedBy: null,
+        reason: null,
+        startedAtMs: Date.now() - 60_000,
+        answeredAtMs: null,
+        endedAtMs: null,
+        endReason: null,
+        handedOff: [],
+      },
+      null,
+    );
+    const next = new CallManager(deps);
+    await next.start();
+    await next.stop();
+    expect(store.getCall("call_left_open")?.endReason).toBe("Edmund restarted");
   });
 });
 

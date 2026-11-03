@@ -502,10 +502,8 @@ export const ConfigSchema = z.object({
        *  listening on exactly this device before Edmund speaks. */
       mic_device: z.string().default("Edmund Mic"),
       /** Bundle IDs of the processes that render call audio. Their output
-       *  is tapped for recognition and muted on every speaker. */
+       *  is tapped for Edmund's ear and muted on every speaker. */
       call_audio_processes: z.array(z.string()).default(["com.apple.avconferenced"]),
-      /** Recognition locale for the caller's speech. */
-      locale: z.string().default("en-US"),
       /** Reasoning effort while a call is live: a spoken reply waits on the
        *  model's thinking, and slow work goes to background agents anyway
        *  (calls/loadout.ts). The model stays the conversation's own. */
@@ -520,6 +518,21 @@ export const ConfigSchema = z.object({
       keep_turn_clips: z.boolean().default(false),
       /** Kokoro voice for Edmund. Empty means bm_daniel, his mirror voice. */
       kokoro_voice: z.string().default(""),
+    })
+    .default({}),
+  /**
+   * The voice lab (src/calls/providers/web/): a page on the local network for
+   * talking to Edmund the way a call does (same conversation, model, voice and
+   * turn-taking) without FaceTime, and for tuning his voice. Whoever opens it
+   * talks to him as the operator, so it needs the key in data/voice-lab/key
+   * and a private network address. Off by default.
+   */
+  voice_lab: z
+    .object({
+      enabled: z.boolean().default(false),
+      port: z.number().int().positive().default(4850),
+      /** "0.0.0.0" to reach it from other computers; "127.0.0.1" for this Mac only. */
+      host: z.string().default("0.0.0.0"),
     })
     .default({}),
   triggers: z

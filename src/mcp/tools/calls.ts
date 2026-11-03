@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { CallPolicy, mayRequestCall } from "../../calls/policy.ts";
 import { CallStore } from "../../calls/store.ts";
+import { ownVoices } from "../../calls/voice-settings.ts";
 import { dmKeyFor, normalizeHandle } from "../../sessions/key.ts";
 import { genId } from "../../util/ids.ts";
+import { kokoroVoices } from "../../voice/speech-sidecar.ts";
 import type { ToolContext } from "../context.ts";
 import type { ToolDef, ToolResult } from "./types.ts";
 
@@ -37,8 +39,16 @@ function looksLikeHandle(value: string): boolean {
   return value.includes("@") || /^\+?[\d\s().-]{7,}$/.test(value.trim());
 }
 
-export function callTools(ctx: ToolContext): ToolDef[] {
+/** Goes back to the voice tuned in the voice lab. */
+const USUAL = "usual";
+
+/** `installedVoices` is for tests; it defaults to Kokoro's voices file. */
+export function callTools(
+  ctx: ToolContext,
+  installedVoices: () => string[] = () => kokoroVoices(),
+): ToolDef[] {
   if (!ctx.config.facetime.enabled) return [];
+  const voices = ownVoices(installedVoices());
 
   const withStore = <T>(run: (store: CallStore) => T): T => {
     const store = new CallStore(ctx.dataDir);
@@ -108,6 +118,31 @@ export function callTools(ctx: ToolContext): ToolDef[] {
         return text("Hanging up.");
       },
     },
+    ...(voices.length === 0
+      ? []
+      : [
+          {
+            name: "call_voice",
+            description:
+              'Change the voice you speak with on the FaceTime call this conversation is on, from your next sentence until the call ends. am_ voices are American, bm_ British. "usual" goes back to your normal voice.',
+            inputSchema: z.object({
+              voice: z.enum([USUAL, ...voices] as [string, ...string[]]),
+            }),
+            handler: async (args: { voice: string }) => {
+              const voice = args.voice === USUAL ? null : args.voice;
+              const set = withStore((store) => {
+                const call = store.liveCall(ctx.sessionKey);
+                return call !== null && store.setVoice(call.id, voice);
+              });
+              if (!set) return text("This conversation is not on a call.", true);
+              return text(
+                voice
+                  ? `Speaking as ${voice} from your next sentence until this call ends.`
+                  : "Back to your usual voice from your next sentence.",
+              );
+            },
+          } satisfies ToolDef,
+        ]),
     {
       name: "call_status",
       description:
@@ -117,15 +152,15 @@ export function callTools(ctx: ToolContext): ToolDef[] {
         const calls = withStore((store) =>
           store.callsInConversation(ctx.sessionKey, 5).map((call) => {
             const notes = store.notes(call.id);
-            return { call, notes };
+            return { call, notes, voice: call.endedAtMs === null ? store.voice(call.id) : null };
           }),
         );
         if (calls.length === 0) return text("No FaceTime calls in this conversation yet.");
-        const lines = calls.map(({ call, notes }) => {
+        const lines = calls.map(({ call, notes, voice }) => {
           const when = new Date(call.startedAtMs).toLocaleString();
           const state =
             call.endedAtMs === null
-              ? "in progress"
+              ? `in progress${voice ? `, speaking as ${voice}` : ""}`
               : call.answeredAtMs === null
                 ? `not connected (${call.endReason})`
                 : `${Math.round((call.endedAtMs - call.answeredAtMs) / 60_000)} min (${call.endReason})`;

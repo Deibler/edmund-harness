@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edmund Voice Lab</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #6d6b65; --line: #e2dfd7;
+  --accent: #2f5d50; --accent-ink: #ffffff; --warn: #9a3b2e; --you: #eef3f1; --him: #f4f1ea;
+  --bar-hear: #7aa595; --bar-think: #d0a85c; --bar-voice: #8f7bb8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9b9990; --line: #33342f;
+    --accent: #6fae98; --accent-ink: #10201b; --warn: #e08d7f; --you: #1f2a26; --him: #2a2721;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9b9990; --line: #33342f;
+  --accent: #6fae98; --accent-ink: #10201b; --warn: #e08d7f; --you: #1f2a26; --him: #2a2721;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+  border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.state { color: var(--muted); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 1px; }
+.dot.live { background: var(--accent); }
+.dot.ring { background: var(--bar-think); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.hang { background: var(--warn); color: #fff; border-color: var(--warn); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 16px; max-width: 1180px; margin: 0 auto; }
+@media (max-width: 820px) { main { grid-template-columns: minmax(0, 1fr); } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+.meters { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+.meter { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.meter > div { height: 100%; width: 0; background: var(--accent); transition: width 60ms linear; }
+.meter.him > div { background: var(--bar-voice); }
+#log { display: flex; flex-direction: column; gap: 8px; min-height: 280px; max-height: calc(100vh - 230px); overflow-y: auto; padding-right: 4px; }
+.line { padding: 8px 10px; border-radius: 8px; max-width: 88%; overflow-wrap: anywhere; }
+.line .who { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 2px; }
+.you { background: var(--you); align-self: flex-end; }
+.him { background: var(--him); align-self: flex-start; }
+.him.cut { opacity: .55; text-decoration: line-through; text-decoration-color: var(--muted); }
+.partial { align-self: flex-end; color: var(--muted); font-style: italic; padding: 2px 10px; }
+.note { align-self: center; font-size: 12px; color: var(--muted); text-align: center; }
+.note.turn { color: var(--accent); }
+.timing { align-self: stretch; font-size: 12px; color: var(--muted); }
+.bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin: 4px 0 2px; background: var(--line); }
+.bar span { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+select, input[type=text], textarea { width: 100%; font: inherit; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+textarea { resize: vertical; min-height: 56px; }
+input[type=range] { width: 100%; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: 1; }
+.value { font-variant-numeric: tabular-nums; color: var(--ink); }
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.saved { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.stats { font-size: 13px; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
+.stats .value { text-align: right; }
+.check { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; margin-top: 10px; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Edmund Voice Lab</h1>
+  <div class="state"><span class="dot" id="dot"></span><span id="state">Connecting</span></div>
+  <button class="primary" id="call" disabled>Call Edmund</button>
+</header>
+<main>
+  <section>
+    <h2>Conversation</h2>
+    <div class="meters">
+      <span>You</span><div class="meter"><div id="mic"></div></div>
+      <span>Edmund</span><div class="meter him"><div id="out"></div></div>
+    </div>
+    <div id="log"><div class="note">Press Call Edmund and talk. This is the same call path as FaceTime: same conversation, model, voice and turn-taking.</div></div>
+  </section>
+  <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+    <section>
+      <h2>Voice</h2>
+      <label for="voice">Voice</label>
+      <select id="voice"></select>
+      <label for="blend">Blend with</label>
+      <select id="blend"><option value="">Nothing</option></select>
+      <div id="blendRow" hidden>
+        <label for="mix">Mix <span class="value" id="mixValue"></span></label>
+        <input type="range" id="mix" min="0.1" max="0.9" step="0.05" value="0.3">
+      </div>
+      <label for="speed">Speed <span class="value" id="speedValue"></span></label>
+      <input type="range" id="speed" min="0.7" max="1.5" step="0.05" value="1">
+      <label for="sample">Preview text</label>
+      <textarea id="sample">Hey, it's Edmund. I've got the weather up, and it looks like rain after four, so if you're heading out, go early.</textarea>
+      <div class="actions">
+        <button id="preview">Preview</button>
+        <button class="primary" id="save">Use for calls</button>
+      </div>
+      <div class="saved" id="saved"></div>
+    </section>
+    <section>
+      <h2>This call</h2>
+      <div class="stats" id="stats"><span>No exchanges yet</span><span></span></div>
+      <div class="check"><input type="checkbox" id="aec" checked><label for="aec" style="margin:0">Echo cancellation (headphones work best)</label></div>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+let ws = null, callState = "idle", audio = null, partialEl = null, nextChunk = null;
+let voices = [], current = null;
+const gaps = [], perceived = [];
+let lastVoiceAt = 0, edmundQuietSince = 0, awaitingReply = false;
+
+// ── Connection ────────────────────────────────────────────────────────
+function connect(delay = 0) {
+  setTimeout(() => {
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = (e) => (typeof e.data === "string" ? onMessage(JSON.parse(e.data)) : onAudio(e.data));
+    ws.onclose = (e) => {
+      stopAudio();
+      if (e.code === 4000) return setState("ended", "Opened in another tab");
+      setState("offline", "Reconnecting");
+      connect(Math.min(5000, delay * 2 + 500));
+    };
+  }, delay);
+}
+function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+
+function setState(state, detail) {
+  callState = state;
+  const labels = { idle: "Ready", ringing: "Ringing", active: "On a call", ended: "Call ended", offline: "Offline" };
+  $("state").textContent = detail ? `${labels[state] || state}: ${detail}` : labels[state] || state;
+  $("dot").className = "dot" + (state === "active" ? " live" : state === "ringing" ? " ring" : "");
+  const btn = $("call");
+  btn.disabled = state === "offline";
+  btn.className = state === "active" || state === "ringing" ? "hang" : "primary";
+  btn.textContent = state === "active" || state === "ringing" ? "Hang up" : "Call Edmund";
+}
+
+function onMessage(m) {
+  switch (m.type) {
+    case "state":
+      if (m.state === "active") { send({ type: "ready" }); note("Edmund picked up"); }
+      if (m.state === "ended") { stopAudio(); if (m.reason) note(m.reason); }
+      if (m.state === "idle" && callState === "active") stopAudio();
+      return setState(m.state === "idle" && callState === "ended" ? "ended" : m.state, m.state === "ended" ? m.reason : "");
+    case "chunk": nextChunk = m; return;
+    case "flush": return audio && audio.flush();
+    case "ear": return onEar(m.event);
+    case "utterance": return onUtterance(m);
+    case "exchange": return onExchange(m.fields);
+  }
+}
+
+// ── What the ear heard ────────────────────────────────────────────────
+function line(cls, who, text) {
+  const el = document.createElement("div");
+  el.className = `line ${cls}`;
+  const w = document.createElement("span"); w.className = "who"; w.textContent = who;
+  el.append(w, document.createTextNode(text));
+  return append(el);
+}
+function note(text, cls = "") {
+  const el = document.createElement("div"); el.className = `note ${cls}`; el.textContent = text;
+  return append(el);
+}
+function append(el) {
+  const stick = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 40;
+  if (partialEl && el !== partialEl) logEl.insertBefore(el, partialEl); else logEl.append(el);
+  if (stick) logEl.scrollTop = logEl.scrollHeight;
+  return el;
+}
+function onEar(e) {
+  if (e.type === "heard" && !e.final) {
+    if (!partialEl) { partialEl = document.createElement("div"); partialEl.className = "partial"; logEl.append(partialEl); }
+    partialEl.textContent = e.text;
+    logEl.scrollTop = logEl.scrollHeight;
+  } else if (e.type === "heard") {
+    if (partialEl) { partialEl.remove(); partialEl = null; }
+    line("you", "You (heard)", e.text);
+  } else if (e.type === "pause") {
+    const p = e.probability;
+    note(p === null ? "pause, no turn verdict" : `pause, turn end p=${p.toFixed(2)}${p >= 0.5 ? "" : ", may continue"}`);
+  }
+}
+function onUtterance(u) {
+  if (u.speaker === "caller") { note("turn handed to Edmund", "turn"); awaitingReply = true; return; }
+  const el = line(u.heard ? "him" : "him cut", u.heard ? "Edmund" : "Edmund (cut off)", u.text);
+  el.title = u.heard ? "" : "Not heard: you talked over it, or it was dropped";
+}
+function onExchange(f) {
+  const total = Number(f.gap_ms);
+  if (!Number.isFinite(total)) return;
+  gaps.push(total);
+  const hand = Number(f.handoff_ms), words = Number(f.words_ms);
+  const parts = [
+    ["hearing", Number.isFinite(hand) ? hand : 0, "--bar-hear"],
+    ["model", Number.isFinite(words) && Number.isFinite(hand) ? words - hand : 0, "--bar-think"],
+    ["voice", Number.isFinite(words) ? total - words : 0, "--bar-voice"],
+  ];
+  const el = document.createElement("div"); el.className = "timing";
+  const bar = document.createElement("div"); bar.className = "bar";
+  for (const [, ms, color] of parts) {
+    const s = document.createElement("span");
+    s.style.width = `${Math.max(0, ms) / Math.max(total, 1) * 100}%`; s.style.background = `var(${color})`;
+    bar.append(s);
+  }
+  const legend = document.createElement("div"); legend.className = "legend";
+  legend.innerHTML = `<span>${(total / 1000).toFixed(2)} s from you stopping to his first sound sent</span>`;
+  for (const [name, ms, color] of parts) {
+    const s = document.createElement("span");
+    s.innerHTML = `<i style="background:var(${color})"></i>${name} ${(Math.max(0, ms) / 1000).toFixed(2)} s`;
+    legend.append(s);
+  }
+  if (f.turn_p !== "-") { const s = document.createElement("span"); s.textContent = `turn p ${f.turn_p}`; legend.append(s); }
+  el.append(bar, legend);
+  append(el);
+  renderStats();
+}
+function median(xs) { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; }
+function renderStats() {
+  const rows = [
+    ["Exchanges", gaps.length],
+    ["Median gap (server)", gaps.length ? `${(median(gaps) / 1000).toFixed(2)} s` : "-"],
+    ["Worst gap (server)", gaps.length ? `${(Math.max(...gaps) / 1000).toFixed(2)} s` : "-"],
+    ["Median gap (as you heard it)", perceived.length ? `${(median(perceived) / 1000).toFixed(2)} s` : "-"],
+  ];
+  $("stats").replaceChildren(...rows.flatMap(([k, v]) => {
+    const a = document.createElement("span"); a.textContent = k;
+    const b = document.createElement("span"); b.className = "value"; b.textContent = v;
+    return [a, b];
+  }));
+}
+
+// ── Audio ─────────────────────────────────────────────────────────────
+// The microphone is resampled to 16 kHz mono in a worklet and sent in 20 ms
+// frames; Edmund's speech is scheduled back to back, and each chunk reports
+// once it has actually played.
+const WORKLET = `
+class Mic extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.step = sampleRate / 16000; this.pos = 0; this.queue = [];
+    const a = 1 - Math.exp(-2 * Math.PI * 7000 / sampleRate);
+    this.a = a; this.y1 = 0; this.y2 = 0;
+    this.frame = new Int16Array(320); this.fill = 0; this.energy = 0;
+  }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      this.y1 += this.a * (ch[i] - this.y1); this.y2 += this.a * (this.y1 - this.y2);
+      this.queue.push(this.y2);
+    }
+    while (this.pos + 1 < this.queue.length) {
+      const i = Math.floor(this.pos), f = this.pos - i;
+      const x = this.queue[i] * (1 - f) + this.queue[i + 1] * f;
+      this.energy += x * x;
+      this.frame[this.fill++] = Math.max(-32768, Math.min(32767, Math.round(x * 32767)));
+      if (this.fill === 320) {
+        this.port.postMessage({ pcm: this.frame.buffer, rms: Math.sqrt(this.energy / 320) }, [this.frame.buffer]);
+        this.frame = new Int16Array(320); this.fill = 0; this.energy = 0;
+      }
+      this.pos += this.step;
+    }
+    const used = Math.floor(this.pos);
+    this.queue = this.queue.slice(used); this.pos -= used;
+    return true;
+  }
+}
+registerProcessor("mic", Mic);`;
+
+async function startAudio() {
+  const ctx = new AudioContext({ latencyHint: "interactive" });
+  await ctx.resume();
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: $("aec").checked, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+  });
+  const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
+  await ctx.audioWorklet.addModule(url);
+  const src = ctx.createMediaStreamSource(stream);
+  const node = new AudioWorkletNode(ctx, "mic");
+  const sink = ctx.createGain(); sink.gain.value = 0;
+  src.connect(node); node.connect(sink); sink.connect(ctx.destination);
+  let floor = -60;
+  node.port.onmessage = (e) => {
+    const db = 20 * Math.log10(Math.max(e.data.rms, 1e-6));
+    floor = db < floor ? db : floor + 0.02;
+    if (db > Math.max(-50, floor + 12)) lastVoiceAt = performance.now();
+    $("mic").style.width = `${Math.max(0, Math.min(100, (db + 60) * 1.8))}%`;
+    if (callState === "active" && ws && ws.readyState === 1) ws.send(e.data.pcm);
+  };
+  const playing = new Map();
+  let at = 0;
+  const outLevel = () => { $("out").style.width = playing.size ? "70%" : "0"; };
+  audio = {
+    ctx, stream,
+    play(id, rate, pcm) {
+      const samples = new Int16Array(pcm);
+      const buf = ctx.createBuffer(1, samples.length, rate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) data[i] = samples[i] / 32768;
+      const s = ctx.createBufferSource();
+      s.buffer = buf; s.connect(ctx.destination);
+      const startAt = Math.max(ctx.currentTime + 0.03, at);
+      if (playing.size === 0 && awaitingReply) {
+        // The gap as heard: from the last voiced frame of the mic to his first sound.
+        const ms = performance.now() + (startAt - ctx.currentTime) * 1000 - lastVoiceAt;
+        if (ms > 0 && ms < 60000) { perceived.push(ms); renderStats(); }
+        awaitingReply = false;
+      }
+      s.start(startAt); at = startAt + buf.duration;
+      const entry = { s, flushed: false };
+      playing.set(id, entry); outLevel();
+      s.onended = () => { playing.delete(id); outLevel(); if (!entry.flushed) send({ type: "played", id }); };
+    },
+    flush() { for (const e of playing.values()) { e.flushed = true; try { e.s.stop(); } catch {} } playing.clear(); at = 0; outLevel(); },
+  };
+}
+function stopAudio() {
+  if (!audio) return;
+  audio.flush();
+  for (const t of audio.stream.getTracks()) t.stop();
+  audio.ctx.close();
+  audio = null;
+  $("mic").style.width = "0";
+  if (partialEl) { partialEl.remove(); partialEl = null; }
+}
+function onAudio(data) {
+  if (!nextChunk || !audio) return;
+  audio.play(nextChunk.id, nextChunk.sampleRate, data);
+  nextChunk = null;
+}
+
+$("call").onclick = async () => {
+  if (callState === "active" || callState === "ringing") { send({ type: "hangup" }); stopAudio(); return; }
+  try {
+    await startAudio();
+  } catch (err) {
+    setState("idle", `microphone unavailable (${err.message})`);
+    return;
+  }
+  gaps.length = 0; perceived.length = 0; renderStats();
+  logEl.replaceChildren();
+  send({ type: "call" });
+};
+
+// ── Voice ─────────────────────────────────────────────────────────────
+const ACCENTS = { a: "American", b: "British", e: "Spanish", f: "French", h: "Hindi", i: "Italian", j: "Japanese", p: "Portuguese", z: "Mandarin" };
+function describe(v) {
+  const [tag, name] = v.split("_");
+  const who = tag[1] === "f" ? "female" : tag[1] === "m" ? "male" : "";
+  return `${name[0].toUpperCase()}${name.slice(1)} (${ACCENTS[tag[0]] || tag[0]} ${who})`.replace(" )", ")");
+}
+function parse(setting) {
+  const parts = setting.voice.split(",").map((p) => { const [n, w] = p.split(":"); return [n, w === undefined ? 1 : Number(w)]; });
+  return { parts, speed: setting.speed };
+}
+function chosen() {
+  const v = $("voice").value, b = $("blend").value, mix = Number($("mix").value);
+  const voice = b && b !== v ? `${v}:${(1 - mix).toFixed(2)},${b}:${mix.toFixed(2)}` : v;
+  return { voice, speed: Number($("speed").value) };
+}
+function sync() {
+  $("blendRow").hidden = !$("blend").value;
+  $("mixValue").textContent = `${Math.round(Number($("mix").value) * 100)}% ${$("blend").value ? describe($("blend").value).split(" (")[0] : ""}`;
+  $("speedValue").textContent = `${Number($("speed").value).toFixed(2)}x`;
+  const c = chosen();
+  $("save").disabled = !current || (c.voice === current.voice && c.speed === current.speed);
+}
+function showSaved() {
+  if (!current) return;
+  const { parts } = parse(current);
+  $("saved").textContent = `Calls use: ${parts.map(([n, w]) => parts.length > 1 ? `${describe(n).split(" (")[0]} ${Math.round(w * 100)}%` : describe(n)).join(" + ")}, ${current.speed.toFixed(2)}x`;
+}
+async function loadVoices() {
+  const r = await fetch("/api/voices");
+  if (!r.ok) return;
+  const j = await r.json();
+  voices = j.voices; current = j.current;
+  const opts = (sel) => { for (const v of voices) { const o = document.createElement("option"); o.value = v; o.textContent = describe(v); sel.append(o); } };
+  opts($("voice")); opts($("blend"));
+  const { parts, speed } = parse(current);
+  $("voice").value = parts[0][0];
+  if (parts[1]) { $("blend").value = parts[1][0]; const sum = parts[0][1] + parts[1][1]; $("mix").value = String(parts[1][1] / sum); }
+  $("speed").value = String(speed);
+  sync(); showSaved();
+}
+for (const id of ["voice", "blend", "mix", "speed"]) $(id).oninput = sync;
+$("preview").onclick = async () => {
+  const btn = $("preview"); btn.disabled = true; btn.textContent = "Synthesising";
+  try {
+    const r = await fetch("/api/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...chosen(), text: $("sample").value }) });
+    if (!r.ok) { $("saved").textContent = (await r.json()).error; return; }
+    const a = new Audio(URL.createObjectURL(await r.blob()));
+    await a.play();
+  } finally { btn.disabled = false; btn.textContent = "Preview"; }
+};
+$("save").onclick = async () => {
+  const r = await fetch("/api/voice", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(chosen()) });
+  const j = await r.json();
+  if (!r.ok) { $("saved").textContent = j.error; return; }
+  current = j.current; sync(); showSaved();
+  if (callState === "active") note("Voice changed; it takes effect from his next sentence");
+};
+
+setState("offline", "Connecting");
+connect();
+loadVoices();
+renderStats();
+</script>
+</body>
+</html>

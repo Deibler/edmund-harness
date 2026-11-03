@@ -6,8 +6,14 @@ seconds to load and hundreds of megabytes to keep resident, and a voice turn
 uses them back to back. Two processes would double the memory and the
 supervision for no gain.
 
-    TTS  → {"id": "1", "text": "Good morning.", "voice": "af_heart"}
+    TTS  → {"id": "1", "text": "Good morning.", "voice": "af_heart", "speed": 1.0}
          ← {"id": "1", "ok": true, "pcm16": "<base64>", "rate": 24000, "ms": 358}
+
+         A voice may be a blend of Kokoro's style vectors, weights summing to
+         anything: "bm_daniel:0.7,am_michael:0.3".
+
+    list → {"id": "3", "voices": true}
+         ← {"id": "3", "ok": true, "voices": ["af_alloy", ...]}
 
     STT  → {"id": "2", "stt": true, "wav": "<base64>"}
          ← {"id": "2", "ok": true, "text": "what's the weather", "ms": 253}
@@ -63,6 +69,10 @@ def _load_whisper():
     if _whisper is not None or _whisper_failed:
         return _whisper
     size = os.environ.get("WHISPER_MODEL", "base.en")
+    if not size:
+        # Recognition switched off (a call's voice): nothing to load or report.
+        _whisper_failed = True
+        return None
     try:
         from faster_whisper import WhisperModel
 
@@ -122,6 +132,21 @@ def _handle_stt(request: dict, request_id: str) -> None:
             "ms": int((time.perf_counter() - began) * 1000),
         }
     )
+
+
+def _style(kokoro, voice: str):
+    """A voice name as is, or a blend ("a:0.7,b:0.3") as the weighted mean of
+    their style vectors. A bad name raises, and the request fails cleanly."""
+    if "," not in voice and ":" not in voice:
+        return voice
+    parts = []
+    for part in voice.split(","):
+        name, _, weight = part.strip().partition(":")
+        parts.append((name.strip(), float(weight) if weight else 1.0))
+    total = sum(weight for _, weight in parts)
+    if total <= 0:
+        raise ValueError(f"blend weights must be positive: {voice}")
+    return sum(kokoro.get_voice_style(name) * (weight / total) for name, weight in parts)
 
 
 def main() -> int:
@@ -188,6 +213,10 @@ def main() -> int:
             _handle_stt(request, request_id)
             continue
 
+        if request.get("voices"):
+            _emit({"id": request_id, "ok": True, "voices": sorted(kokoro.get_voices())})
+            continue
+
         text = request.get("text")
         if not isinstance(text, str) or not text.strip():
             _emit({"id": request_id, "ok": False, "error": "text is required"})
@@ -202,7 +231,7 @@ def main() -> int:
 
         began = time.perf_counter()
         try:
-            samples, rate = kokoro.create(text, voice=voice, speed=speed, lang="en-us")
+            samples, rate = kokoro.create(text, voice=_style(kokoro, voice), speed=speed, lang="en-us")
         except Exception as err:  # noqa: BLE001 — a bad voice must not kill the sidecar
             _emit({"id": request_id, "ok": False, "error": f"synthesis failed: {err}"})
             continue
