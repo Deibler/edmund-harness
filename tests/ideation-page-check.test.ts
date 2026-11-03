@@ -60,9 +60,11 @@ describe("findEmoji", () => {
 
 describe.skipIf(!PageChecker.available())("PageChecker, in headless Chrome", () => {
   let checker: PageChecker;
+  // Launching Chrome can take well past the default 5 s hook limit on a
+  // cold CI runner (it did on the first run in CI).
   beforeAll(async () => {
     checker = await PageChecker.launch();
-  });
+  }, 60_000);
   afterAll(async () => {
     await checker?.close();
   });

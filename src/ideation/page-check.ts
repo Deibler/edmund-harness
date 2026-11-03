@@ -136,7 +136,9 @@ export class PageChecker {
       { stdio: "ignore" },
     );
     const portFile = join(profile, "DevToolsActivePort");
-    for (let i = 0; i < 150 && !existsSync(portFile); i++) await Bun.sleep(100);
+    // A first launch on a cold machine (a fresh CI runner) takes several
+    // seconds; a warm one, well under one.
+    for (let i = 0; i < 300 && !existsSync(portFile); i++) await Bun.sleep(100);
     if (!existsSync(portFile)) {
       chrome.kill();
       throw new Error("headless Chrome did not start");
