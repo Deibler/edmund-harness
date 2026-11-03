@@ -56,6 +56,8 @@ import { GhostPrefsStore, autoEnrollSessions } from "./ghost/prefs.ts";
 import { setGhostAlertHook } from "./ghost/think.ts";
 import { resolveDmTier } from "./guests/access.ts";
 import { GuestStore } from "./guests/store.ts";
+import { IdeationObserver } from "./ideation/observer.ts";
+import { IdeationStore } from "./ideation/store.ts";
 import {
   controlSocketPath,
   healMessagingRegistry,
@@ -284,6 +286,18 @@ async function main() {
   outcomeSweep.unref?.();
   const echoes = new EchoCache();
   const personMaintainer = new PersonMaintainer({ config, state, chatDb, contacts, crons });
+  // Pages built unasked for an interest someone keeps coming back to
+  // (src/ideation/). Reply-triggered like the maintainer; built only when
+  // [ideation] is on, so a deployment without it creates nothing.
+  const ideationObserver = config.ideation.enabled
+    ? new IdeationObserver({
+        config,
+        chatDb,
+        contacts,
+        store: new IdeationStore(config.paths.data_dir),
+        agents: new AgentStore(config.paths.data_dir),
+      })
+    : undefined;
   // Cross-conversation skill curation. Unlike the person maintainer this is
   // not reply-triggered — its whole premise is the pattern no single
   // conversation can see — so it runs on a wall clock and persists its own
@@ -494,6 +508,7 @@ async function main() {
     turnControllers,
     ghostObserver,
     personMaintainer,
+    ideationObserver,
     autoRecall: recall.autoRecallClosure,
     locks,
   };
@@ -1229,6 +1244,7 @@ async function main() {
     await stopBridge();
     scheduler.stop();
     personMaintainer.stop();
+    ideationObserver?.stop();
     skillCurator.stop();
     ghostObserver.stop();
     stop();

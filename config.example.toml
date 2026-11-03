@@ -86,6 +86,20 @@ min_interval_minutes = 10
 recent_messages = 30
 dry_run = false               # true = compute the edit and log it, don't write
 
+# Pages Edmund builds, unasked, for an interest someone keeps coming back to,
+# and sends them in the chat. A thread counts only when the person's own
+# messages about it fall on 3+ separate days in the last 30; health, legal,
+# grief, relationship and money threads are never built. One build per person
+# per week, and all ideation spend capped per rolling 7 days. Pages are served
+# by the kitchen host at <[shelf] origin>/i/<id>/. The builder needs a shell,
+# so nothing runs unless [security].model_host_access = "full". See
+# src/ideation/.
+[ideation]
+enabled = false
+people = []                   # handles, e.g. ["+15550100001"]; empty = nobody
+model = "claude-sonnet-5-5"
+weekly_budget_usd = 25
+
 # Keyed guest access. Off = unknown DM senders are silently dropped (the
 # classic behavior). On = an unknown sender who DMs an active campaign key
 # gets a persistent, capped conversation with the full persona but a reduced

@@ -13,6 +13,7 @@ import { loadPersona } from "../../../src/claude/persona.ts";
 import type { Config } from "../../../src/config/config.ts";
 import type { CronStore } from "../../../src/cron/store.ts";
 import type { GhostPrefsStore } from "../../../src/ghost/prefs.ts";
+import { eraseIdeations } from "../../../src/ideation/portal.ts";
 import { ChatDb } from "../../../src/imessage/db.ts";
 import { DEPENDENCY_DIRS, sandboxDir } from "../../../src/persona/sandbox.ts";
 import type { ContactBook } from "../../../src/sessions/contacts.ts";
@@ -305,6 +306,7 @@ export function wipeFiles(sessionKey: SessionKey): WipeResult {
  *  - proactive fire history + prefs snooze (settings themselves survive)
  *  - this chat's rows in the semantic search index (messages + artifacts)
  *  - user-visible scheduled jobs (canceled)
+ *  - pages built for them, with the interest threads behind them
  *  - conversation thread reset (next message starts a fresh Claude session)
  */
 export function eraseAll(args: {
@@ -384,7 +386,15 @@ export function eraseAll(args: {
   }
   if (canceled > 0) detail.push(`${canceled} scheduled task${canceled === 1 ? "" : "s"}`);
 
-  // 6. Fresh conversation thread.
+  // 6. Pages Edmund built for them, and the interests he noted to build them.
+  try {
+    const n = eraseIdeations(args.config.paths.data_dir, sessionKey);
+    if (n > 0) detail.push(`${n} page${n === 1 ? "" : "s"} made for you`);
+  } catch {
+    detail.push("pages made for you: failed");
+  }
+
+  // 7. Fresh conversation thread.
   args.state.setClaudeSessionId(sessionKey, null);
   detail.push("conversation memory reset");
 

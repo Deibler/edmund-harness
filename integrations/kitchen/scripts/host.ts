@@ -13,6 +13,8 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { serveIdeation } from "../../../src/ideation/serve.ts";
+import { IdeationStore } from "../../../src/ideation/store.ts";
 import { serveShelf } from "../../../src/shelf/serve.ts";
 import { mountFor } from "../../../src/web/mounts.ts";
 import { baseDir } from "../src/accounts.ts";
@@ -45,6 +47,9 @@ const routerPort = Number(process.env.KITCHEN_HOST_PORT) || hostPort();
 const shelfDir = process.env.EDMUND_SHELF_DIR || join(ROOT, "data", "shelf");
 /** Other local servers that publish a page under a path prefix here (src/web/mounts.ts). */
 const mountsDir = process.env.EDMUND_DATA_DIR || join(ROOT, "data");
+/** Pages Edmund built for people (src/ideation/), at /i/<id>/. Opened on the
+ *  first such request, so a host that never serves one creates nothing. */
+let ideations: IdeationStore | null = null;
 const server = join(ROOT, "skills", "instant-share", "scripts", "secure_server.py");
 const shareConfig = join(baseDir(), "host-share");
 mkdirSync(shareConfig, { recursive: true, mode: 0o700 });
@@ -190,6 +195,11 @@ Bun.serve({
     const url = new URL(req.url);
     const shelf = serveShelf(req, shelfDir);
     if (shelf) return shelf;
+    if (url.pathname === "/i" || url.pathname.startsWith("/i/")) {
+      ideations ??= new IdeationStore(mountsDir);
+      const page = serveIdeation(req, mountsDir, ideations);
+      if (page) return page;
+    }
     const mounted = mountFor(mountsDir, url.pathname);
     if (mounted)
       return forward(req, url, mounted, "This page is restarting. Try again in a minute.");

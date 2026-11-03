@@ -1,3 +1,5 @@
+import type { PortalPageData } from "@/types";
+
 /**
  * The portal's tabs. Ids are hash fragments (`#credits`) and MUST match
  * PORTAL_TABS in src/announce/links.ts — that is the list Edmund's
@@ -5,6 +7,7 @@
  */
 export type TabId =
   | "home"
+  | "ideas"
   | "proactive"
   | "credits"
   | "media"
@@ -30,6 +33,12 @@ export type TabDef = {
 export const TABS: TabDef[] = [
   { id: "home", name: "Home", desc: "Where everything is." },
   {
+    id: "ideas",
+    name: "Made for you",
+    desc: "Pages Edmund built around what you keep asking about.",
+    dmOnly: true,
+  },
+  {
     id: "proactive",
     name: "Proactive",
     desc: "Whether Edmund may text first, when, and a standing note he always reads.",
@@ -52,8 +61,28 @@ export const TABS: TabDef[] = [
   { id: "privacy", name: "Privacy", desc: "What is stored, and how to delete it." },
 ];
 
-export function visibleTabs(p: { isGroup: boolean; hasCredits: boolean }): TabDef[] {
-  return TABS.filter((t) => (!t.dmOnly || !p.isGroup) && (t.id !== "credits" || p.hasCredits));
+export function visibleTabs(p: {
+  isGroup: boolean;
+  hasCredits: boolean;
+  hasIdeas: boolean;
+}): TabDef[] {
+  return TABS.filter(
+    (t) =>
+      (!t.dmOnly || !p.isGroup) &&
+      (t.id !== "credits" || p.hasCredits) &&
+      // An archive, not a promise: shown once there is a page in it.
+      (t.id !== "ideas" || p.hasIdeas),
+  );
+}
+
+/** The tabs this page shows, from its data. Every caller goes through here. */
+export function tabsFor(data: Pick<PortalPageData, "isGroup" | "credits" | "ideas">): TabDef[] {
+  return visibleTabs({
+    isGroup: data.isGroup,
+    hasCredits: data.credits !== null,
+    // Absent when the bundle is newer than the server that rendered the data.
+    hasIdeas: (data.ideas?.pages.length ?? 0) > 0,
+  });
 }
 
 export function tabFromHash(hash: string, allowed: TabDef[]): TabId {

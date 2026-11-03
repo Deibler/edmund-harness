@@ -6,6 +6,7 @@ import { Artifacts } from "@/pages/Artifacts";
 import { Credits } from "@/pages/Credits";
 import { Files } from "@/pages/Files";
 import { Home } from "@/pages/Home";
+import { Ideas } from "@/pages/Ideas";
 import { Media } from "@/pages/Media";
 import { Memory } from "@/pages/Memory";
 import { Privacy } from "@/pages/Privacy";
@@ -14,7 +15,7 @@ import { Schedules } from "@/pages/Schedules";
 import { Skills } from "@/pages/Skills";
 import { Tips } from "@/pages/Tips";
 import { WhatsNew } from "@/pages/WhatsNew";
-import { type TabId, tabFromHash, visibleTabs } from "@/tabs";
+import { type TabId, tabFromHash, tabsFor } from "@/tabs";
 import type { PortalPageData } from "@/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -66,10 +67,7 @@ export function App() {
 }
 
 function Portal({ data, reload }: { data: PortalPageData; reload: () => Promise<void> }) {
-  const tabs = useMemo(
-    () => visibleTabs({ isGroup: data.isGroup, hasCredits: data.credits !== null }),
-    [data.isGroup, data.credits],
-  );
+  const tabs = useMemo(() => tabsFor(data), [data]);
   const [tab, setTab] = useState<TabId>(() => tabFromHash(location.hash, tabs));
 
   useEffect(() => {
@@ -106,6 +104,8 @@ function Portal({ data, reload }: { data: PortalPageData; reload: () => Promise<
         return <Files data={data} />;
       case "artifacts":
         return <Artifacts data={data} />;
+      case "ideas":
+        return <Ideas data={data} />;
       case "skills":
         return <Skills data={data} />;
       case "whatsnew":

@@ -304,7 +304,9 @@ proc.on("exit", (code) => {
     if (agentRow) {
       recordSpend(dataDir, {
         sessionKey: agentRow.parentSessionKey,
-        subsystem: "agent",
+        // A page built for an ideation counts against the ideation budget
+        // (src/ideation/ideator.ts weeklyIdeationSpend), not as an ordinary agent.
+        subsystem: process.env.EDMUND_SPEND_SUBSYSTEM === "ideation" ? "ideation" : "agent",
         model,
         costUsd: reportedCostUsd,
         durMs: Date.now() - runnerStartedAt,

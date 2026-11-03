@@ -39,6 +39,10 @@ export const CONFIG_LAYOUT: LayoutTier[] = [
         name: "people_maintainer",
         note: "Memory upkeep after conversations. consolidation_model writes each chat's operating rules: judgment, so a strong model.",
       },
+      {
+        name: "ideation",
+        note: "Pages Edmund builds for someone's recurring interest and sends them, unasked. Off by default; per person.",
+      },
       { name: "guest_access", note: "Whether guest links work at all." },
       {
         name: "guest_campaigns",

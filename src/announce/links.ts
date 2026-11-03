@@ -22,6 +22,7 @@
  */
 export const PORTAL_TABS = [
   "home",
+  "ideas",
   "proactive",
   "credits",
   "skills",

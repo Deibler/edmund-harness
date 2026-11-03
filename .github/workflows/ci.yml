@@ -53,6 +53,11 @@ jobs:
       - name: User portal
         working-directory: edmund-harness/dashboard/user-web
         run: bun install --frozen-lockfile && bunx tsc --noEmit && bun run build
+      # The template every ideation page is built from (src/ideation/). A
+      # template that no longer builds fails every page at once, unseen.
+      - name: Ideation page template
+        working-directory: edmund-harness/dashboard/ideation-template
+        run: bun install --frozen-lockfile && bunx tsc --noEmit && bun run build
       - name: Unused code (advisory until the backlog is cleared)
         run: bun run knip
         continue-on-error: true
