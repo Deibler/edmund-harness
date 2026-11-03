@@ -1,14 +1,12 @@
 import { Eyebrow, Stat } from "@/components/PageTitle";
 import { Paper } from "@/components/Sheet";
-import { type TabId, visibleTabs } from "@/tabs";
+import { type TabId, tabsFor } from "@/tabs";
 import type { PortalPageData } from "@/types";
 import { ChevronRightIcon } from "lucide-react";
 
 export function Home({ data, go }: { data: PortalPageData; go: (id: TabId) => void }) {
   const a = data.analytics;
-  const sections = visibleTabs({ isGroup: data.isGroup, hasCredits: data.credits !== null }).filter(
-    (t) => t.id !== "home",
-  );
+  const sections = tabsFor(data).filter((t) => t.id !== "home");
   const you = data.isGroup ? "this group" : "you";
 
   return (

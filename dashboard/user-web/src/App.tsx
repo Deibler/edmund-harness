@@ -15,7 +15,7 @@ import { Schedules } from "@/pages/Schedules";
 import { Skills } from "@/pages/Skills";
 import { Tips } from "@/pages/Tips";
 import { WhatsNew } from "@/pages/WhatsNew";
-import { type TabId, tabFromHash, visibleTabs } from "@/tabs";
+import { type TabId, tabFromHash, tabsFor } from "@/tabs";
 import type { PortalPageData } from "@/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -67,10 +67,7 @@ export function App() {
 }
 
 function Portal({ data, reload }: { data: PortalPageData; reload: () => Promise<void> }) {
-  const tabs = useMemo(
-    () => visibleTabs({ isGroup: data.isGroup, hasCredits: data.credits !== null }),
-    [data.isGroup, data.credits],
-  );
+  const tabs = useMemo(() => tabsFor(data), [data]);
   const [tab, setTab] = useState<TabId>(() => tabFromHash(location.hash, tabs));
 
   useEffect(() => {
