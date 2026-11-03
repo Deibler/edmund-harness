@@ -11,7 +11,7 @@ import { IDEATION_ID, IdeationStore, ideationsDir } from "./store.ts";
 export type PortalIdeas = {
   /** Interests the last ideator pass confirmed, most days first. */
   threads: Array<{ label: string; days: number; lastSeenMs: number }>;
-  /** Published pages, newest first. */
+  /** Pages delivered in the chat, newest first. */
   pages: Array<{
     title: string;
     pitch: string;
@@ -35,9 +35,12 @@ export function portalIdeas(dataDir: string, sessionKey: string): PortalIdeas {
       .sort((a, b) => b.days.length - a.days.length || b.lastSeenMs - a.lastSeenMs)
       .slice(0, 8)
       .map((t) => ({ label: t.label, days: t.days.length, lastSeenMs: t.lastSeenMs }));
+    // Only pages whose link chat.db shows reached them: the portal is the
+    // archive of what Edmund sent, so a page he held back, or has not shared
+    // yet, never surfaces here first.
     const pages = store
       .listForSession(sessionKey)
-      .filter((i) => i.status === "ready" && i.url && i.readyMs)
+      .filter((i) => i.status === "ready" && i.url && i.readyMs && i.deliveredMs)
       .map((i) => ({
         title: i.title,
         pitch: i.pitch,

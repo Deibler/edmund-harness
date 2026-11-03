@@ -11,7 +11,7 @@ const ALEX = "imessage:dm:+15550100002";
 function setup() {
   const dataDir = mkdtempSync(join(tmpdir(), "ideation-portal-"));
   const store = new IdeationStore(dataDir);
-  const add = (sessionKey: string, title: string, ready: boolean) => {
+  const add = (sessionKey: string, title: string, ready: boolean, delivered = ready) => {
     const id = newIdeationId();
     store.create({
       id,
@@ -31,6 +31,7 @@ function setup() {
       const dir = join(ideationsDir(dataDir), id);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "index.html"), "<html></html>");
+      if (delivered) store.markDelivered(id, 6_000);
     }
     return id;
   };
@@ -44,10 +45,11 @@ describe("portalIdeas", () => {
     expect(existsSync(join(dataDir, "ideations.db"))).toBe(false);
   });
 
-  test("only published pages, only theirs, with the picture beside the page", () => {
+  test("only pages delivered in the chat, only theirs, with the picture beside the page", () => {
     const s = setup();
     const ready = s.add(SAM, "Sunset Compass", true);
     s.add(SAM, "Still building", false);
+    s.add(SAM, "Published, not yet shared", true, false);
     s.add(ALEX, "Someone else's", true);
     const r = portalIdeas(s.dataDir, SAM);
     expect(r.pages.map((p) => p.title)).toEqual(["Sunset Compass"]);
