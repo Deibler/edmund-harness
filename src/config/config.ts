@@ -1157,6 +1157,25 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   /**
+   * Ideations (src/ideation/): when one person keeps coming back to the same
+   * interest, Edmund builds them an interactive page about it in the
+   * background and tells them in the chat. The ideator reads the last 30 days
+   * once the conversation has settled; code checks the interest really
+   * recurs (their own messages on 3+ separate days), skips sensitive topics,
+   * and holds each person to one build a week and everyone to the budget.
+   */
+  ideation: z
+    .object({
+      enabled: z.boolean().default(false),
+      /** Only these people (handles, as in contacts). Empty = nobody. */
+      people: z.array(z.string()).default([]),
+      /** The model that reads the conversation and picks what to build. */
+      model: z.string().default("claude-sonnet-5-5"),
+      /** All ideation spend in a rolling 7 days, every person together. */
+      weekly_budget_usd: z.number().positive().default(25),
+    })
+    .default({}),
+  /**
    * Eval loop v1 (Phase 5): weekly judged sample of real outbound
    * transcripts + a fixed probe set replayed whenever the persona /
    * output-contract fingerprint changes. Scores land in spend.db

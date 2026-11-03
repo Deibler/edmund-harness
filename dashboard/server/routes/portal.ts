@@ -13,6 +13,7 @@ import {
   DEFAULT_ACTIVE_HOURS_DM,
   type GhostPrefsStore,
 } from "../../../src/ghost/prefs.ts";
+import { portalIdeas } from "../../../src/ideation/portal.ts";
 import { getGroupParticipants } from "../../../src/imessage/participants.ts";
 import { sandboxDir } from "../../../src/persona/sandbox.ts";
 import { privacyConfirmed } from "../../../src/portal/privacy-confirm.ts";
@@ -472,7 +473,16 @@ function buildPageData(
     skills,
     whatsNew,
     credits,
+    ideas: isGroup ? { threads: [], pages: [] } : safeIdeas(deps.config.paths.data_dir, sessionKey),
   };
+}
+
+function safeIdeas(dataDir: string, sessionKey: SessionKey): PortalPageData["ideas"] {
+  try {
+    return portalIdeas(dataDir, sessionKey);
+  } catch {
+    return { threads: [], pages: [] };
+  }
 }
 
 // ─── validation ──────────────────────────────────────────────────────

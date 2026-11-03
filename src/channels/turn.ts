@@ -867,6 +867,9 @@ async function handleBatchInner(
       // exchange must not leak there. (Ghost guards orch: internally.)
       // Skipped for guest tiers too: conversation-scoped memory only.
       if (!key.startsWith("orch:") && !guest && texted) deps.personMaintainer?.onMainReplied(key);
+      // Ideations: same trigger and the same exclusions. The observer itself
+      // admits only configured people in one-to-one iMessage chats.
+      if (!key.startsWith("orch:") && !guest && texted) deps.ideationObserver?.onMainReplied(key);
     }
   };
 

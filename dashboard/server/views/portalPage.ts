@@ -12,6 +12,7 @@
 
 import type { CronJob } from "../../../src/cron/types.ts";
 import type { ActiveHoursWindow } from "../../../src/ghost/prefs.ts";
+import type { PortalIdeas } from "../../../src/ideation/portal.ts";
 import { isBrownNoseEvent } from "../../../src/proactive/queue.ts";
 import type {
   PortalActivity,
@@ -52,7 +53,11 @@ export type PortalPageData = {
   whatsNew: PortalNews[];
   /** Generation credit for this person; null when they have nothing to pay for. */
   credits: PortalCredits | null;
+  /** Pages Edmund built for this person's recurring interests (src/ideation/). DMs only. */
+  ideas: PortalIdeas;
 };
+
+export type { PortalIdeas };
 
 /** One row of the Skills tab. Mirrors services/portalSkills.ts. */
 export type SkillGroup = "yours" | "public" | "curated" | "system";

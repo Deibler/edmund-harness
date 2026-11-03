@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { directClaudeEnv } from "../claude/direct-env.ts";
 import { CronStore } from "../cron/store.ts";
+import { settleIdeationBuild } from "../ideation/settle.ts";
 import { isTradingSession } from "../sessions/key.ts";
 import { genId } from "../util/ids.ts";
 import { consumeFollowOnMarker, teamSharedDirFor } from "./follow-on.ts";
@@ -239,6 +240,13 @@ export function notifyParent(args: {
   const say = args.log ?? ((line: string) => console.log(`[agents] ${line}`));
   const launchEnv = args.launchEnv ?? ownEnv;
   try {
+    // A page built unasked for someone (src/ideation/) is not a result to
+    // relay: a failure goes nowhere, and a page that passed its check is
+    // offered to Edmund at an hour that person accepts messages.
+    if (settleIdeationBuild(dataDir, agent)) {
+      say(`settled ideation build ${agent.id} (${agent.status}); no completion wake-up`);
+      return;
+    }
     if (!agent.teamId) {
       const pokes = queueCompletionWakeUp(
         crons,

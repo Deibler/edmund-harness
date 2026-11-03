@@ -35,7 +35,9 @@
       "dashboard/web/src/**/*.ts",
       "dashboard/web/src/**/*.tsx",
       "dashboard/user-web/src/**/*.ts",
-      "dashboard/user-web/src/**/*.tsx"
+      "dashboard/user-web/src/**/*.tsx",
+      "dashboard/ideation-template/src/**/*.ts",
+      "dashboard/ideation-template/src/**/*.tsx"
     ],
     "ignore": ["**/node_modules", "**/dist", "data", "sandbox", "vendor", "persona", "**/bun.lock"]
   }

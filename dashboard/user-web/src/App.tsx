@@ -6,6 +6,7 @@ import { Artifacts } from "@/pages/Artifacts";
 import { Credits } from "@/pages/Credits";
 import { Files } from "@/pages/Files";
 import { Home } from "@/pages/Home";
+import { Ideas } from "@/pages/Ideas";
 import { Media } from "@/pages/Media";
 import { Memory } from "@/pages/Memory";
 import { Privacy } from "@/pages/Privacy";
@@ -106,6 +107,8 @@ function Portal({ data, reload }: { data: PortalPageData; reload: () => Promise<
         return <Files data={data} />;
       case "artifacts":
         return <Artifacts data={data} />;
+      case "ideas":
+        return <Ideas data={data} />;
       case "skills":
         return <Skills data={data} />;
       case "whatsnew":

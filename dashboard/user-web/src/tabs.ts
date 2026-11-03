@@ -5,6 +5,7 @@
  */
 export type TabId =
   | "home"
+  | "ideas"
   | "proactive"
   | "credits"
   | "media"
@@ -29,6 +30,12 @@ export type TabDef = {
 
 export const TABS: TabDef[] = [
   { id: "home", name: "Home", desc: "Where everything is." },
+  {
+    id: "ideas",
+    name: "Made for you",
+    desc: "Pages Edmund built around what you keep asking about.",
+    dmOnly: true,
+  },
   {
     id: "proactive",
     name: "Proactive",

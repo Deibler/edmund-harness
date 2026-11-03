@@ -5,6 +5,7 @@ import type { Config } from "../config/config.ts";
 import type { CronStore } from "../cron/store.ts";
 import type { GhostObserver } from "../ghost/observer.ts";
 import type { GuestStore } from "../guests/store.ts";
+import type { IdeationObserver } from "../ideation/observer.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import type { AutoRecallResult } from "../memory/auto-recall.ts";
 import type { PersonMaintainer } from "../persona/maintainer-observer.ts";
@@ -70,6 +71,10 @@ export type Deps = {
    *  from the brown-nose ghost — turning proactive outreach off does
    *  not mute memory hygiene. */
   personMaintainer?: PersonMaintainer;
+  /** Ideations (src/ideation/): after a reply, waits for the conversation
+   *  to settle, then may build a page for a recurring interest. Present only
+   *  when [ideation] is enabled. */
+  ideationObserver?: IdeationObserver;
   /** Auto-recall: optional closure that returns top-N similar past
    *  messages for the given inbound text + chat. main.ts wires the
    *  closure when memory_recall is enabled; absent = feature off.
