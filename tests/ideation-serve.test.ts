@@ -13,11 +13,21 @@ const IPHONE =
 const IMESSAGE_PREVIEW =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_1) AppleWebKit/601.2.4 (KHTML, like Gecko) Version/9.0.1 Safari/601.2.4 facebookexternalhit/1.1 Facebot Twitterbot/1.0";
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]);
-const pass = async (): Promise<PageCheck> => ({ ok: true, problems: [], screenshot: JPEG });
+const pass = async (): Promise<PageCheck> => ({
+  ok: true,
+  problems: [],
+  screenshot: JPEG,
+  screens: [],
+  pageHeight: 900,
+  density: null,
+});
 const fail = async (): Promise<PageCheck> => ({
   ok: false,
   problems: ["left accent border on div"],
   screenshot: null,
+  screens: [],
+  pageHeight: null,
+  density: null,
 });
 
 function setup() {
@@ -163,6 +173,26 @@ describe("serveIdeation", () => {
     writeUnchecked(s.dataDir, s.id);
     s.store.markFailed(s.id, "the builder gave up");
     expect(s.get(`/i/${s.id}/`)?.status).toBe(404);
+  });
+
+  test("a withdrawn page stops being served, announced and counted, and keeps its files", async () => {
+    const s = setup();
+    await publishIdeation(s.deps(), s.id, s.built);
+    expect(s.get(`/i/${s.id}/`)?.status).toBe(200);
+    const who = "imessage:dm:+15550100001";
+    expect(s.store.lastForThread(who, "the night sky")?.id).toBe(s.id);
+    expect(s.store.withdraw(s.id, "the operator pulled it")).toBe(true);
+    // They never had it, so the thread is free to be built again; the
+    // person's weekly allowance still counts it (the build was paid for).
+    expect(s.store.lastForThread(who, "the night sky")).toBeNull();
+    expect(s.store.buildsSince(who, 0)).toBe(1);
+    expect(s.get(`/i/${s.id}/`)?.status).toBe(404);
+    expect(s.get(`/i/${s.id}/thumb.jpg`)?.status).toBe(404);
+    expect(s.store.markAnnounced(s.id, 9_000)).toBe(false);
+    expect(s.store.recordOpen(s.id, 9_000)).toBe(false);
+    expect(s.store.get(s.id)?.failReason).toBe("the operator pulled it");
+    expect(existsSync(join(ideationsDir(s.dataDir), s.id, "index.html"))).toBe(true);
+    expect(s.store.withdraw(s.id, "again")).toBe(false);
   });
 
   test("paths outside /i/ fall through to the rest of the host", () => {

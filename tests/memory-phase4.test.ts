@@ -215,6 +215,48 @@ describe("hybrid search (dense + BM25 RRF)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // The count is read from the key's index under the prefixes each kind is
+  // written with. People are written under two; a kind whose refs stray from
+  // its prefixes must still be counted exactly, by the slow way.
+  test("countDocsByKind counts every prefix of a kind, and stays exact when a ref strays", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vec-"));
+    const store = new VectorStore(join(dir, "v.sqlite"));
+    const provider = new HashEmbedProvider();
+    try {
+      const refs: [string, IndexRow["kind"]][] = [
+        ["person:a.md#0", "person-file"],
+        ["person:a.md#1", "person-file"],
+        ["person:archive/a.md#0", "person-file"],
+        ["group:g.md#0", "person-file"],
+        ["group:g.md#1", "person-file"],
+        ["artifact:/x/f.md#0", "artifact"],
+        ["artifact:/x/g.md#0", "artifact"],
+        ["msg:1", "message"],
+      ];
+      const r = await provider.embed(refs.map(([ref]) => ref));
+      const row = ([ref, kind]: [string, IndexRow["kind"]], i: number): IndexRow => ({
+        ref,
+        kind,
+        chatGuid: null,
+        sender: null,
+        ts: 1,
+        text: ref,
+        vec: normalize(r.vectors[i]!),
+        model: provider.model,
+      });
+      store.upsert(refs.map(row));
+      expect(store.countDocsByKind("person-file")).toBe(3);
+      expect(store.countDocsByKind("artifact")).toBe(2);
+
+      // An artifact written under a prefix nobody declared.
+      store.upsert([row(["attachment:/y/h.md#0", "artifact"], 0)]);
+      expect(store.countDocsByKind("artifact")).toBe(3);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── Person-file archive size gate ────────────────────────────────────

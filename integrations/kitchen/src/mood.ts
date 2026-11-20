@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { accountDir } from "./accounts.ts";
-import { type Recipe, effortOf, feedsAllWeek, inSeason } from "./recipes.ts";
+import { type Recipe, effortOf, feedsAllWeek, inSeason, methodOf } from "./recipes.ts";
 import type { Account } from "./types.ts";
 
 /* ── weather ─────────────────────────────────────────────────────────────── */
@@ -459,7 +459,7 @@ export function moodScore(r: Recipe, mood: Mood, acct: Account): number {
   if (mode === "prep") s += feedsAllWeek(r) ? 14 : 0;
   if (mode === "ballout") s += ((r.spend ?? 2) - 2) * 10;
   if (acct.prefs?.per_meal != null && (r.spend ?? 2) === 3 && acct.prefs.per_meal < 15) s -= 12;
-  if ((acct.prefs?.avoid_methods ?? []).includes(r.method ?? "")) s -= 40;
+  if ((acct.prefs?.avoid_methods ?? []).includes(methodOf(r) ?? "")) s -= 40;
   if (acct.diet?.style === "high-protein" && (r.health ?? 3) >= 4) s += 4;
 
   return s;

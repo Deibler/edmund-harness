@@ -21,7 +21,7 @@ import { isConvenience } from "./foods.ts";
 import { lastMade, madeIndex } from "./made.ts";
 import { moodFor, moodScore, readWeather } from "./mood.ts";
 import { loadProfiles } from "./profile.ts";
-import { type Cookable, type Recipe, cookable, menu } from "./recipes.ts";
+import { type Cookable, type Recipe, cookable, menu, methodOf } from "./recipes.ts";
 import { fold, live } from "./store.ts";
 import type { Account } from "./types.ts";
 
@@ -291,7 +291,12 @@ export function pickFor(
     return meal === "dinner" && !!main && isConvenience(main);
   };
   // The same menu the home page ranks, so the avoid list holds here too.
-  const all = menu(account).filter((r) => cats.has(r.cat) && !anchoredOnLunch(r));
+  // A method the house has asked not to be proposed is never texted: a ranking
+  // penalty loses to "everything is in the house" (+1000).
+  const noMethod = new Set(acct.prefs?.avoid_methods ?? []);
+  const all = menu(account).filter(
+    (r) => cats.has(r.cat) && !anchoredOnLunch(r) && !noMethod.has(methodOf(r) ?? ""),
+  );
   if (!all.length) return null;
 
   const mood = moodFor(acct, readWeather(account), now);

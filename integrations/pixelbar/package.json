@@ -1,0 +1,9 @@
+{
+  "name": "@edmund-harness/integration-pixelbar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pixel Bar (32 x 8 LED desk display) tools for edmund-harness",
+  "main": "./tools.ts",
+  "exports": { ".": "./tools.ts" }
+}

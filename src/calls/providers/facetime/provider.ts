@@ -174,6 +174,10 @@ export class FaceTimeProvider implements CallProvider {
   /** When the tap's audio last arrived, and the check that it keeps arriving. */
   private lastAudioAt = 0;
   private stallCheck: ReturnType<typeof setInterval> | null = null;
+  /** Until FaceTime first reports in after this daemon started. */
+  private orphansUnchecked = true;
+  /** The last daemon died with a call open: one found already up is that call. */
+  private diedMidCall = false;
 
   constructor(options: FaceTimeOptions) {
     this.options = options;
@@ -195,8 +199,12 @@ export class FaceTimeProvider implements CallProvider {
     this.mouth = new JsonLinesServer(options.mouthSocketPath, "voice", (m) => this.onMouth(m));
   }
 
-  async start(onEvent: (event: ProviderEvent) => void): Promise<void> {
+  async start(
+    onEvent: (event: ProviderEvent) => void,
+    context?: { diedMidCall: boolean },
+  ): Promise<void> {
     this.onEvent = onEvent;
+    this.diedMidCall = context?.diedMidCall ?? false;
     await this.control.listen();
     await this.audio.listen();
     await this.mouth.listen();
@@ -358,6 +366,10 @@ export class FaceTimeProvider implements CallProvider {
   private onControl(message: JsonMessage): void {
     if (message.event === "hello") {
       log.info("facetime", "FaceTime control connected", { pid: message.pid });
+      if (this.orphansUnchecked) {
+        this.orphansUnchecked = false;
+        void this.settleOrphans();
+      }
       void this.readiness();
       return;
     }
@@ -373,6 +385,37 @@ export class FaceTimeProvider implements CallProvider {
         mapped: call?.state ?? "ignored",
       });
       if (call) this.onEvent({ type: "call", call });
+    }
+  }
+
+  /**
+   * FaceTime outlives the daemon, and so does a call it is on. A daemon that
+   * died mid-call (a crash, a kill) left the other person connected to
+   * nothing, with no one to hang up: the new daemon is only told when a call
+   * changes. So the first time FaceTime reports in, a call still ringing is
+   * announced so it can be answered, and, if the last daemon did die with a
+   * call open, a call already up is hung up. Only then: a call up on this Mac
+   * that the daemon never had is somebody using FaceTime by hand.
+   */
+  private async settleOrphans(): Promise<void> {
+    try {
+      const status = (await this.control.request("status")) as JsonMessage;
+      for (const raw of Array.isArray(status.calls) ? status.calls : []) {
+        const call = toProviderCall(raw as JsonMessage);
+        if (!call) continue;
+        if (call.state === "ringing" && call.direction === "incoming") {
+          this.onEvent({ type: "call", call });
+        } else if (this.diedMidCall && (call.state === "active" || call.state === "dialing")) {
+          log.warn("facetime", "hanging up a call left over from before this daemon started", {
+            state: call.state,
+          });
+          await this.control.request("hangup", { id: call.id });
+        }
+      }
+    } catch (err) {
+      log.warn("facetime", "could not check for a left-over call", {
+        err: (err as Error).message,
+      });
     }
   }
 

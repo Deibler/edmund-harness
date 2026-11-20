@@ -17,7 +17,7 @@ import {
   unsendMessage,
 } from "../../imessage/send.ts";
 import type { SendResult } from "../../imessage/types.ts";
-import { isMirrorSession } from "../../sessions/key.ts";
+import { isGrokSession, isMirrorSession } from "../../sessions/key.ts";
 import { isGroupSession } from "../../sessions/key.ts";
 import { isSmsSession } from "../../sms/session.ts";
 import { assertPathSafe } from "../../util/path-safety.ts";
@@ -113,6 +113,8 @@ function resolveTarget(
 
 export function imessageActionTools(ctx: ToolContext): ToolDef[] {
   if (isMirrorSession(ctx.sessionKey)) return [];
+  // A voice turn in the car: tapbacks and edits mean nothing to a listener.
+  if (isGrokSession(ctx.sessionKey)) return [];
   // Nothing here has an SMS equivalent: a sent SMS cannot be edited, unsent
   // or deleted from the far end. Withholding the tools is the honest shape —
   // a registered tool that can only ever refuse invites the model to promise

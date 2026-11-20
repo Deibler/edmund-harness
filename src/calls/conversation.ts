@@ -11,7 +11,7 @@
 
 import type { ChatDb } from "../imessage/db.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
-import { dmKeyFor } from "../sessions/key.ts";
+import { type SessionKey, dmKeyFor } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import type { CallConversation, Peer } from "./types.ts";
 
@@ -19,6 +19,39 @@ type Deps = {
   chatDb: ChatDb;
   contacts: ContactBook;
 };
+
+/** The two things a session store must do for a call to reach its conversation. */
+export type SessionRecords = {
+  getSession: (sessionKey: SessionKey) => unknown;
+  upsertSession: (record: {
+    sessionKey: SessionKey;
+    claudeSessionId: string | null;
+    chatGuid: string;
+    isGroup: number;
+    lastInboundMs: number;
+    lastOutboundMs: number;
+  }) => void;
+};
+
+/**
+ * Give the conversation a session record if it has none. Someone Edmund has
+ * never exchanged a text with has no record, and a wake-up for a session
+ * with no record is skipped: on 2026-11-06 and 11-11 the "it is ringing, write
+ * your opening line" wake-up was dropped that way, so the person picked up to
+ * 10 s of silence while a cold worker answered their "hello?" instead. The
+ * record is the one their first text would have made.
+ */
+export function ensureSessionFor(conversation: CallConversation, state: SessionRecords): void {
+  if (state.getSession(conversation.sessionKey)) return;
+  state.upsertSession({
+    sessionKey: conversation.sessionKey,
+    claudeSessionId: null,
+    chatGuid: conversation.chatGuid,
+    isGroup: conversation.isGroup ? 1 : 0,
+    lastInboundMs: 0,
+    lastOutboundMs: 0,
+  });
+}
 
 export function conversationForPeer(peer: Peer, deps: Deps): CallConversation | null {
   return peer.kind === "person"

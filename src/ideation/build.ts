@@ -19,6 +19,8 @@ import { type Ideation, type IdeationStore, newIdeationId } from "./store.ts";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TEMPLATE = join(ROOT, "dashboard", "ideation-template");
 const PUBLISH = join(ROOT, "scripts", "ideation-publish.ts");
+/** Vendored, reviewed design skill (skills/unslop/SOURCE.md). */
+const UNSLOP = join(ROOT, "skills", "unslop");
 
 export function builderTask(i: Ideation, name: string): string {
   return [
@@ -35,11 +37,11 @@ export function builderTask(i: Ideation, name: string): string {
     "",
     "How to build it:",
     `1. rsync -a --exclude node_modules --exclude dist "${TEMPLATE}/" ./page/`,
-    "2. Read ./page/DESIGN.md in full before writing anything. It is the standard the page is held to: shadcn components, the sandbox's limits, and the design rules (no left accent borders, no gradient text, no emoji, none of the stock AI layouts).",
+    "2. Read ./page/DESIGN.md in full before writing anything. It is the standard the page is held to: shadcn components, the sandbox's limits, Restraint (one centerpiece, nothing the brief did not ask for, and hard limits on length, controls, words and disclaimers), and the design rules (no left accent borders, no gradient text, no emoji, none of the stock AI layouts).",
     "3. cd page && bun install",
     "4. Write src/App.tsx and its components, and restyle src/index.css for this subject. Controls come from src/components/ui (add more with bunx shadcn@latest add <name>). Add only libraries DESIGN.md lists.",
     "5. bun run build",
-    `6. Look at it before publishing: bun "${PUBLISH}" --check dist/index.html writes the whole page as phone-width pictures, one per screen, next to the file. Open every one and judge it against DESIGN.md as a demanding designer would. Fix what is weak and rebuild.`,
+    `6. The design pass. Read ${UNSLOP}/SKILL.md and its references (signs.md, tokens.md, visuals.md), under the overrides in DESIGN.md's "The design pass: unslop". Then bun "${PUBLISH}" --check dist/index.html writes the whole page as phone-width pictures, one per screen, next to the file, and prints its density. Open every picture, audit it against signs.md line by line, fix in unslop's pass order, rebuild, and look again. Stop when its checklist and DESIGN.md both hold.`,
     `7. bun "${PUBLISH}" ${i.id} "$PWD/dist/index.html" checks the page at phone width and refuses it with a numbered list of problems. Fix every one, rebuild, and run it again until it prints "published:".`,
     "",
     "Facts come only from the brief and from what you verify while building (you may search and fetch the web now; the page cannot later). Say so on the page wherever something is approximate.",

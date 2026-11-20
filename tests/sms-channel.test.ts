@@ -286,3 +286,51 @@ describe("keyword classifier", () => {
     expect(classifyKeyword("can you help me move saturday")).toBe(null);
   });
 });
+
+/**
+ * A group reply is billed as one MMS per recipient at a flat rate, whatever
+ * its length: 212 of 212 priced group sends on the live account cost the
+ * same from 0 to 456 characters (2026-11-03). Splitting a reply into SMS
+ * segment-sized parts multiplied the bill by the number of parts: 29 of 98
+ * group texts were extra parts, 28% of group text spend.
+ */
+describe("sms group replies are one text", () => {
+  function groupChannel() {
+    const made = makeChannel({}, ["+15551230001"]);
+    made.channel.store.registerConversation("CHgrp9", "group");
+    made.channel.store.upsertGroup({
+      conversationSid: "CHgrp9",
+      friendlyName: null,
+      participants: ["+15551230001", "+15557770002", "+15557770003"],
+    });
+    return made;
+  }
+  const para = "Clear skies Thursday morning, so the best window is 3:30 to 5:45am. ".repeat(4);
+  const long = `${para.trim()}\n\n${para.trim()}`; // ~550 chars, two paragraphs
+
+  test("a reply SMS would split goes to the room as a single message", async () => {
+    const { channel } = groupChannel();
+    const res = await channel.deliverer({ chatGuid: "sms:CHgrp9", isGroup: true, text: long });
+    expect(res.sent).toBe(1);
+    expect(fetchCalls.length).toBe(1);
+    expect(decodeURIComponent(fetchCalls[0]!.body.replace(/\+/g, " "))).toContain(long.slice(-40));
+  });
+
+  test("only Twilio's 1,600-character ceiling splits a group reply", async () => {
+    const { channel } = groupChannel();
+    const huge = `${long}\n\n${long}\n\n${long}`; // ~1,650 chars
+    const res = await channel.deliverer({ chatGuid: "sms:CHgrp9", isGroup: true, text: huge });
+    expect(res.sent).toBe(2);
+    for (const c of res.sentChunks) expect(c.length).toBeLessThanOrEqual(1600);
+  });
+
+  test("a DM still splits at SMS segment size", async () => {
+    const { channel } = makeChannel();
+    const res = await channel.deliverer({
+      chatGuid: "sms:+15551230001",
+      isGroup: false,
+      text: long,
+    });
+    expect(res.sent).toBe(2);
+  });
+});

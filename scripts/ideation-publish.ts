@@ -4,6 +4,7 @@
  *
  *   bun scripts/ideation-publish.ts <id> <path to dist/index.html>
  *   bun scripts/ideation-publish.ts --check <path>      (check only, no id)
+ *   bun scripts/ideation-publish.ts --withdraw <id> [reason]   (take a page down)
  *
  * The builder runs this last. On a problem it prints each one and exits 1:
  * fix them and run it again. On success it prints the page's permanent link.
@@ -15,6 +16,26 @@ import { publishIdeation } from "../src/ideation/publish.ts";
 import { IdeationStore } from "../src/ideation/store.ts";
 
 const args = process.argv.slice(2);
+
+// Take a page down (operator use): it 404s at once and is never announced.
+if (args[0] === "--withdraw") {
+  const [, wid, ...why] = args;
+  if (!wid) {
+    console.error("usage: bun scripts/ideation-publish.ts --withdraw <id> [reason]");
+    process.exit(2);
+  }
+  const store = new IdeationStore(loadConfig().paths.data_dir);
+  const before = store.get(wid);
+  const ok = store.withdraw(wid, why.join(" ") || "withdrawn by the operator");
+  store.close();
+  console.log(
+    ok
+      ? `withdrawn: ${wid} (was ${before?.status}); it is no longer served or announced.`
+      : `not withdrawn: ${before ? `it is ${before.status}` : "no such page"}.`,
+  );
+  process.exit(ok ? 0 : 1);
+}
+
 const checkOnly = args[0] === "--check";
 const [id, path] = checkOnly ? ["", args[1]] : [args[0], args[1]];
 if (!path || (!checkOnly && !id)) {
@@ -39,6 +60,12 @@ try {
       const total = Math.ceil(r.pageHeight / 844);
       console.log(
         `the page is ${r.pageHeight}px tall at 390px wide: ${total} phone screen${total === 1 ? "" : "s"}${total > r.screens.length ? `, of which the first ${r.screens.length} are pictured` : ""}.`,
+      );
+    }
+    if (r.density) {
+      const d = r.density;
+      console.log(
+        `density: ${d.headings} headings, ${d.controls} controls, ${d.words} words, ${d.hedges} disclaimers, ${d.smallTextShare}% of text under 14px. DESIGN.md "Restraint" gives the targets.`,
       );
     }
     process.exitCode = r.ok ? 0 : 1;

@@ -40,6 +40,12 @@ export type VoiceOutDeps = {
   provider: Pick<CallProvider, "say" | "flush">;
   /** Each piece of Edmund's speech once it was heard, or dropped unheard. */
   onSaid: (text: string, heard: boolean) => void;
+  /**
+   * Speech is being handed to the provider: part of a reply, or an aside (a
+   * line said for Edmund while his reply is on its way, see `aside`). Told
+   * apart so the time to his reply is never measured to a "hmm".
+   */
+  onSpeaking?: (kind: "reply" | "aside") => void;
 };
 
 type TurnTally = { queued: number; failed: number };
@@ -53,6 +59,33 @@ export type CutOff = { kind: "talked-over" | "kept-talking"; text: string };
 
 /** How long the text may pause on a finished sentence before it is said. */
 const SENTENCE_IDLE_MS = 200;
+/**
+ * A reply's first sentence, once it has run this long without ending, is
+ * started at a clause break instead. Kokoro synthesises a whole chunk before
+ * any of it plays, in 0.26 s plus about 0.18 s per second of speech
+ * (2026-11-12): a 120-character opening sentence is 1.5 s of waiting, its
+ * first clause 0.8 s. One reply in six opens with a sentence over 60
+ * characters (126 replies, 2026-10-29 to 11-11).
+ */
+const FIRST_CLAUSE_AFTER_CHARS = 60;
+/** ...and the clause has to be worth saying alone ("Well," is not). */
+const FIRST_CLAUSE_MIN_CHARS = 25;
+const CLAUSE_BREAK = /[,;:]\s+|\s+[—–-]\s+/g;
+
+/** The first clause of an unfinished opening sentence, if it is long enough to start on. */
+export function takeFirstClause(buffer: string): { clause: string; rest: string } | null {
+  if (buffer.length < FIRST_CLAUSE_AFTER_CHARS) return null;
+  for (const match of buffer.matchAll(CLAUSE_BREAK)) {
+    const end = match.index + match[0].trimEnd().length;
+    const clause = buffer.slice(0, end).trim();
+    if (clause.length < FIRST_CLAUSE_MIN_CHARS) continue;
+    // "at 7:30 pm" and "82,400" are not clause breaks; a break is followed by a word.
+    const rest = buffer.slice(match.index + match[0].length);
+    if (!/^[\p{L}"'(]/u.test(rest)) continue;
+    return { clause, rest };
+  }
+  return null;
+}
 
 export class VoiceOut {
   private readonly deps: VoiceOutDeps;
@@ -66,6 +99,15 @@ export class VoiceOut {
   private chain: Promise<void> = Promise.resolve();
   /** Chunks handed to the provider and not yet reported played or dropped. */
   private readonly pending = new Map<string, string>();
+  /** Which of those are asides, not part of any reply. */
+  private readonly asides = new Set<string>();
+  /** Lines synthesised ahead of need, by voice and text (see `prepare`). */
+  private readonly prepared = new Map<
+    string,
+    Promise<{ pcm: Uint8Array; sampleRate: number } | null>
+  >();
+  /** Anything at all has been handed to the provider on this call. */
+  private everSpoke = false;
   private cutOff: CutOff | null = null;
   /**
    * A reply the caller talked past before it was said, held until it is
@@ -125,6 +167,67 @@ export class VoiceOut {
   /** Resolves once the first speech is synthesised: the greeting is ready. */
   firstAudioReady(): Promise<void> {
     return this.audioReady;
+  }
+
+  /** Something has been handed to the provider to play, on this call. */
+  hasSpoken(): boolean {
+    return this.everSpoke;
+  }
+
+  /**
+   * Synthesise a line now and keep it, so it can be said the instant it is
+   * wanted. Kept per voice: Edmund can change his voice mid-call, and a line
+   * kept in the old one would be someone else interrupting.
+   */
+  prepare(text: string): void {
+    if (this.closed) return;
+    const key = this.preparedKey(text);
+    if (this.prepared.has(key)) return;
+    this.prepared.set(
+      key,
+      this.deps.speaker.synthesize(text).catch(() => null),
+    );
+  }
+
+  private preparedKey(text: string): string {
+    return `${this.deps.speaker.voiceKey?.() ?? ""}|${text}`;
+  }
+
+  /**
+   * Say a line for Edmund that is not part of any reply: "Hello?" on a call
+   * that connected before his opening line was written, a "hmm" while a
+   * reply is slow to come. Only into silence: never while he is speaking or
+   * while speech is held, and it does not count as his reply having begun,
+   * so a caller who talks again before the reply still has it held for them.
+   * False when it was not said.
+   */
+  aside(text: string): boolean {
+    if (this.closed || this.openGate || this.pending.size > 0) return false;
+    if (this.currentTurn !== null && (this.turnQueued || this.muted.has(this.currentTurn)))
+      return false;
+    if (this.superseded) return false;
+    this.prepare(text);
+    const audio = this.prepared.get(this.preparedKey(text));
+    const generation = this.generation;
+    this.chain = this.chain.then(async () => {
+      if (generation !== this.generation || this.closed) return;
+      const ready = await audio;
+      // The reply got there first: it needs no introduction now.
+      if (!ready || generation !== this.generation || this.pending.size > 0) return;
+      const chunkId = genId("aside");
+      this.pending.set(chunkId, text);
+      this.asides.add(chunkId);
+      this.everSpoke = true;
+      this.deps.onSpeaking?.("aside");
+      try {
+        await this.deps.provider.say(chunkId, ready.pcm, ready.sampleRate);
+      } catch (err) {
+        this.pending.delete(chunkId);
+        this.asides.delete(chunkId);
+        log.warn("calls", "could not queue an aside", { err: (err as Error).message });
+      }
+    });
+    return true;
   }
 
   /** True while Edmund has speech queued or playing. */
@@ -210,6 +313,15 @@ export class VoiceOut {
     const { sentences, rest } = takeSentences(this.buffer);
     this.buffer = rest;
     for (const sentence of sentences) this.enqueue(sentence, turnId);
+    // Nothing said yet and the opening sentence is running long: start on
+    // its first clause rather than wait for all of it.
+    if (!this.turnQueued) {
+      const opening = takeFirstClause(this.buffer);
+      if (opening) {
+        this.buffer = opening.rest;
+        this.enqueue(opening.clause, turnId);
+      }
+    }
     // A sentence is only known to be over when the next one begins, so the
     // last one before a tool call waited for the whole tool: "On it,
     // texting you now." sat 4.8 s while the text was written and sent. If
@@ -282,9 +394,18 @@ export class VoiceOut {
    * this turn, and remember what they did not get to hear.
    */
   async bargeIn(): Promise<void> {
+    // Only an aside is playing and the reply itself has not begun: they are
+    // not talking over his answer, they are still talking. Stop the aside
+    // and hold the reply, exactly as if he had been silent.
+    if (this.currentTurn && !this.turnQueued && this.onlyAsidesPending()) {
+      this.supersede();
+      await this.deps.provider.flush().catch(() => {});
+      return;
+    }
     this.generation += 1;
     if (this.currentTurn) this.muted.add(this.currentTurn);
-    const unheard = [...this.pending.values()];
+    // An aside they talked over is not something they missed.
+    const unheard = [...this.pending].filter(([id]) => !this.asides.has(id)).map(([, t]) => t);
     if (this.buffer.trim()) unheard.push(this.buffer.trim());
     this.buffer = "";
     if (unheard.length > 0) this.cutOff = { kind: "talked-over", text: unheard.join(" ") };
@@ -305,7 +426,14 @@ export class VoiceOut {
     const text = this.pending.get(chunkId);
     if (text === undefined) return;
     this.pending.delete(chunkId);
+    this.asides.delete(chunkId);
     this.deps.onSaid(text, played);
+  }
+
+  private onlyAsidesPending(): boolean {
+    if (this.pending.size === 0) return false;
+    for (const id of this.pending.keys()) if (!this.asides.has(id)) return false;
+    return true;
   }
 
   private flushBuffer(turnId: string): void {
@@ -345,6 +473,8 @@ export class VoiceOut {
       if (generation !== this.generation) return;
       const chunkId = genId("say");
       this.pending.set(chunkId, text);
+      this.everSpoke = true;
+      this.deps.onSpeaking?.("reply");
       try {
         await this.deps.provider.say(chunkId, audio.pcm, audio.sampleRate);
         tally.queued += 1;

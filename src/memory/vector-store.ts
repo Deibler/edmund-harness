@@ -28,6 +28,19 @@ import { log } from "../util/log.ts";
  */
 export type RowKind = "message" | "person-file" | "artifact" | "summary" | "self-file" | "skill";
 
+/**
+ * The ref prefixes each chunked kind is written under (memory/indexer.ts).
+ * Only countDocsByKind reads this, and it checks the claim on every use.
+ */
+const REF_PREFIXES: Partial<Record<RowKind, readonly string[]>> = {
+  artifact: ["artifact:"],
+  "person-file": ["person:", "group:"],
+};
+
+/** The document a chunk ref belongs to: the ref up to its `#<seq>`. */
+const DOC_OF_REF =
+  "CASE WHEN instr(ref, '#') > 0 THEN substr(ref, 1, instr(ref, '#') - 1) ELSE ref END";
+
 export type IndexRow = {
   /** Stable identifier for the row's source (e.g. `msg:<guid>`, `person:<handle>`, `artifact:<path>`). */
   ref: string;
@@ -752,13 +765,48 @@ export class VectorStore {
    * (`<prefix>#<seq>` refs). Chunking made countByKind a chunk count;
    * coverage bars compare against file counts, so they need this.
    * (A '#' inside a file path would miscount by one — acceptable.)
+   *
+   * Read from the primary key alone when the kind's refs are known to sit
+   * under fixed prefixes. Reading it by kind visits every row of the kind in
+   * the table itself, vectors and all: 17.3 s for 320k artifact chunks on
+   * 2026-11-12, synchronously on the daemon's main thread, every ten minutes
+   * (1,893 times since 2026-10-29, median 15.6 s). Nothing else ran while it
+   * did; on a FaceTime call that was 22 s of Edmund neither hearing nor
+   * speaking. The same count over the key's index took 0.2 s.
    */
   countDocsByKind(kind: RowKind): number {
+    const prefixes = REF_PREFIXES[kind];
+    if (prefixes) {
+      // The prefixes are a claim about how refs are written elsewhere. It is
+      // checked against the kind's own chunk count (both index-only) every
+      // time, so a new prefix under this kind makes the count slow again
+      // rather than quietly short.
+      const ranges = prefixes.map((prefix) => [prefix, `${prefix}\uffff`] as const);
+      const where = ranges.map(() => "(ref >= ? AND ref < ?)").join(" OR ");
+      const args = ranges.flat();
+      const chunks = this.db
+        .prepare<{ n: number }, string[]>(`SELECT COUNT(*) AS n FROM rows WHERE ${where}`)
+        .get(...args);
+      if ((chunks?.n ?? 0) === this.countByKind(kind)) {
+        const row = this.db
+          .prepare<{ n: number }, string[]>(
+            `SELECT COUNT(DISTINCT ${DOC_OF_REF}) AS n FROM rows WHERE ${where}`,
+          )
+          .get(...args);
+        return row?.n ?? 0;
+      }
+      log.warn(
+        "recall",
+        "refs of this kind are not all under its known prefixes; counting by kind",
+        {
+          kind,
+          prefixes: prefixes.join(" "),
+        },
+      );
+    }
     const row = this.db
       .prepare<{ n: number }, [string]>(
-        `SELECT COUNT(DISTINCT CASE WHEN instr(ref, '#') > 0
-                  THEN substr(ref, 1, instr(ref, '#') - 1) ELSE ref END) AS n
-         FROM rows WHERE kind = ?`,
+        `SELECT COUNT(DISTINCT ${DOC_OF_REF}) AS n FROM rows WHERE kind = ?`,
       )
       .get(kind);
     return row?.n ?? 0;

@@ -58,7 +58,12 @@ export type ProviderEvent =
 export interface CallProvider {
   /** Shown to the model and in logs ("FaceTime"). */
   readonly name: string;
-  start(onEvent: (event: ProviderEvent) => void): Promise<void>;
+  /**
+   * `diedMidCall`: the last run of the daemon ended with a call still open,
+   * so a call the provider finds already up is that one, with nobody on
+   * Edmund's end, and is to be hung up.
+   */
+  start(onEvent: (event: ProviderEvent) => void, context?: { diedMidCall: boolean }): Promise<void>;
   stop(): Promise<void>;
   dial(handle: string): Promise<ProviderCall>;
   answer(callId: string): Promise<void>;
@@ -89,6 +94,11 @@ export interface Speaker {
   synthesize(text: string): Promise<{ pcm: Uint8Array; sampleRate: number } | null>;
   /** Load the voice now, so the first sentence of a call does not wait on it. */
   warm?(): void;
+  /**
+   * Names the voice the next sentence would be said in. Speech kept ahead of
+   * need is kept under it, so a change of voice is never answered in the old one.
+   */
+  voiceKey?(): string;
 }
 
 /** The conversation a call belongs to. Derived from keyed sources only. */

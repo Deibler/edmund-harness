@@ -475,6 +475,87 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   /**
+   * `[grok]` — talk to Edmund from Grok (the Tesla's voice assistant) through
+   * a custom MCP connector. Off by default and inert when off: no listener,
+   * no deliverer, no session.
+   *
+   * The listener binds loopback only; a Cloudflare tunnel is the way in from
+   * outside, and every request must carry `token`. See src/grok/.
+   */
+  grok: z
+    .object({
+      enabled: z.boolean().default(false),
+      /** Whose Edmund this is: the handle the connector's turns run as. They
+       *  run inside that person's own iMessage DM session, as one more message
+       *  in the thread. Required when enabled. */
+      handle: z.string().optional(),
+      /** Loopback port for the MCP listener (the tunnel's target). */
+      port: z.number().int().positive().default(4796),
+      /** Long random bearer token. Required when enabled; without one the
+       *  listener refuses to start rather than run open. */
+      token: z.string().min(24).optional(),
+      /** Where the token may be presented. "both" accepts the Authorization
+       *  header and a `?key=` query parameter, for connector UIs that only
+       *  take a URL. Narrow it once Grok's connector auth is known. */
+      auth_mode: z.enum(["both", "bearer", "query"]).default("both"),
+      /** How long a spoken request waits for the answer before Edmund says
+       *  he is working on it. The turn keeps running and the reply is texted. */
+      answer_timeout_ms: z.number().int().positive().default(25_000),
+      /** What Grok is told when the answer is not ready in time. */
+      slow_reply: z.string().default("Edmund's working on it, he'll text you the answer."),
+      /** Longest message accepted, in characters. */
+      max_message_chars: z.number().int().positive().default(1_000),
+      /** Longest spoken reply returned, in characters; cut at a sentence. */
+      max_reply_chars: z.number().int().positive().default(700),
+      /** Authenticated requests per minute, all methods. */
+      requests_per_minute: z.number().int().positive().default(60),
+      /** Turns started per minute: a turn costs money, a listing does not. */
+      asks_per_minute: z.number().int().positive().default(6),
+      /** Failed authentications per source before it is shut out for ten minutes. */
+      max_auth_failures: z.number().int().positive().default(10),
+      /** Extra words for the model about who may be calling through the
+       *  connector: the names of this person's Grok bots and what they are like
+       *  ("Glep is a deliberately simple bot"). Shown in the envelope of a turn
+       *  that holds a connector request; empty adds nothing. */
+      caller_note: z.string().default(""),
+      /**
+       * `[grok.bots.<name>]` — Grok Bots (xAI's always-on cloud agents) Edmund
+       * may hand tasks to with `grokbot_task`. Each is a routine with a webhook
+       * trigger: `webhook_url` is the trigger's URL and `key` is the bearer key
+       * Grok shows with it. Both live only in this file (gitignored) and are
+       * never logged. Empty: the tool says what the owner has to set up. A bot may
+       * also have its own `connector_token` (see below) to call back with.
+       */
+      bots: z
+        .record(
+          z.string().regex(/^[A-Za-z0-9_-]{1,40}$/, "a bot name is letters, digits, - or _"),
+          z.object({
+            webhook_url: z.string().url(),
+            key: z.string().min(1),
+            /** This bot's own key for the Edmund connector (`?key=` or a bearer
+             *  token on /grok/mcp). A request that presents it is this bot, so
+             *  the envelope names the caller from the key rather than from the
+             *  bot introducing itself. Distinct from `key`, which is the bot's
+             *  webhook key that Edmund sends. `openssl rand -hex 32`. Without
+             *  one the bot calls on the shared `[grok].token`. */
+            connector_token: z.string().min(24).optional(),
+            /** What Edmund calls the bot in the envelope ("Grok Bot", "Glep").
+             *  Defaults to the table name. */
+            label: z.string().min(1).max(60).optional(),
+            /** One line on what the bot is like, shown with its name when it
+             *  calls on its own key ("a deliberately simple Grok bot"). */
+            description: z.string().max(200).optional(),
+          }),
+        )
+        .default({}),
+      /** Ignored. Connector turns run in the person's DM session and use its
+       *  model: a model belongs to a session, not to one message in it. Kept
+       *  so an older config file still parses. */
+      model: z.string().optional(),
+      effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+    })
+    .default({}),
+  /**
    * FaceTime calls (src/calls/). A call is a voice mode of an existing
    * conversation, not a conversation of its own: a contact's call runs in
    * their DM session and a group's in the group session, so what was said on
@@ -518,6 +599,18 @@ export const ConfigSchema = z.object({
       keep_turn_clips: z.boolean().default(false),
       /** Kokoro voice for Edmund. Empty means bm_daniel, his mirror voice. */
       kokoro_voice: z.string().default(""),
+      /** Said when a call connects and Edmund's own opening line is not
+       *  written yet, so nobody picks up to silence. Empty says nothing. */
+      opener: z.string().default("Hello?"),
+      /** Short sounds of thinking. One is said when the caller has finished
+       *  and Edmund's reply has not begun `thinking_sound_after_ms` after
+       *  they stopped. Kokoro reads "Mm" and "Mhm" as letters: use words it
+       *  can say. An empty list, or zero, turns them off. */
+      thinking_sounds: z.array(z.string()).default(["Hmm.", "Let's see.", "Um,"]),
+      thinking_sound_after_ms: z.number().int().nonnegative().default(2000),
+      /** Seconds of quiet on both sides before Edmund is told, so he can check
+       *  they are still there or end the call. Zero never tells him. */
+      quiet_check_seconds: z.number().int().nonnegative().default(12),
     })
     .default({}),
   /**
@@ -866,6 +959,8 @@ export const ConfigSchema = z.object({
   kitchen: z.unknown().optional(),
   /** `[printer]` — owned by integrations/printer/config.ts. */
   printer: z.unknown().optional(),
+  /** `[pixelbar]` — owned by integrations/pixelbar/config.ts. */
+  pixelbar: z.unknown().optional(),
   contacts: z.array(ContactSchema).default([]),
   /**
    * Stuck-session recovery sweep. Periodically checks for sessions where
@@ -1167,7 +1262,8 @@ export const ConfigSchema = z.object({
   ideation: z
     .object({
       enabled: z.boolean().default(false),
-      /** Only these people (handles, as in contacts). Empty = nobody. */
+      /** Only these people (handles, as in contacts). ["*"] = everyone in a
+       *  one-to-one iMessage chat who isn't a guest. Empty = nobody. */
       people: z.array(z.string()).default([]),
       /** The model that reads the conversation and picks what to build. */
       model: z.string().default("claude-sonnet-5-5"),

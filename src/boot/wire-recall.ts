@@ -1,5 +1,6 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { anyVoiceLive } from "../calls/binding.ts";
 import {
   POST_COMPACT_THREAD_CHARS,
   type ThreadDeps,
@@ -154,6 +155,7 @@ export function wireRecall(args: {
         chunkSize: config.memory_recall.chunk_size,
         backfillDays: config.memory_recall.backfill_days,
         sandboxRoot: "sandbox",
+        standDown: anyVoiceLive,
       },
       PEOPLE_DIR,
       resolveSandboxDir,

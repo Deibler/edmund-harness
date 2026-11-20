@@ -1,3 +1,5 @@
+import type { GrokCaller } from "../grok/caller.ts";
+
 export type InboundMessage = {
   rowId: number;
   /** message GUID — stable across devices, used for echo cache + reply_to */
@@ -27,6 +29,10 @@ export type InboundMessage = {
   /** Set when a group message that doesn't name the assistant was let in
    *  because Jev judged it to be for him (see gating/address-check.ts). */
   unnamedWake?: UnnamedWake;
+  /** Set on a Grok connector request: who called, as the key they presented
+   *  proves (src/grok/caller.ts). Absent on a text and on a request queued
+   *  before callers were tracked, which renders as before. */
+  grokCaller?: GrokCaller;
 };
 
 /** Why an un-named group message was let in, and Jev's probabilities. */

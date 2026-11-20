@@ -24,6 +24,7 @@ EMAIL — adding the phone number makes any group green by SMS's nature.
 
 - `src/sms/session.ts`   — `sms:dm:<handle>` / `sms:group:<CHsid>` namespaces
 - `src/sms/segment.ts`   — GSM-7/UCS-2 cost model + URL-safe chunking
+- `src/sms/media.ts`     — inbound photos: REST lookup (SDK) + MCS download
 - `src/sms/signature.ts` — X-Twilio-Signature validation (fail closed)
 - `src/sms/store.ts`     — transcript (chat.db knows nothing), consent,
                            group rosters, webhook idempotency; in state.db
@@ -56,7 +57,36 @@ EMAIL — adding the phone number makes any group green by SMS's nature.
   a carrier opt-out.
 - **Webhooks**: signature-validated against the CURRENT tunnel URL; no
   token or URL ⇒ every request rejected. Retries dedup on MessageSid.
-- **Cost**: replies normalized to GSM-7, chunked to ≤3 segments × ≤3 parts;
+- **Cost**: a DM reply is SMS, normalized to GSM-7 and chunked to ≤3
+  segments × ≤3 parts. A group reply is MMS, billed flat per recipient
+  whatever its length (measured 2026-11-03: $0.022 + ~$0.008 carrier fee per
+  recipient, 212 of 212 sends from 0 to 456 chars), so it goes as ONE message
+  and splits only at Twilio's 1,600-char Conversations limit. Every extra part
+  is another full charge to every member.
+- **Inbound media**: Twilio delivers each photo as its own Conversations
+  message with an EMPTY body (text + photo = two messages in the same
+  second). The webhook's `Media` field has no documented shape, so an empty
+  body (or a non-empty `Media` hint) triggers a REST lookup of the message's
+  `media` array, then MCS: authenticated `GET mcs.us1…/Services/{IS}/Media/{ME}`
+  → `links.content_direct_temporary`, fetched at once without auth (it
+  expires in 300 s). Files stage in `data/sms-media/` (pruned after 14 days)
+  and reach the turn as ordinary attachments. A failed download is named to
+  the model so it can ask for a resend; it is never dropped. Before this,
+  the handler read `NumMedia` (a Programmable Messaging parameter the
+  Conversations webhook never sends) and every photo was lost: 9 of 9.
+- **Outbound media**: `send_attachment` in an SMS session uploads the file
+  to the conversation's MCS (`POST mcs.us1…/Services/{IS}/Media`, raw bytes,
+  API key auth, 201 → `{sid: "ME…"}`) and posts a Conversations message with
+  that `MediaSid` (SDK) within Twilio's 5-minute attach window. DMs go
+  through the person's own Conversation too, so no file ever needs a public
+  URL; a DM with someone who has never texted the number is refused in
+  words. MMS prep: HEIC/HEIF/WebP/TIFF/BMP → JPEG, images shrunk and video
+  transcoded under 4.5 MB (Twilio's MMS ceiling is 5 MB), and types MMS
+  can't carry (Office docs, zips, HTML) are refused with "shelve it and text
+  the link". One file per message, billed as one MMS per recipient.
+- **Group history**: same active-thread view as an iMessage group (30-minute
+  breaks, 30-line cap). Recall indexes chat.db only, so a cold start is told
+  earlier threads exist and to read back with `get_thread_context`.
   beyond that truncated rather than flooding. Full URLs only (shorteners
   are carrier-filtered).
 
@@ -82,7 +112,6 @@ EMAIL — adding the phone number makes any group green by SMS's nature.
 
 ## Known limitations (deliberate)
 
-- MMS media inbound is acknowledged in-transcript but not fetched.
 - No delivery-receipt persistence yet (failures are logged from /sms/status).
 - Same person on iMessage AND SMS = two separate sessions by design.
 - Sole-prop campaign: ≤1 msg/sec, one number, T-Mobile daily caps.

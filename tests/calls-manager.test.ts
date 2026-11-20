@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CALL_SERVICE, clearVoiceBindings, voiceBindingFor } from "../src/calls/binding.ts";
+import {
+  CALL_SERVICE,
+  anyVoiceLive,
+  clearVoiceBindings,
+  voiceBindingFor,
+} from "../src/calls/binding.ts";
 import { CallManager, type CallManagerDeps } from "../src/calls/manager.ts";
 import type { Permission } from "../src/calls/policy.ts";
 import { CallStore } from "../src/calls/store.ts";
@@ -103,12 +108,15 @@ let manager: CallManager;
 let deps: CallManagerDeps;
 let routed: { key: string; msg: InboundMessage }[];
 let events: { key: string; text: string }[];
+/** Sessions made reachable and events fired, in the order they happened. */
+let order: string[];
 let alerts: string[];
 let ended: CallRecord[];
 let allowed: Set<string>;
 let handedOff: string[];
 let expedited: string[];
 let warmed: number;
+let prepared: number;
 
 function conversationFor(peer: Peer): CallConversation | null {
   if (peer.kind === "group") return null;
@@ -129,12 +137,14 @@ beforeEach(async () => {
   lab = new FakeProvider("voice lab");
   routed = [];
   events = [];
+  order = [];
   alerts = [];
   ended = [];
   allowed = new Set([DANA, FRIEND]);
   handedOff = [];
   expedited = [];
   warmed = 0;
+  prepared = 0;
   deps = {
     settings: {
       maxCallMinutes: 30,
@@ -146,7 +156,15 @@ beforeEach(async () => {
       turnThreshold: 0.5,
       turnCompleteGraceMs: 10,
       turnIncompleteWaitMs: 300,
+      turnPunctuatedWaitMs: 40,
+      hesitationHoldMs: 400,
       holdReleaseMs: 100,
+      // Off unless a test turns them on: each is its own subject below.
+      openerLine: "",
+      openerGraceMs: 40,
+      thinkingSounds: [],
+      thinkingAfterMs: 0,
+      quietCheckMs: 0,
     },
     provider,
     inboundProviders: [lab],
@@ -155,7 +173,9 @@ beforeEach(async () => {
       synthesize: async (text) => ({ pcm: new TextEncoder().encode(text), sampleRate: 24_000 }),
       warm: () => void warmed++,
     },
+    prepareToHear: () => void prepared++,
     conversationFor,
+    ensureConversation: (conversation) => order.push(`ensure ${conversation.sessionKey}`),
     policy: {
       permits: (target): Permission =>
         target.kind === "person" && allowed.has(normalizeHandle(target.handle))
@@ -164,7 +184,10 @@ beforeEach(async () => {
     },
     canon: normalizeHandle,
     routeInbound: (key, msg) => routed.push({ key, msg }),
-    fireSystemEvent: (key, text) => events.push({ key, text }),
+    fireSystemEvent: (key, text) => {
+      events.push({ key, text });
+      order.push(`event ${key}`);
+    },
     expediteWakeUps: (key) => expedited.push(key),
     clearForCall: async () => handedOff,
     companions: [{ name: "probe", onEnd: (call) => void ended.push(call) }],
@@ -203,6 +226,14 @@ function hangUp(id: string, handle: string, on: FakeProvider = provider) {
 }
 
 describe("an incoming call", () => {
+  test("the conversation is made reachable before its greeting is asked for", async () => {
+    ring(DANA);
+    await until(() => events.some((e) => e.text.includes("is calling")));
+    const ensured = order.indexOf(`ensure ${dm(DANA)}`);
+    expect(ensured).toBeGreaterThanOrEqual(0);
+    expect(ensured).toBeLessThan(order.indexOf(`event ${dm(DANA)}`));
+  });
+
   test("from someone allowed: answered once the greeting is ready, and spoken into their DM", async () => {
     ring(DANA);
     await until(() => events.some((e) => e.text.includes("is calling")));
@@ -473,6 +504,315 @@ describe("turn-taking", () => {
   });
 });
 
+describe("a call that connects before the opening line is written", () => {
+  // 2026-11-11: he picked up to 10 s of nothing. Incoming calls are answered
+  // at a deadline whether the greeting is ready or not, which was 1.5-4 s of
+  // nothing on most of them.
+  test("says hello into the silence, and the next turn is told it was said", async () => {
+    deps.settings.openerLine = "Hello?";
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000); // answered at the deadline, greeting unwritten
+    expect(provider.said).toEqual([]);
+    connect("in_1", DANA);
+    await until(() => provider.said.length === 1);
+    expect(provider.said[0]!.text).toBe("Hello?");
+    const block = voiceBindingFor(dm(DANA))!.envelopeBlock();
+    expect(block).toContain('the line said "Hello?" first');
+    expect(voiceBindingFor(dm(DANA))!.envelopeBlock()).not.toContain('said "Hello?"'); // told once
+  });
+
+  test("says nothing extra when his own line is ready", async () => {
+    deps.settings.openerLine = "Hello?";
+    ring(DANA);
+    await until(() => events.some((e) => e.text.includes("is calling")));
+    void voiceBindingFor(dm(DANA))!.deliver("Hey Dana, what's up?");
+    await until(() => provider.answered.length === 1);
+    connect("in_1", DANA);
+    await until(() => provider.said.length === 1);
+    await tick(120);
+    expect(provider.said.map((s) => s.text)).toEqual(["Hey Dana, what's up?"]);
+  });
+
+  test("does not say hello over a caller who spoke first", async () => {
+    deps.settings.openerLine = "Hello?";
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listening);
+    provider.emit({ type: "speech", talking: true, atMs: Date.now() });
+    await tick(120);
+    expect(provider.said).toEqual([]);
+  });
+});
+
+describe("while a reply is slow to come", () => {
+  async function onCall() {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listening);
+  }
+  // Exactly as the ear sends a stretch of speech: it started, then its pause
+  // and its words together. It never says they stopped talking (see the ear's
+  // own tests): on the first live calls after this was written, a state that
+  // waited for that kept every sound of thinking and every quiet check from
+  // ever happening.
+  const say = (text: string) => {
+    provider.emit({ type: "speech", talking: true, atMs: Date.now() });
+    provider.emit({ type: "pause", stoppedAtMs: Date.now(), probability: 0.95 });
+    provider.emit({ type: "heard", text, final: true, atMs: Date.now() });
+  };
+
+  test("a sound of thinking is said, then the reply, and the gap is still measured to the reply", async () => {
+    deps.settings.thinkingSounds = ["Hmm."];
+    deps.settings.thinkingAfterMs = 60;
+    const exchanges: Record<string, number | string>[] = [];
+    deps.onExchange = (_call, fields) => exchanges.push(fields);
+    await onCall();
+    say("What should I make for dinner tonight?");
+    await until(() => routed.length === 1);
+    await until(() => provider.said.length === 1, 1_000);
+    expect(provider.said[0]!.text).toBe("Hmm.");
+    expect(exchanges).toEqual([]); // a hmm is not his reply
+
+    const binding = voiceBindingFor(dm(DANA))!;
+    binding.onTurnStarted("t1");
+    binding.onTextDelta("t1", "Tacos. ");
+    await binding.deliver("Tacos.", "t1");
+    binding.onTurnSettled("t1", "delivered");
+    expect(provider.said.map((s) => s.text)).toEqual(["Hmm.", "Tacos."]);
+    expect(exchanges).toHaveLength(1);
+    // Recorded beside the reply, never as it (both can land in one millisecond).
+    expect(Number(exchanges[0]!.aside_ms)).toBeLessThanOrEqual(Number(exchanges[0]!.sound_ms));
+    expect(exchanges[0]!.gap_ms).toBe(exchanges[0]!.sound_ms);
+  });
+
+  test("nothing is said once his words are on their way", async () => {
+    deps.settings.thinkingSounds = ["Hmm."];
+    deps.settings.thinkingAfterMs = 80;
+    await onCall();
+    say("What should I make for dinner tonight?");
+    await until(() => routed.length === 1);
+    const binding = voiceBindingFor(dm(DANA))!;
+    binding.onTurnStarted("t1");
+    binding.onTextDelta("t1", "How about");
+    await tick(400);
+    expect(provider.said).toEqual([]);
+  });
+
+  test("a word or two from them gets no sound of thinking, and neither does a reply that will not come", async () => {
+    deps.settings.thinkingSounds = ["Hmm."];
+    deps.settings.thinkingAfterMs = 60;
+    await onCall();
+    say("Okay, bye.");
+    await until(() => routed.length === 1);
+    await tick(400);
+    expect(provider.said).toEqual([]);
+
+    say("That was everything I wanted to tell you.");
+    await until(() => routed.length === 2);
+    const binding = voiceBindingFor(dm(DANA))!;
+    binding.onTurnStarted("t2");
+    binding.onTurnSettled("t2", "silent"); // he chose to say nothing
+    await tick(400);
+    expect(provider.said).toEqual([]);
+  });
+
+  test("never the same sound twice running", async () => {
+    deps.settings.thinkingSounds = ["Hmm.", "Let's see."];
+    deps.settings.thinkingAfterMs = 60;
+    await onCall();
+    const binding = voiceBindingFor(dm(DANA))!;
+    for (let turn = 1; turn <= 4; turn++) {
+      say("What should I make for dinner tonight?");
+      await until(() => routed.length === turn);
+      await until(() => provider.said.length === turn, 1_000);
+      provider.emit({ type: "spoken", chunkId: provider.said[turn - 1]!.chunkId, played: true });
+      binding.onTurnStarted(`t${turn}`);
+      binding.onTurnSettled(`t${turn}`, "silent");
+    }
+    const sounds = provider.said.map((s) => s.text);
+    for (let i = 1; i < sounds.length; i++) expect(sounds[i]).not.toBe(sounds[i - 1]);
+  });
+});
+
+describe("listening noises", () => {
+  async function talking() {
+    ring(DANA);
+    await until(() => events.some((e) => e.text.includes("is calling")));
+    void voiceBindingFor(dm(DANA))!.deliver("So the plan for Saturday is to leave at eight.");
+    await until(() => provider.answered.length === 1);
+    connect("in_1", DANA);
+    await until(() => provider.said.length === 1); // Edmund is speaking: nothing reported played yet
+  }
+
+  test('"uh-huh" over Edmund does not stop him', async () => {
+    await talking();
+    provider.emit({ type: "heard", text: "Uh huh", final: false, atMs: Date.now() });
+    provider.emit({ type: "heard", text: "Yeah, okay", final: false, atMs: Date.now() });
+    await tick(30);
+    expect(provider.flushes).toBe(0);
+  });
+
+  test("real words over him still do, and so does a single stop", async () => {
+    await talking();
+    provider.emit({ type: "heard", text: "Stop.", final: false, atMs: Date.now() });
+    await until(() => provider.flushes === 1);
+    provider.emit({ type: "heard", text: "no not Saturday", final: false, atMs: Date.now() });
+    await until(() => provider.flushes === 2);
+  });
+
+  test('"yeah" while he is still speaking is not a turn until he has stopped', async () => {
+    await talking();
+    provider.emit({ type: "pause", stoppedAtMs: Date.now(), probability: 0.9 });
+    provider.emit({ type: "heard", text: "Yeah.", final: true, atMs: Date.now() });
+    await tick(200);
+    expect(routed).toEqual([]); // he is mid-sentence: nothing for him to answer yet
+    provider.emit({ type: "spoken", chunkId: provider.said[0]!.chunkId, played: true });
+    await until(() => routed.length === 1, 1_000); // he asked, they answered: it reaches him
+    expect(routed[0]!.msg.text).toBe("Yeah.");
+  });
+
+  test("and it joins what they say next", async () => {
+    await talking();
+    provider.emit({ type: "heard", text: "Yeah.", final: true, atMs: Date.now() });
+    provider.emit({ type: "spoken", chunkId: provider.said[0]!.chunkId, played: true });
+    provider.emit({ type: "speech", talking: true, atMs: Date.now() });
+    provider.emit({ type: "pause", stoppedAtMs: Date.now(), probability: 0.9 });
+    provider.emit({ type: "heard", text: "What time again?", final: true, atMs: Date.now() });
+    await until(() => routed.length === 1);
+    expect(routed[0]!.msg.text).toBe("Yeah. What time again?");
+  });
+});
+
+describe("a call that must not stay live for good", () => {
+  // A live call holds back the daemon's own restart and refuses every other
+  // call, so nothing may leave one "live" with nobody on it.
+  test("answered but never reported connected: given up on, and hung up", async () => {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    expect(manager.current()).not.toBeNull();
+    await until(() => manager.current() === null, 1_500); // dialTimeoutMs after answering
+    expect(provider.hungUp).toEqual(["in_1"]);
+    expect(anyVoiceLive()).toBe(false);
+  });
+
+  test("ends, and lets go of the conversation, even if their last words cannot be handed over", async () => {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listening);
+    deps.routeInbound = () => {
+      throw new Error("pipeline is gone");
+    };
+    provider.emit({ type: "heard", text: "One more thing", final: true, atMs: Date.now() });
+    hangUp("in_1", DANA);
+    await until(() => manager.current() === null);
+    await until(() => ended.length === 1);
+    expect(anyVoiceLive()).toBe(false);
+    expect(voiceBindingFor(dm(DANA))).toBeNull();
+  });
+});
+
+describe("a call gone quiet", () => {
+  async function onCall() {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listening);
+  }
+  const quietEvents = () => events.filter((e) => e.text.includes("It has been quiet"));
+
+  test("Edmund is told, each time after twice as long, and then no more", async () => {
+    deps.settings.quietCheckMs = 60;
+    await onCall();
+    await until(() => quietEvents().length === 1, 1_000);
+    expect(quietEvents()[0]!.key).toBe(dm(DANA));
+    expect(quietEvents()[0]!.text).toContain("end_call");
+    const firstAt = Date.now();
+    await until(() => quietEvents().length === 2, 1_500);
+    expect(Date.now() - firstAt).toBeGreaterThanOrEqual(100); // twice the first wait
+    await until(() => quietEvents().length === 4, 3_000);
+    expect(quietEvents()[3]!.text).toContain("will not be told about the quiet again");
+    await tick(700);
+    expect(quietEvents()).toHaveLength(4);
+  });
+
+  test("not while they are talking or a reply is owed, and their voice starts the count over", async () => {
+    deps.settings.quietCheckMs = 80;
+    await onCall();
+    provider.emit({ type: "speech", talking: true, atMs: Date.now() });
+    await tick(300);
+    expect(quietEvents()).toEqual([]);
+    // The ear never reports that they stopped: the pause is how it says so.
+    provider.emit({ type: "pause", stoppedAtMs: Date.now(), probability: 0.9 });
+    provider.emit({
+      type: "heard",
+      text: "Give me one second here.",
+      final: true,
+      atMs: Date.now(),
+    });
+    await until(() => routed.length === 1);
+    await tick(300); // a reply is owed: the quiet is his, not theirs
+    expect(quietEvents()).toEqual([]);
+    const binding = voiceBindingFor(dm(DANA))!;
+    binding.onTurnStarted("t1");
+    binding.onTurnSettled("t1", "silent");
+    await until(() => quietEvents().length === 1, 1_000);
+  });
+});
+
+describe("a second opinion on the turn detector", () => {
+  async function onCall() {
+    ring(DANA);
+    await until(() => provider.answered.length === 1, 1_000);
+    connect("in_1", DANA);
+    await until(() => provider.listening);
+  }
+  const stretch = (text: string, probability: number) => {
+    provider.emit({ type: "speech", talking: true, atMs: Date.now() });
+    provider.emit({ type: "pause", stoppedAtMs: Date.now(), probability });
+    provider.emit({ type: "heard", text, final: true, atMs: Date.now() });
+  };
+
+  // 2026-11-12: four finished sentences in one call scored 0.03-0.05, and
+  // each waited out the full unfinished-pause time before Edmund could answer.
+  test("scored unfinished but transcribed as a finished sentence: handed over after the short wait", async () => {
+    await onCall();
+    const started = Date.now();
+    stretch("So I think we fixed it.", 0.05);
+    await until(() => routed.length === 1);
+    expect(Date.now() - started).toBeLessThan(200); // not the 300 ms unfinished wait
+  });
+
+  test("scored unfinished and it reads unfinished too: the full wait", async () => {
+    await onCall();
+    stretch("because you kind of have been pausing. Before", 0.02);
+    await tick(200);
+    expect(routed).toEqual([]);
+    await until(() => routed.length === 1, 1_000);
+  });
+
+  test('"uh" is someone about to speak, not a turn: what follows is one message', async () => {
+    await onCall();
+    stretch("Uh", 0.9);
+    await tick(250);
+    expect(routed).toEqual([]);
+    stretch("Try another.", 0.9);
+    await until(() => routed.length === 1);
+    expect(routed[0]!.msg.text).toBe("Uh Try another.");
+  });
+
+  test('"uh" and then nothing is handed over after all, so Edmund can ask', async () => {
+    await onCall();
+    stretch("Uh", 0.9);
+    await tick(250);
+    expect(routed).toEqual([]);
+    await until(() => routed.length === 1, 1_000);
+    expect(routed[0]!.msg.text).toBe("Uh");
+  });
+});
+
 describe("hearing", () => {
   const DEAF = { ok: false as const, detail: "permission undecided" };
 
@@ -604,16 +944,34 @@ describe("an outgoing call", () => {
     });
   }
 
+  // 2026-11-06 and 11-11: Edmund called people he had never texted. They had
+  // no session record, the "it is ringing, write your opening line" wake-up
+  // was skipped for it, and they picked up to silence.
+  test("the conversation is made reachable before its opening line is asked for", async () => {
+    request(FRIEND, dm(DANA));
+    await until(() => events.some((e) => e.text.includes("it is ringing")));
+    const ensured = order.indexOf(`ensure ${dm(FRIEND)}`);
+    expect(ensured).toBeGreaterThanOrEqual(0);
+    expect(ensured).toBeLessThan(order.indexOf(`event ${dm(FRIEND)}`));
+  });
+
   test("writes its opening line while it rings, says it the moment they pick up, and reports back", async () => {
     request(FRIEND, dm(DANA));
     await until(() => provider.dialled.length === 1);
     // Asked for while it rings: the first calls he placed waited for "picked
     // up" and left people saying "hello?" into 3-7 s of silence.
-    await until(() => events.some((e) => e.text.includes("You are calling")));
-    const opener = events.find((e) => e.text.includes("You are calling"))!;
+    await until(() => events.some((e) => e.text.includes("it is ringing")));
+    const opener = events.find((e) => e.text.includes("it is ringing"))!;
     expect(opener.key).toBe(dm(FRIEND));
-    expect(opener.text).toContain("the package arrived");
+    // The call is placed and the reply is the opening line itself: told less,
+    // Edmund called again and narrated what he was doing to the person.
+    expect(opener.text).toContain("You have already placed a call");
+    expect(opener.text).toContain("Do not call facetime_call again");
+    expect(opener.text).toContain('Your note on why you are calling: "the package arrived"');
+    expect(opener.text).toContain("Reply with only the words");
     expect(warmed).toBe(1);
+    // Hearing is loaded while it rings, not when they first speak.
+    expect(prepared).toBe(1);
     const line = voiceBindingFor(dm(FRIEND))!.deliver("Hey, your package arrived.");
     await tick(30);
     expect(provider.said).toEqual([]); // held until they answer
@@ -627,8 +985,30 @@ describe("an outgoing call", () => {
       provider.emit({ type: "spoken", chunkId: s.chunkId, played: true });
     await until(() => provider.hungUp.length === 1);
     await until(() => ended.length === 1);
-    // The person who asked hears how it went.
-    expect(events.some((e) => e.key === dm(DANA) && e.text.includes("ended after"))).toBe(true);
+    // The conversation that asked is told how it went, with what was said:
+    // told only that it ended, it went through the logs to find out.
+    const report = events.find((e) => e.key === dm(DANA) && e.text.includes("ended after"))!;
+    expect(report.text).toContain("What was said:");
+    expect(report.text).toContain("You: Hey, your package arrived.");
+    // And the call's own conversation is told not to report from there,
+    // where anything it sends goes to the person it called.
+    const after = events.find((e) => e.key === dm(FRIEND) && e.text.includes("ended after"))!;
+    expect(after.text).toContain("has been given what was said");
+    expect(after.text).toContain(`goes to ${FRIEND}`);
+  });
+
+  test("on a call another conversation asked for, he is told there is nothing to report", async () => {
+    request(FRIEND, dm(DANA));
+    await until(() => voiceBindingFor(dm(FRIEND)) !== null);
+    expect(voiceBindingFor(dm(FRIEND))!.envelopeBlock()).toContain(
+      "another conversation asked you to",
+    );
+  });
+
+  test("on a call he was asked for by the person themselves, nothing about reporting", async () => {
+    request(FRIEND);
+    await until(() => voiceBindingFor(dm(FRIEND)) !== null);
+    expect(voiceBindingFor(dm(FRIEND))!.envelopeBlock()).not.toContain("another conversation");
   });
 
   test("connected to anyone else, it hangs up at once and alerts", async () => {

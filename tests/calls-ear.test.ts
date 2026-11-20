@@ -206,3 +206,34 @@ describe("Ear", () => {
     expect(pause?.type === "pause" && Math.abs(pause.stoppedAtMs - 1_875) < 100).toBe(true);
   });
 });
+
+describe("what the ear does not say", () => {
+  // The call manager used to wait for `talking: false` to know the caller had
+  // stopped. The ear has never sent it: a pause, and the words with it, are
+  // how it says so. Pinned here so the manager's tests can rely on it.
+  test("it reports that someone started talking and never that they stopped", async () => {
+    const events: ProviderEvent[] = [];
+    const ear = new Ear({
+      transcribe: async () => ({ text: "hello there" }),
+      turnVerdict: async () => 0.9,
+      emit: (event) => events.push(event),
+    });
+    const noise = (ms: number) => {
+      const out = new Int16Array(ms * 16);
+      for (let i = 0; i < out.length; i++) out[i] = Math.round((Math.random() * 2 - 1) * 5_000);
+      return out;
+    };
+    ear.begin();
+    for (let round = 0; round < 3; round++) {
+      ear.feed(new Int16Array(300 * 16));
+      ear.feed(noise(600));
+      ear.feed(new Int16Array(600 * 16));
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    ear.end();
+    const speech = events.filter((e) => e.type === "speech");
+    expect(speech.length).toBeGreaterThanOrEqual(3);
+    expect(speech.every((e) => e.type === "speech" && e.talking)).toBe(true);
+    expect(events.filter((e) => e.type === "pause").length).toBeGreaterThanOrEqual(3);
+  });
+});

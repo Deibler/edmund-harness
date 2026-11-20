@@ -35,6 +35,8 @@ export type PageCheck = {
   screens: Buffer[];
   /** The page's full height in CSS pixels at phone width, when measured. */
   pageHeight: number | null;
+  /** How much is on the page, when it rendered. */
+  density: Density | null;
 };
 
 /** Emoji as people see them: emoji-by-default characters, or any symbol forced to emoji. */
@@ -80,13 +82,33 @@ const MEASURE = `(() => {
     const clip = s.backgroundClip || s.webkitBackgroundClip || "";
     if (clip.includes("text") && s.backgroundImage.includes("gradient")) gradients.push(label(el));
   }
+  const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+  const count = (sel) => Array.from(document.querySelectorAll(sel)).filter(shown).length;
+  let chars = 0;
+  let small = 0;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = n.textContent.trim();
+    const el = n.parentElement;
+    if (!t || !el || !shown(el) || el.closest("script,style")) continue;
+    chars += t.length;
+    if (parseFloat(getComputedStyle(el).fontSize) < 14) small += t.length;
+  }
+  const body = (document.body.innerText || "").trim();
   return {
-    text: (document.body.innerText || "").trim(),
+    text: body,
     title: document.title || "",
     scrollWidth: document.documentElement.scrollWidth,
     innerWidth: window.innerWidth,
     stripes: stripes.slice(0, 3),
     gradients: gradients.slice(0, 3),
+    density: {
+      headings: count("h1,h2,h3"),
+      controls: count('button,input,select,textarea,a[href],[role="slider"],[role="tab"],[role="radio"],[role="switch"],[role="checkbox"]'),
+      hedges: (body.match(/approximate|approx\\.|not a forecast|not computed|general guidance|rounded|estimated?\\b/gi) || []).length,
+      words: body.split(/\\s+/).filter(Boolean).length,
+      smallTextShare: chars ? Math.round((100 * small) / chars) : 0,
+    },
   };
 })()`;
 
@@ -106,6 +128,65 @@ type Measure = {
   innerWidth: number;
   stripes: string[];
   gradients: string[];
+  density: Density;
+};
+
+/**
+ * Past these a page is refused as noisy. They match the "limit" column of
+ * DESIGN.md's Restraint table; its targets are lower. Measured on the first
+ * real build (2026-11-03), which read as noisy: 7 screens, 10 headings, 52
+ * controls, 959 words, 8 disclaimers, 49% of its text under 14px.
+ */
+export const DENSITY_LIMITS = {
+  screens: 4,
+  headings: 6,
+  controls: 20,
+  words: 600,
+  hedges: 2,
+  smallTextShare: 25,
+} as const;
+
+/** The density limits a page breaks, each as a problem the builder can act on. */
+export function densityProblems(d: Density, pageHeight: number | null): string[] {
+  const L = DENSITY_LIMITS;
+  const out: string[] = [];
+  const screens = pageHeight ? Math.ceil(pageHeight / VIEW.height) : 0;
+  if (screens > L.screens)
+    out.push(
+      `the page is ${screens} phone screens long; the limit is ${L.screens}. Keep the centerpiece and cut what competes with it (DESIGN.md, Restraint).`,
+    );
+  if (d.headings > L.headings)
+    out.push(
+      `${d.headings} headings; the limit is ${L.headings}. Fewer sections: build only what the brief asks for.`,
+    );
+  if (d.controls > L.controls)
+    out.push(
+      `${d.controls} controls (buttons, inputs, links, sliders, toggles); the limit is ${L.controls}. One row of presets at most; use a select for long lists.`,
+    );
+  if (d.words > L.words)
+    out.push(`${d.words} words; the limit is ${L.words}. Say less; let the tool show it.`);
+  if (d.hedges > L.hedges)
+    out.push(
+      `${d.hedges} disclaimers ("approximate", "not a forecast"...); the limit is ${L.hedges}. Say it once, in the footnote.`,
+    );
+  if (d.smallTextShare > L.smallTextShare)
+    out.push(
+      `${d.smallTextShare}% of the text is under 14px; the limit is ${L.smallTextShare}%. Set body text at 15 to 17px; keep small text for axis labels and the footnote.`,
+    );
+  return out;
+}
+
+/** How much is on the page, for judging noise. */
+export type Density = {
+  /** Visible h1–h3. */
+  headings: number;
+  /** Visible buttons, inputs, links, sliders, tabs, toggles. */
+  controls: number;
+  /** Disclaimers: "approximate", "not a forecast", "rounded"… */
+  hedges: number;
+  words: number;
+  /** Percent of the visible text set below 14px. */
+  smallTextShare: number;
 };
 
 /** One headless Chrome, reused across checks (a test checks several pages). */
@@ -172,6 +253,7 @@ export class PageChecker {
     let screenshot: Buffer | null = null;
     const screens: Buffer[] = [];
     let pageHeight: number | null = null;
+    let density: Density | null = null;
     try {
       const target = (await (
         await fetch(`http://127.0.0.1:${this.port}/json/new?about:blank`, { method: "PUT" })
@@ -230,6 +312,7 @@ export class PageChecker {
         result?: { value?: Measure };
       };
       const m = res.result?.value;
+      density = m?.density ?? null;
       if (!m) {
         seen.push("the page could not be measured; it may have crashed while rendering.");
       } else {
@@ -265,6 +348,7 @@ export class PageChecker {
         cssContentSize?: { height?: number };
       };
       pageHeight = Math.ceil(metrics.cssContentSize?.height ?? 0) || null;
+      if (density) seen.push(...densityProblems(density, pageHeight));
       if (opts.allScreens && pageHeight) {
         for (let y = 0; y < pageHeight && screens.length < MAX_SCREENS; y += VIEW.height) {
           const part = (await cdp("Page.captureScreenshot", {
@@ -290,7 +374,7 @@ export class PageChecker {
       server.stop(true);
     }
     const all = [...problems, ...new Set(seen)];
-    return { ok: all.length === 0, problems: all, screenshot, screens, pageHeight };
+    return { ok: all.length === 0, problems: all, screenshot, screens, pageHeight, density };
   }
 }
 

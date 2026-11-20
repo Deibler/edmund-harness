@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { PageChecker, findEmoji, staticProblems } from "../src/ideation/page-check.ts";
+import {
+  DENSITY_LIMITS,
+  type Density,
+  PageChecker,
+  densityProblems,
+  findEmoji,
+  staticProblems,
+} from "../src/ideation/page-check.ts";
 
 /**
  * One good page and one page per defect, each differing from the good one in
@@ -58,6 +65,43 @@ describe("findEmoji", () => {
   });
 });
 
+describe("densityProblems", () => {
+  const L = DENSITY_LIMITS;
+  const atLimit: Density = {
+    headings: L.headings,
+    controls: L.controls,
+    words: L.words,
+    hedges: L.hedges,
+    smallTextShare: L.smallTextShare,
+  };
+  const tall = L.screens * 844;
+
+  test("a page at every limit is let through", () => {
+    expect(densityProblems(atLimit, tall)).toEqual([]);
+  });
+
+  test("one past any limit is refused, for that reason alone", () => {
+    const past: Array<[Partial<Density>, number, string]> = [
+      [{}, tall + 1, "phone screens long"],
+      [{ headings: L.headings + 1 }, tall, "headings"],
+      [{ controls: L.controls + 1 }, tall, "controls"],
+      [{ words: L.words + 1 }, tall, "words"],
+      [{ hedges: L.hedges + 1 }, tall, "disclaimers"],
+      [{ smallTextShare: L.smallTextShare + 1 }, tall, "under 14px"],
+    ];
+    for (const [over, height, reason] of past) {
+      const p = densityProblems({ ...atLimit, ...over }, height);
+      expect(p).toHaveLength(1);
+      expect(p[0]).toContain(reason);
+    }
+  });
+
+  test("the first real build, which read as noisy, breaks every limit", () => {
+    const v1: Density = { headings: 10, controls: 52, words: 959, hedges: 8, smallTextShare: 49 };
+    expect(densityProblems(v1, 5650)).toHaveLength(6);
+  });
+});
+
 describe.skipIf(!PageChecker.available())("PageChecker, in headless Chrome", () => {
   let checker: PageChecker;
   // Launching Chrome can take well past the default 5 s hook limit on a
@@ -111,6 +155,32 @@ describe.skipIf(!PageChecker.available())("PageChecker, in headless Chrome", () 
   test("sideways scrolling on a phone fails it", async () => {
     const r = await check(page({ body: '<div style="width:800px">A wide table</div>' }));
     expect(r.problems.join("\n")).toContain("scrolls sideways");
+  }, 20_000);
+
+  test("the good page is measured as quiet", async () => {
+    const r = await check(page());
+    expect(r.density).not.toBeNull();
+    expect(r.density?.controls).toBe(0);
+    expect(r.density?.hedges).toBe(0);
+    expect(r.density?.headings).toBe(1);
+    expect(r.density?.smallTextShare).toBe(0);
+  }, 20_000);
+
+  test("a crowded page fails for what crowds it", async () => {
+    const buttons = Array.from({ length: 25 }, (_, i) => `<button>Spot ${i}</button>`).join("");
+    const crowded = await check(page({ body: buttons }));
+    expect(crowded.ok).toBe(false);
+    expect(crowded.problems.join("\n")).toContain("25 controls");
+
+    const hedged = await check(
+      page({
+        body: "<p>Times are approximate.</p><p>Not a forecast.</p><p>Distances are rounded.</p>",
+      }),
+    );
+    expect(hedged.problems.join("\n")).toContain("3 disclaimers");
+
+    const tiny = await check(page({ style: "main{font-size:12px}" }));
+    expect(tiny.problems.join("\n")).toContain("under 14px");
   }, 20_000);
 
   test("a left accent border fails it", async () => {

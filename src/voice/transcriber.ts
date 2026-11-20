@@ -7,8 +7,15 @@
  * keeps "heard nothing" ("") apart from "could not tell" (null), because the
  * first is a cough and the second is a person who must be asked again.
  *
- * Started with the call runtime and kept resident (~0.9 GB): a model loaded
- * when someone starts talking is a pause they hear.
+ * Loaded when a call starts ringing and kept for as long as calls keep
+ * coming, then let go. It was resident at first, on the reasoning that a
+ * model loaded when someone starts talking is a pause they hear. But it holds
+ * 1.5-2.6 GB of a 16 GB Mac for the few minutes a day anyone is on a call,
+ * which kept the daemon at its memory limits (3-5 restarts and ~100 worker
+ * evictions a day from 2026-10-30), and resident did not mean ready: swapped
+ * out, it missed its 3 s deadline three times on one call (2026-11-07).
+ * Loading takes 1.8 s; the shortest ring so far was 3.6 s, and the load is
+ * also what pages it in.
  */
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
@@ -35,6 +42,7 @@ export class Transcriber {
   private buffer = "";
   private sequence = 0;
   private readonly pending = new Map<string, Pending>();
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly options: {
@@ -43,6 +51,10 @@ export class Transcriber {
       model?: string;
       /** Longest a boot may take before requests stop waiting for it. */
       bootMs?: number;
+      /** Quiet time after which the model is unloaded; absent keeps it loaded. */
+      idleUnloadMs?: number;
+      /** While this is true (a call is live) it is never unloaded, however quiet. */
+      inUse?: () => boolean;
     },
   ) {}
 
@@ -55,11 +67,38 @@ export class Transcriber {
   start(): Promise<boolean> {
     if (this.stopped || !this.installed()) return Promise.resolve(false);
     this.booted ??= this.spawn();
+    this.armIdleUnload();
     return this.booted;
+  }
+
+  /** Measured from the last request, and never while a call is live. */
+  private armIdleUnload(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    const idleMs = this.options.idleUnloadMs;
+    if (!idleMs || this.stopped) return;
+    const timer = setTimeout(() => {
+      this.idleTimer = null;
+      const proc = this.proc;
+      if (!proc) return;
+      if (this.pending.size > 0 || this.options.inUse?.()) {
+        this.armIdleUnload();
+        return;
+      }
+      log.info("transcriber", "unloaded", { idle_min: Math.round(idleMs / 60_000) });
+      // Cleared first, so the exit is not taken for a crash.
+      this.proc = null;
+      this.booted = null;
+      proc.kill();
+    }, idleMs);
+    timer.unref?.();
+    this.idleTimer = timer;
   }
 
   stop(): void {
     this.stopped = true;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
     this.proc?.kill();
     this.proc = null;
     this.booted = null;

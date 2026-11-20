@@ -9,6 +9,8 @@ import { type SessionKey, chatIdFromKey } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import { getSpendLedger, recordSpend } from "../spend/ledger.ts";
 import { easternDate, easternDateTime } from "../util/clock.ts";
+import { repliedBetween } from "./delivery.ts";
+import { dailyGate, pageGate } from "./pacing.ts";
 import { verifyRecurrence } from "./recurrence.ts";
 import { type IdeationStore, type InterestThread, threadKey } from "./store.ts";
 
@@ -29,8 +31,6 @@ export const WINDOW_DAYS = 30;
 export const MIN_DAYS = 3;
 /** Not the same thread twice in this long. */
 export const THREAD_COOLDOWN_DAYS = 21;
-/** One build per person in this long. */
-export const PERSON_COOLDOWN_DAYS = 7;
 const DAY = 86_400_000;
 const MODEL_TIMEOUT_MS = 300_000;
 /** Above this the transcript is cut: replies first, then the oldest lines. */
@@ -183,11 +183,12 @@ You get a month of their conversation. Their messages are numbered (#row). Edmun
 2. CANDIDATES. Up to three, best first, each for a thread that came up on several separate days. A good candidate:
    - is interactive: an explorer, a simulator, a planner, a map, a calculator, a practice tool, a tracker;
    - is made from THEIR material: the questions they asked, the places they named, the numbers and photos already in the conversation;
-   - would get opened twice, and shows them something Edmund can do that they have not thought to ask for.
+   - would get opened twice, and shows them something Edmund can do that they have not thought to ask for;
+   - is ONE thing: a single centerpiece that answers the question underneath the thread better than any text could. Not a tour of everything they asked. A thread with five questions gets the page for the one that matters most, and the other four are left out.
    Not a summary of the replies, not a document, not a list of links, not a shopping comparison. If nothing deserves a page, give no candidates and say why.
 
    title: what it is called, at most a few words. pitch: one sentence, what it is. why: why it goes past what the text replies already gave them, naming the thread's days.
-   brief: for a web developer who has never seen the chat. Say what to build: sections, interactions, what is computed in the page (sun times, distances, costs) and what is baked in. List the specific facts, places, numbers and dates from the conversation it must use. Say what is unverified and must be labelled so. Carry the person's own rules that matter (from their notes). No phone numbers, emails, street addresses, or other people's private details.
+   brief: for a web developer who has never seen the chat. Describe the one centerpiece: what it shows, the one or two things they do with it, and what is computed in the page (sun times, distances, costs) versus baked in. At most one small supporting piece, and only if the centerpiece is weaker without it. Then a line "Leave out:" naming the tempting extras that would crowd it. List the specific facts, places, numbers and dates from the conversation it must use. Say which numbers are approximate (the page says so once, in a footnote, not beside every figure). Carry the person's own rules that matter (from their notes). No phone numbers, emails, street addresses, or other people's private details.
 
 3. Pages already built are listed. Do not propose a thread built in the last three weeks.
 
@@ -225,6 +226,26 @@ export function parseIdeatorOutput(raw: string): IdeatorOutput | null {
   return "out" in r ? r.out : null;
 }
 
+/**
+ * `reason` only explains the choice; nothing decides on it. Seen live
+ * (2026-11-03): the model put it inside its one candidate, both attempts,
+ * and an otherwise good answer was thrown away. A misplaced reason is
+ * lifted to the top, and a missing one becomes empty, so the decision
+ * fields alone decide whether an answer is usable.
+ */
+function liftReason(json: unknown): unknown {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return json;
+  const o = json as Record<string, unknown>;
+  if (typeof o.reason === "string") return o;
+  const nested = Array.isArray(o.candidates)
+    ? o.candidates.find(
+        (c): c is { reason: string } =>
+          !!c && typeof c === "object" && typeof (c as { reason?: unknown }).reason === "string",
+      )?.reason
+    : undefined;
+  return { ...o, reason: (nested ?? "").slice(0, 1500) };
+}
+
 /** The parsed answer, or what is wrong with it in words the model can fix. */
 export function readIdeatorOutput(raw: string): { out: IdeatorOutput } | { error: string } {
   const start = raw.indexOf("{");
@@ -236,7 +257,7 @@ export function readIdeatorOutput(raw: string): { out: IdeatorOutput } | { error
   } catch (err) {
     return { error: `the JSON does not parse (${(err as Error).message})` };
   }
-  const r = Output.safeParse(json);
+  const r = Output.safeParse(liftReason(json));
   if (r.success) return { out: r.data };
   const issues = r.error.issues
     .slice(0, 5)
@@ -330,9 +351,15 @@ export function mayRun(
   sessionKey: SessionKey,
   nowMs: number,
 ): { ok: true } | { ok: false; why: string } {
-  const recent = deps.store.buildsSince(sessionKey, nowMs - PERSON_COOLDOWN_DAYS * DAY);
-  if (recent > 0)
-    return { ok: false, why: `built for them in the last ${PERSON_COOLDOWN_DAYS} days` };
+  // How often one person gets a page (src/ideation/pacing.ts), then how many
+  // anyone gets today, then money.
+  const guids = chatGuidsForSession(sessionKey, deps.chatDb, deps.contacts);
+  const pace = pageGate(deps.store.listForSession(sessionKey), nowMs, (from, to) =>
+    repliedBetween(deps.chatDb, guids, from, to),
+  );
+  if (!pace.ok) return pace;
+  const today = dailyGate(deps.store.allBuildsSince(nowMs - DAY));
+  if (!today.ok) return today;
   const spent = weeklyIdeationSpend(deps.config.paths.data_dir, nowMs);
   if (spent >= deps.config.ideation.weekly_budget_usd) {
     return {
@@ -373,7 +400,7 @@ export async function runIdeator(
   const person = readPersonFile(handle);
   const built = deps.store
     .listForSession(sessionKey)
-    .filter((i) => i.createdMs <= nowMs && i.status !== "failed")
+    .filter((i) => i.createdMs <= nowMs && i.status !== "failed" && i.status !== "withdrawn")
     .map((i) => ({
       title: i.title,
       thread: i.thread,

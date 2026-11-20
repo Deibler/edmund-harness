@@ -186,6 +186,16 @@ export class CallStore {
     return row ? toRecord(row) : null;
   }
 
+  /** The call that has not ended, in whichever conversation, if any. */
+  anyLiveCall(): CallRecord | null {
+    const row = this.db
+      .query<CallRow, []>(
+        "SELECT * FROM calls WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+      )
+      .get();
+    return row ? toRecord(row) : null;
+  }
+
   /** Sets the voice for the rest of a call; false once the call has ended. */
   setVoice(id: string, voice: string | null): boolean {
     return (

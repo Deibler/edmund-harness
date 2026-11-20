@@ -302,7 +302,7 @@ export class ResourceGovernor {
         this.options.restartOnHardLimit
       ) {
         if (busy) {
-          action = "hard limit restart deferred until active turns finish";
+          action = "hard limit restart deferred until active turns and calls finish";
           this.deps.log("error", `[resources] ${action}`);
         } else {
           restartReason =

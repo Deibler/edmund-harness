@@ -12,7 +12,9 @@ Measured on this Mac (M4, 2026-10-30), Kokoro speech in six voices, clean
 and at 15 dB SNR: 1.5% / 2.2% word error, 146 ms median per utterance
 (0.05x real time), nothing at all on noise-only clips (white, pink, hum,
 breath, clicks, a cough), where Whisper base.en and small.en wrote "You".
-~0.9 GB resident.
+1.5-1.7 GB of footprint while loaded (the model is 1.27 GB), and 1.8 s to
+load and warm, which is why the daemon loads it when a call starts ringing
+and lets it go once calls have been quiet for a while.
 
 One-word replies are the weak spot, for every engine tried: on 80 synthetic
 "Yes." / "No." / "Okay." clips, 11 came back wrong or empty. Padding moves it
@@ -42,6 +44,7 @@ import numpy as np  # noqa: E402
 RATE = 16_000
 MODEL = "mlx-community/parakeet-tdt-0.6b-v2"
 PAD = np.zeros(RATE, dtype=np.float32)
+CACHE_LIMIT_BYTES = 256 * 1024 * 1024
 
 
 def _emit(payload):
@@ -65,6 +68,14 @@ def main():
 
         # The first pass compiles the Metal kernels; pay it before anyone talks.
         transcribe(np.zeros(RATE, dtype=np.float32))
+        # MLX keeps every buffer it has freed for reuse, without limit by
+        # default: the fp32 weights it cast from stay cached after loading
+        # (0.76 GB), and each new clip length adds more (1.3 GB after six
+        # clips). Measured 2026-11-12: 2.1-2.6 GB footprint for a 1.27 GB
+        # model. Capped at 256 MB it holds 1.5-1.7 GB and transcribes exactly
+        # as fast (100-223 ms a clip either way).
+        mx.set_cache_limit(CACHE_LIMIT_BYTES)
+        mx.clear_cache()
     except Exception as err:  # noqa: BLE001 - reported to the parent
         _emit({"id": "boot", "ok": False, "error": str(err)})
         return 1

@@ -26,12 +26,31 @@ import type { SmsStore } from "./store.ts";
  * without waiting hours.
  */
 
-/** Twilio US SMS outbound per segment + typical carrier passthrough. */
-const EST_OUT_SMS_SEGMENT = 0.0079 + 0.003;
+// Twilio's published US long-code rates (twilio.com/en-us/sms/pricing/us,
+// read 2026-11-03) plus a typical carrier pass-through from the same page:
+// SMS $0.0083 per segment each way; MMS $0.022 out and $0.0165 in; carrier
+// fees about $0.0035-0.005 per SMS and $0.009-0.01 per MMS. The reconciler
+// replaces every estimate with Twilio's posted price, so these only steer the
+// live log line.
+/** Outbound SMS, per segment. */
+const EST_OUT_SMS_SEGMENT = 0.0083 + 0.004;
 /** Inbound SMS. */
-const EST_IN_SMS = 0.0075;
-/** Inbound MMS (how group-text messages arrive) + carrier fee. */
-const EST_IN_MMS = 0.01 + 0.005;
+const EST_IN_SMS = 0.0083 + 0.003;
+/** Inbound MMS (how every group-text message arrives) + carrier fee. */
+const EST_IN_MMS = 0.0165 + 0.0095;
+
+/**
+ * One group reply to one recipient. Measured on the live account
+ * (2026-11-03, 212 priced group sends): every one cost $0.022, the MMS rate,
+ * from 0 to 456 characters, even though the fan-out records carry SM sids
+ * and a segment count of 1; carrier fees averaged $0.0083 on top. Length does
+ * not enter into it, so the estimate takes recipients, not segments.
+ */
+const EST_OUT_GROUP_PER_RECIPIENT = 0.022 + 0.0083;
+
+export function estimateGroupOutboundUsd(recipients: number): number {
+  return Math.max(1, recipients) * EST_OUT_GROUP_PER_RECIPIENT;
+}
 
 export function estimateOutboundUsd(segments: number): number {
   return Math.max(1, segments) * EST_OUT_SMS_SEGMENT;

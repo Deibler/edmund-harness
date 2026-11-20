@@ -9,7 +9,7 @@ import {
   pendingToInbound,
   splitSeenMidTurn,
 } from "../bridge/session-queue.ts";
-import { isVoiceLive, voiceBindingFor } from "../calls/binding.ts";
+import { isVoiceLive, spokenSessionFor, voiceBindingFor } from "../calls/binding.ts";
 import { contextTokens, shouldCompact } from "../claude/auto-compact.ts";
 import { envelopeNeedsBrowser } from "../claude/mcp-config.ts";
 import { takeSeenMidTurn } from "../claude/mid-turn.ts";
@@ -20,6 +20,7 @@ import type { CronStore } from "../cron/store.ts";
 import type { GuestGateContext } from "../gating/allowlist.ts";
 import { gateInbound, isAssistantMentioned, stripMention } from "../gating/allowlist.ts";
 import { isOwnHandle } from "../gating/reflection.ts";
+import { grokTurnOf, isGrokAnyInbound } from "../grok/session.ts";
 import {
   capDeclineText,
   checkGuestCaps,
@@ -180,6 +181,9 @@ export function passesGroupRegate(
   untranscribed = 0,
 ): boolean {
   if (messages.some((m) => m.unnamedWake)) return true;
+  // A Grok connector message (a Bot's report, woken into the group it was asked
+  // from) is the system waking Edmund, not a person who might not mean him.
+  if (messages.some(isGrokAnyInbound)) return true;
   if (untranscribed > 0) return true;
   return isAssistantMentioned([...messages.map((m) => m.text), ...transcripts].join("\n"), names);
 }
@@ -464,6 +468,16 @@ async function handleBatchInner(
   // mirrorTurn: a call that ends mid-turn makes the binding answer
   // "unavailable", and the reply goes out as a text instead.
   const callVoice = voiceBindingFor(key);
+  // Grok connector requests ride in this session beside ordinary texts, so what
+  // to do with a reply is decided from THIS batch, never from the session:
+  // `grokTurn` names the requests that may be waiting on the line, and says
+  // whether a real iMessage is owed the reply as well. A parked text folded into
+  // a later pass of the turn flips that (see the fold below). Undefined for a
+  // turn of ordinary texts, which is then delivered exactly as it always was.
+  const grokTurn = grokTurnOf(batch);
+  // Only a spoken request is read on the line, so only it hides the typing bubble:
+  // a tell_edmund / report_to_edmund reply is a text, and the owner may watch for it.
+  const grokOnly = grokTurn?.spoken === true && !grokTurn.alsoText;
 
   const session = state.getSession(key);
   const stale = isSessionStale(session, config.behavior.session_idle_hours);
@@ -660,7 +674,7 @@ async function handleBatchInner(
   const typing =
     // SMS has no typing-indicator concept and the TypingSession target would
     // be a synthetic `sms:` guid the iMessage bridge cannot resolve.
-    config.behavior.auto_typing && !mirrorTurn && !callVoice && !isSmsSession(key)
+    config.behavior.auto_typing && !mirrorTurn && !callVoice && !isSmsSession(key) && !grokOnly
       ? new TypingSession({
           isGroup,
           // The GUID the message arrived on, for DMs as much as groups: a bare
@@ -727,6 +741,11 @@ async function handleBatchInner(
   // choke point below — every reply path funnels through sendDeliver, so
   // there is exactly one place that can observe whether it was mentioned.
   let pendingOffer: Offer | null = null;
+  // A page Edmund made this person, waiting for a natural moment to give it
+  // (src/ideation/settle.ts). It takes the turn's one offer slot, and is
+  // dropped once a reply carries its link so a folded-in follow-up in the
+  // same turn is not offered it again.
+  let heldPage: { id: string; block: string } | null = null;
 
   // Replies are plain (un-threaded) by default; callers pass an explicit
   // anchor when the model opted into threading for that reply.
@@ -749,7 +768,9 @@ async function handleBatchInner(
         chatGuid: first.chatGuid,
         replyTo: isGroup && threadAnchor ? threadAnchor : undefined,
         turnId: mirrorTurn || callVoice ? modelTurn.id : undefined,
-        sessionKey: key,
+        // Spoken only if this turn began on the call (calls/binding.ts).
+        sessionKey: spokenSessionFor(key, callVoice),
+        grok: grokTurn,
       },
       config,
       echoes,
@@ -761,6 +782,7 @@ async function handleBatchInner(
     if (pendingOffer && delivery.sent > 0) {
       if (confirmDelivery(key, pendingOffer, text, announceDeps)) pendingOffer = null;
     }
+    if (heldPage && delivery.sent > 0 && text.includes(`/i/${heldPage.id}`)) heldPage = null;
     if (delivery.errors.length > 0)
       log.error("send", "delivery errors", {
         session: key,
@@ -1163,6 +1185,7 @@ async function handleBatchInner(
       contacts: isGroup ? contacts : undefined,
       historyLines: historyBundle.lines,
       historyScope: historyBundle.scope,
+      grokNote: grokTurn ? config.grok?.caller_note : undefined,
       invocation: historyBundle.invocation,
       // On a recovery catch-up turn, replace the routine pile-up nudge with the stronger
       // "you were offline — review like a person, reply once or stay silent" framing.
@@ -1194,8 +1217,12 @@ async function handleBatchInner(
     // Offer at most one capability per turn, and only on the first model
     // iteration: a tool-using turn loops through here several times, and
     // re-picking would spend several chances on one conversation.
-    if (iter === 0 && !guest) pendingOffer = pickOffer(key, announceDeps);
-    const withAnnouncement = pendingOffer ? `${baseEnvelope}\n${pendingOffer.block}` : baseEnvelope;
+    if (iter === 0 && !guest) {
+      heldPage = deps.ideationObserver?.heldPageBlock(key) ?? null;
+      pendingOffer = heldPage ? null : pickOffer(key, announceDeps);
+    }
+    const offerBlock = heldPage?.block ?? pendingOffer?.block;
+    const withAnnouncement = offerBlock ? `${baseEnvelope}\n${offerBlock}` : baseEnvelope;
     const withMirror = isMirrorSession(key)
       ? `${withAnnouncement}\n${
           (
@@ -1522,6 +1549,8 @@ async function handleBatchInner(
         prevFoldedMax = foldedMax;
         messages = parked.map((e) => pendingToInbound(e, first));
         foldedMax = Math.max(foldedMax, ...messages.map((m) => m.rowId));
+        // A parked text is a real iMessage: the reply now answers it too.
+        if (grokTurn && messages.some((m) => !isGrokAnyInbound(m))) grokTurn.alsoText = true;
         continue;
       }
     }

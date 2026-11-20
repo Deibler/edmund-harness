@@ -1,7 +1,9 @@
 /**
- * Edmund's call voice, as tuned in the voice lab: which Kokoro voice (or a
- * blend of them) and how fast. Every call reads it at each sentence, so a
- * change is heard from the next sentence on, on FaceTime as in the lab.
+ * Edmund's call voice, as tuned in the voice lab: which voice and how fast.
+ * A voice is Kokoro's ("bm_daniel", or a blend of several) or one from
+ * Phonon's catalog ("phonon:Micah"); the name says which engine speaks it.
+ * Every call reads it at each sentence, so a change is heard from the next
+ * sentence on, on FaceTime as in the lab.
  *
  * A file in the data dir rather than config.toml: the lab writes it, and a
  * program rewriting the operator's hand-edited config is how comments and
@@ -13,18 +15,40 @@ import { dirname } from "node:path";
 import { log } from "../util/log.ts";
 
 export type VoiceSettings = {
-  /** A Kokoro voice ("bm_daniel") or a blend ("bm_daniel:0.7,am_michael:0.3"). */
+  /**
+   * A Kokoro voice ("bm_daniel"), a blend of them
+   * ("bm_daniel:0.7,am_michael:0.3"), or a Phonon voice ("phonon:Micah").
+   */
   voice: string;
-  /** Kokoro's speed, 0.5-2.0. */
+  /** How fast, 0.5-2.0: 1 is the voice's own pace. */
   speed: number;
 };
 
 const NAME = "[a-z]{2}_[a-z]+";
 const WEIGHT = "(?::(?:\\d+(?:\\.\\d+)?|\\.\\d+))?";
-const VOICE = new RegExp(`^${NAME}${WEIGHT}(?:,${NAME}${WEIGHT})*$`);
+const KOKORO = new RegExp(`^${NAME}${WEIGHT}(?:,${NAME}${WEIGHT})*$`);
+/** Phonon's catalog names are people's and characters': "Micah", "Elodie-Rose", "Old Mortlake". */
+const PHONON_PREFIX = "phonon:";
+const PHONON = /^phonon:\p{L}[\p{L} '-]*$/u;
 
-/** The voice names a setting uses. */
+export type VoiceEngine = "kokoro" | "phonon";
+
+/** Which engine speaks a voice. */
+export function engineOf(voice: string): VoiceEngine {
+  return voice.startsWith(PHONON_PREFIX) ? "phonon" : "kokoro";
+}
+
+/** A Phonon catalog name as a voice setting, and back. */
+export function phononVoice(name: string): string {
+  return `${PHONON_PREFIX}${name}`;
+}
+export function phononName(voice: string): string {
+  return voice.slice(PHONON_PREFIX.length);
+}
+
+/** The voice names a setting uses: a blend's parts, or the one Phonon voice. */
 export function voiceNames(voice: string): string[] {
+  if (engineOf(voice) === "phonon") return [voice];
   return voice.split(",").map((part) => part.split(":")[0]!);
 }
 
@@ -33,10 +57,11 @@ export function validVoiceSettings(
   value: unknown,
 ): { ok: true; settings: VoiceSettings } | { ok: false; error: string } {
   const v = value as Partial<VoiceSettings> | null;
-  if (!v || typeof v.voice !== "string" || !VOICE.test(v.voice))
+  if (!v || typeof v.voice !== "string" || !(KOKORO.test(v.voice) || PHONON.test(v.voice)))
     return {
       ok: false,
-      error: "voice must be a Kokoro voice name or a blend like a_b:0.7,c_d:0.3",
+      error:
+        "voice must be a Kokoro voice name, a blend like a_b:0.7,c_d:0.3, or a Phonon voice like phonon:Micah",
     };
   if (typeof v.speed !== "number" || !(v.speed >= 0.5 && v.speed <= 2))
     return { ok: false, error: "speed must be between 0.5 and 2" };

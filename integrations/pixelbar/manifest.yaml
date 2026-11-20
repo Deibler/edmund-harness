@@ -1,0 +1,44 @@
+name: pixelbar
+display_name: Pixel Bar
+version: 1.0.0
+description: >-
+  The 32 x 8 LED bar on the desk: shows what Edmund is doing as a status
+  light, short text, a progress bar or a small picture, starts a countdown,
+  and switches the bar's mode or scene. The bar enforces its own limits
+  (brightness is the knob's, one change every 350 ms, content expires, a
+  person can lock agents out), so these tools only carry the request.
+
+enabled: true
+config_key: pixelbar
+
+external_deps:
+  - "A Pixel Bar on the LAN running firmware 1.0 or later: [pixelbar] url and key in config.toml (the key is on the bar's info screen: hold its left key)"
+
+access:
+  # A glanceable display, not a channel: any conversation may use it. What it
+  # can show is bounded by the bar itself, and guest sessions lose integration
+  # tools at the host boundary.
+  sessions: ["*"]
+
+tools:
+  - export_name: pixelbarTools
+    description: >-
+      Read the bar, show a status, text, progress or a picture on it, start a
+      countdown, switch its mode or scene, and clear what was put up.
+    provides:
+      - pixelbar_state
+      - pixelbar_status
+      - pixelbar_text
+      - pixelbar_progress
+      - pixelbar_draw
+      - pixelbar_timer
+      - pixelbar_mode
+      - pixelbar_clear
+
+instructions:
+  system_prompt_file: instructions.md
+
+runtime:
+  # Tool-only: nothing runs in the daemon. The bar's usage meter is fed by its
+  # own service, not from here.
+  lazy: false

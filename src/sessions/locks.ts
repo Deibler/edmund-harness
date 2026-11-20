@@ -94,6 +94,11 @@ export class SessionLocks {
     this.active.get(key)?.extend();
   }
 
+  /** True while a holder is running for this key (queued waiters do not count). */
+  isBusy(key: string): boolean {
+    return this.active.has(key);
+  }
+
   async withLock<T>(
     key: string,
     fn: () => Promise<T>,

@@ -76,6 +76,32 @@ export function isVoiceLive(sessionKey: SessionKey): boolean {
   return bindings.has(sessionKey);
 }
 
+/**
+ * A call is ringing, dialling or connected in some conversation. Anything
+ * that would take the daemon away (the memory governor's restart) waits on
+ * this: five calls were cut off mid-sentence by a restart between 2026-11-05
+ * and 11-11, each time because the worker pool was idle between two of the
+ * caller's sentences and so the daemon looked free.
+ */
+export function anyVoiceLive(): boolean {
+  return bindings.size > 0;
+}
+
+/**
+ * The conversation a turn's reply may be spoken into: its own, if the turn
+ * began on a call, and none otherwise. A turn that began before the call was
+ * written to be read. Asked "call me", Edmund placed the call and ended his
+ * turn with "Calling you now."; by then the call was bound, so that line was
+ * held and became the first thing the person heard when they picked up (four
+ * calls from 2026-10-30 to 11-06, one of them nothing else).
+ */
+export function spokenSessionFor(
+  sessionKey: SessionKey,
+  bindingAtTurnStart: VoiceBinding | null,
+): SessionKey | undefined {
+  return bindingAtTurnStart ? sessionKey : undefined;
+}
+
 /** Test seam. */
 export function clearVoiceBindings(): void {
   bindings.clear();

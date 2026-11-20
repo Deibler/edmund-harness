@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { type GrokCaller, isGrokCaller } from "../grok/caller.ts";
 import type { InboundMessage, UnnamedWake } from "../imessage/types.ts";
 
 /**
@@ -32,6 +33,9 @@ export type PendingEntry = {
    *  replayed message would meet the group re-gate as un-named and be
    *  dropped. */
   unnamedWake?: UnnamedWake;
+  /** Who called, for a Grok connector request (the key they presented). Without
+   *  it a parked or replayed request would lose the identity its key proved. */
+  grokCaller?: GrokCaller;
   /** Set when the message was also shown to the running turn (see
    *  src/claude/mid-turn.ts): the uuid it was written under. */
   midTurnUuid?: string;
@@ -94,6 +98,7 @@ export function toPendingEntry(msg: InboundMessage): PendingEntry {
     chatGuid: msg.chatGuid,
     isGroup: msg.isGroup,
     ...(msg.unnamedWake ? { unnamedWake: msg.unnamedWake } : {}),
+    ...(msg.grokCaller ? { grokCaller: msg.grokCaller } : {}),
   };
 }
 
@@ -131,6 +136,7 @@ export function entryToInbound(e: PendingEntry): InboundMessage | null {
     service: e.service || "iMessage",
     replyToGuid: e.replyToGuid,
     ...(e.unnamedWake ? { unnamedWake: e.unnamedWake } : {}),
+    ...(e.grokCaller ? { grokCaller: e.grokCaller } : {}),
   };
 }
 
@@ -155,6 +161,7 @@ function normalizeEntry(raw: Record<string, unknown>): PendingEntry | null {
     chatGuid: typeof raw.chatGuid === "string" ? raw.chatGuid : "",
     isGroup: typeof raw.isGroup === "boolean" ? raw.isGroup : false,
     ...(isUnnamedWake(raw.unnamedWake) ? { unnamedWake: raw.unnamedWake } : {}),
+    ...(isGrokCaller(raw.grokCaller) ? { grokCaller: raw.grokCaller } : {}),
     ...(typeof raw.midTurnUuid === "string" ? { midTurnUuid: raw.midTurnUuid } : {}),
   };
 }
@@ -212,6 +219,7 @@ export function pendingToInbound(e: PendingEntry, ref: InboundMessage): InboundM
     service: e.service || ref.service,
     replyToGuid: e.replyToGuid,
     ...(e.unnamedWake ? { unnamedWake: e.unnamedWake } : {}),
+    ...(e.grokCaller ? { grokCaller: e.grokCaller } : {}),
   };
 }
 

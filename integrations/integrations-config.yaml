@@ -84,3 +84,12 @@ integrations:
   # ─────────────────────────────────────────────────────────────────────────
   printer:
     enabled: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # pixelbar — the 32 x 8 LED bar on the desk. Tool-only: Edmund shows what he
+  # is doing on it. The bar enforces its own limits (the knob is the only
+  # brightness control, one change every 350 ms, content expires, holding both
+  # of its keys locks agents out). Address and key: [pixelbar] in config.toml.
+  # ─────────────────────────────────────────────────────────────────────────
+  pixelbar:
+    enabled: true

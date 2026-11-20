@@ -6,7 +6,7 @@ import { z } from "zod";
 import { invoke } from "../../imessage/bridge/index.ts";
 import type { MirrorStoreCtor } from "../../integrations/mirror-contracts.ts";
 import { integrationExport } from "../../integrations/optional.ts";
-import { isMirrorSession } from "../../sessions/key.ts";
+import { isGrokSession, isMirrorSession } from "../../sessions/key.ts";
 import { chatIdFromKey, isGroupSession } from "../../sessions/key.ts";
 import { isSmsSession } from "../../sms/session.ts";
 import type { ToolContext } from "../context.ts";
@@ -56,6 +56,11 @@ export function typingTools(ctx: ToolContext): ToolDef[] {
         // SMS has no typing indicator. This is a courtesy signal, not a
         // delivery, so a no-op that says so is right — failing would push the
         // model to report a problem the user does not have.
+        if (isGrokSession(ctx.sessionKey)) {
+          return {
+            content: [{ type: "text", text: "voice channel, no typing bubbles — carry on" }],
+          };
+        }
         if (isSmsSession(ctx.sessionKey)) {
           return {
             content: [

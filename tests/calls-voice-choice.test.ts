@@ -169,6 +169,24 @@ describe("call_voice", () => {
     expect(tool("call_voice").inputSchema.safeParse({ voice: "jm_kumo" }).success).toBe(false);
   });
 
+  // 2026-11-12: asked, while his call to someone was ringing, to write its
+  // opening line, Edmund called them again. The daemon refused seconds later
+  // with a wake-up that took a turn of its own mid-call.
+  test("facetime_call is refused at once while a call is up, and says what to do instead", async () => {
+    call("call_1"); // this conversation's own call, ringing or connected
+    const own = await run("facetime_call", { who: "+15550100002", reason: "to say hello" });
+    expect(own.error).toBe(true);
+    expect(own.text).toContain("You are already on a call with Dana");
+    expect(own.text).toContain("what you write as your reply is spoken to them");
+
+    const t = tools(INSTALLED, "imessage:dm:+15550100009").find((x) => x.name === "facetime_call")!;
+    const other = await t.handler(t.inputSchema.parse({ who: "+15550100002", reason: "hello" }));
+    const said = other.content.map((c) => ("text" in c ? c.text : "")).join("");
+    expect(other.isError).toBe(true);
+    expect(said).toContain("One call at a time");
+    expect(store.claimRequests(Date.now())).toEqual([]); // nothing was queued either time
+  });
+
   test("is not offered when Kokoro has none of them", () => {
     expect(tools(["af_heart", "jm_kumo"]).map((t) => t.name)).not.toContain("call_voice");
     expect(tools([]).map((t) => t.name)).not.toContain("call_voice");

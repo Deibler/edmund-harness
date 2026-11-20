@@ -20,6 +20,11 @@ export type ExchangeTrace = {
   wordsAt: number | null;
   /** His first speech sent to be played. */
   soundAt: number | null;
+  /**
+   * A sound of thinking said while they waited, if one was. Never counted as
+   * his reply: `gap_ms` stays the time to what he actually said.
+   */
+  asideAt: number | null;
 };
 
 export function newTrace(): ExchangeTrace {
@@ -31,6 +36,7 @@ export function newTrace(): ExchangeTrace {
     handoffAt: null,
     wordsAt: null,
     soundAt: null,
+    asideAt: null,
   };
 }
 
@@ -52,5 +58,6 @@ export function describeTrace(trace: ExchangeTrace): Record<string, number | str
     handoff_ms: after(trace.handoffAt),
     words_ms: after(trace.wordsAt),
     sound_ms: after(trace.soundAt),
+    ...(trace.asideAt !== null ? { aside_ms: Math.round(trace.asideAt - base) } : {}),
   };
 }
