@@ -67,6 +67,7 @@ export const CONFIG_LAYOUT: LayoutTier[] = [
         name: "integrations",
         note: "Optional packages under integrations/; integrations-config.yaml says which run here.",
       },
+      { name: "pixelbar", note: "The LED bar on the desk: its address and key." },
       {
         name: "printer",
         note: "The 3D printer. The access code is a LAN password: it stays in this file only.",
@@ -78,6 +79,10 @@ export const CONFIG_LAYOUT: LayoutTier[] = [
       },
       { name: "mirror", note: "The smart mirror: its own model, voice and connection." },
       { name: "sms", note: "The SMS line (Twilio)." },
+      {
+        name: "grok",
+        note: "Talk to Edmund from Grok, the car's voice assistant, over a tunnelled MCP connector.",
+      },
       {
         name: "facetime",
         note: "FaceTime calls: who Edmund may call and answer, and his voice on a call.",

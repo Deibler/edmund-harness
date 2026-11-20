@@ -12,6 +12,10 @@ supervision for no gain.
          A voice may be a blend of Kokoro's style vectors, weights summing to
          anything: "bm_daniel:0.7,am_michael:0.3".
 
+         Text becomes misaki's phonemes (pronounce.py) before Kokoro sees it,
+         with any pronunciations from the file named by KOKORO_PRONOUNCE. The
+         boot line says which: {"id": "boot", ..., "g2p": "misaki" | "espeak"}.
+
     list → {"id": "3", "voices": true}
          ← {"id": "3", "ok": true, "voices": ["af_alloy", ...]}
 
@@ -163,6 +167,7 @@ def main() -> int:
     try:
         import numpy as np
         from kokoro_onnx import Kokoro
+        from pronounce import load as load_g2p
     except Exception as err:  # noqa: BLE001 — any import failure is equally fatal
         _emit({"id": "boot", "ok": False, "error": f"import failed: {err}"})
         return 2
@@ -175,12 +180,27 @@ def main() -> int:
         return 2
     _log(f"loaded in {time.perf_counter() - started:.2f}s")
 
+    # The phonemes Kokoro was trained on (pronounce.py), when misaki is
+    # installed; otherwise kokoro-onnx phonemizes the text itself with espeak.
+    g2p = load_g2p(os.environ.get("KOKORO_PRONOUNCE") or None, _log)
+
+    def speak(text: str, voice, speed: float):
+        phonemes = None
+        if g2p is not None:
+            try:
+                phonemes = g2p(text)
+            except Exception as err:  # noqa: BLE001 - one bad line must not cost the reply
+                _log(f"g2p failed ({err}); espeak for this line")
+        if phonemes:
+            return kokoro.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
+        return kokoro.create(text, voice=voice, speed=speed, lang="en-us")
+
     # The first synthesis pays one-time allocator and graph-warmup costs. Do it
     # before announcing readiness so the user's first spoken reply is not the
     # slow one.
     warm_voice = os.environ.get("KOKORO_VOICE", "af_heart")
     try:
-        kokoro.create("Ready.", voice=warm_voice, speed=1.0, lang="en-us")
+        speak("Ready.", warm_voice, 1.0)
     except Exception as err:  # noqa: BLE001
         _emit({"id": "boot", "ok": False, "error": f"warmup failed: {err}"})
         return 2
@@ -192,7 +212,7 @@ def main() -> int:
     # _load_whisper() already negative-caches so we won't retry per request.
     _load_whisper()
 
-    _emit({"id": "boot", "ok": True, "ready": True})
+    _emit({"id": "boot", "ok": True, "ready": True, "g2p": "misaki" if g2p else "espeak"})
 
     for line in sys.stdin:
         line = line.strip()
@@ -231,7 +251,7 @@ def main() -> int:
 
         began = time.perf_counter()
         try:
-            samples, rate = kokoro.create(text, voice=_style(kokoro, voice), speed=speed, lang="en-us")
+            samples, rate = speak(text, _style(kokoro, voice), speed)
         except Exception as err:  # noqa: BLE001 — a bad voice must not kill the sidecar
             _emit({"id": request_id, "ok": False, "error": f"synthesis failed: {err}"})
             continue

@@ -16,6 +16,7 @@
 #   scripts/launchd/service.sh dashboard {install|uninstall|start|stop|restart|status|logs}
 #   scripts/launchd/service.sh kitchen-host {install|uninstall|start|stop|restart|status|logs}
 #   scripts/launchd/service.sh sms-tunnel {install|uninstall|start|stop|restart|status|logs}
+#   scripts/launchd/service.sh grok-tunnel {install|uninstall|start|stop|restart|status|logs}
 #
 # Notes:
 #   - Uses user-level bootstrap (gui/$UID). Starts at login, not at boot.
@@ -49,6 +50,21 @@ FISH_DEST_PLIST="$HOME/Library/LaunchAgents/$FISH_LABEL.plist"
 FISH_LOG="$REPO_ROOT/data/fishing.launchd.out.log"
 
 cmd="${1:-status}"
+
+# Stopping the daemon ends a FaceTime call in progress: the person is cut off
+# mid-sentence. The daemon holds its own restarts back for a call; this holds
+# back the ones asked for by hand (or by Edmund, of himself). A call the
+# daemon has not ended is a row in data/calls.db with no end time.
+refuse_during_call() {
+  local db="$REPO_ROOT/data/calls.db" live
+  [ "${EDMUND_FORCE:-}" = "1" ] && return 0
+  [ -f "$db" ] || return 0
+  live=$(sqlite3 -readonly "$db" "SELECT COUNT(*) FROM calls WHERE ended_at IS NULL" 2>/dev/null || echo 0)
+  if [ "${live:-0}" -gt 0 ]; then
+    echo "Edmund is on a call, and this would cut it off. Wait for the call to end, or run again with EDMUND_FORCE=1." >&2
+    exit 1
+  fi
+}
 
 # Render a plist template into place, substituting the machine-specific paths
 # the committed templates leave as placeholders. The repo ships portable
@@ -161,10 +177,12 @@ case "$cmd" in
   stop)
     # NOTE: with KeepAlive=true, launchd relaunches after ~30s throttle. Use
     # uninstall for a persistent stop.
+    refuse_during_call
     launchctl kill SIGTERM "$DOMAIN/$LABEL" || true
     ;;
 
   restart)
+    refuse_during_call
     launchctl kickstart -k "$DOMAIN/$LABEL"
     ;;
 
@@ -338,12 +356,12 @@ case "$cmd" in
     esac
     ;;
 
-  kitchen-host|sms-tunnel)
+  kitchen-host|sms-tunnel|grok-tunnel)
     sidecar "$cmd" "${2:-status}"
     ;;
 
   *)
-    echo "usage: $0 {install|uninstall|start|stop|restart|status|logs|errors|debug|dashboard|trading|fishing|kitchen-host|sms-tunnel}" >&2
+    echo "usage: $0 {install|uninstall|start|stop|restart|status|logs|errors|debug|dashboard|trading|fishing|kitchen-host|sms-tunnel|grok-tunnel}" >&2
     exit 2
     ;;
 esac

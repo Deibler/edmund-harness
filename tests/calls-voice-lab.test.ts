@@ -9,7 +9,14 @@ import { join } from "node:path";
 import { type LabLink, WebProvider } from "../src/calls/providers/web/provider.ts";
 import { LabServer, isPrivateAddress } from "../src/calls/providers/web/server.ts";
 import type { ProviderEvent } from "../src/calls/types.ts";
-import { VoiceSettingsStore, validVoiceSettings } from "../src/calls/voice-settings.ts";
+import {
+  VoiceSettingsStore,
+  engineOf,
+  phononName,
+  phononVoice,
+  validVoiceSettings,
+  voiceNames,
+} from "../src/calls/voice-settings.ts";
 
 const OPERATOR = "+15550100001";
 const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms));
@@ -229,7 +236,13 @@ describe("LabServer", () => {
       dir,
       provider,
       settings: saved,
-      voices: async () => ["am_michael", "bm_daniel", "bm_george"],
+      voices: async () => [
+        "phonon:Micah",
+        "phonon:Elodie-Rose",
+        "am_michael",
+        "bm_daniel",
+        "bm_george",
+      ],
       synthesize: async () => ({ pcm: new Uint8Array(480), sampleRate: 24_000 }),
       insecure: true,
     });
@@ -318,6 +331,22 @@ describe("LabServer", () => {
     expect(listed.current).toEqual({ voice: "bm_daniel:0.7,am_michael:0.3", speed: 1.1 });
   });
 
+  test("a Phonon voice is saved by its catalog name, and only one the catalog has", async () => {
+    const put = (body: unknown) =>
+      fetch(`${base}/api/voice`, {
+        method: "PUT",
+        headers: { ...cookie(), "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const before = saved.get();
+    expect((await put({ voice: "phonon:Nobody", speed: 1 })).status).toBe(400);
+    // A blend is of Kokoro's voices; a Phonon voice is spoken as it is.
+    expect((await put({ voice: "phonon:Micah,am_michael", speed: 1 })).status).toBe(400);
+    expect(saved.get()).toEqual(before);
+    expect((await put({ voice: "phonon:Elodie-Rose", speed: 0.9 })).status).toBe(200);
+    expect(saved.get()).toEqual({ voice: "phonon:Elodie-Rose", speed: 0.9 });
+  });
+
   test("a preview comes back as a WAV of what was synthesised", async () => {
     const res = await fetch(`${base}/api/preview`, {
       method: "POST",
@@ -367,5 +396,31 @@ describe("VoiceSettingsStore", () => {
     expect(validVoiceSettings({ voice: "bm_daniel", speed: "1" }).ok).toBe(false);
     expect(validVoiceSettings({ voice: "bm_daniel", speed: Number.NaN }).ok).toBe(false);
     expect(validVoiceSettings(null).ok).toBe(false);
+  });
+
+  test("a Phonon voice is its catalog name behind a prefix, and nothing else", () => {
+    for (const voice of [
+      "phonon:Micah",
+      "phonon:Elodie-Rose",
+      "phonon:Old Mortlake",
+      "phonon:Lucía-Sol",
+    ])
+      expect(validVoiceSettings({ voice, speed: 1 }).ok).toBe(true);
+    for (const voice of [
+      "phonon:",
+      "Phonon:Micah",
+      "phonon:Micah:0.5",
+      "phonon:Micah,phonon:Easton",
+      "phonon:../Micah",
+      "phonon:Micah\n",
+    ])
+      expect(validVoiceSettings({ voice, speed: 1 }).ok).toBe(false);
+    expect(engineOf("phonon:Micah")).toBe("phonon");
+    expect(engineOf("am_fenrir")).toBe("kokoro");
+    expect(engineOf("bm_george:0.5,am_santa:0.5")).toBe("kokoro");
+    expect(phononName(phononVoice("Old Mortlake"))).toBe("Old Mortlake");
+    // What the lab checks against the voices that exist.
+    expect(voiceNames("phonon:Micah")).toEqual(["phonon:Micah"]);
+    expect(voiceNames("bm_george:0.5,am_santa:0.5")).toEqual(["bm_george", "am_santa"]);
   });
 });

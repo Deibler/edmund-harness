@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { SessionPipeline } from "../channels/pipeline.ts";
 import type { Config } from "../config/config.ts";
 import type { InboundMessage } from "../imessage/types.ts";
@@ -6,6 +7,15 @@ import { log } from "../util/log.ts";
 import { type TwilioCreds, fetchConversationParticipants } from "./client.ts";
 import { estimateInboundUsd } from "./costs.ts";
 import { classifyKeyword, keywordReply } from "./inbound.ts";
+import {
+  type FetchMessageMedia,
+  type SmsMedia,
+  downloadMedia,
+  mediaNoun,
+  parseMessageMedia,
+  pruneStagedMedia,
+  sdkMessageMediaFetcher,
+} from "./media.ts";
 import { type SmsChannelDelivery, createSmsSender } from "./sender.ts";
 import { conversationIdFromKey, smsChatGuidFor, smsGroupKeyFor, smsKeyFor } from "./session.ts";
 import type { SmsStore } from "./store.ts";
@@ -67,6 +77,9 @@ export function createSmsChannel(opts: {
    *  not explicitly allowed. */
   isKnownSender?: (handle: string) => boolean;
   statusCallbackUrl?: string;
+  /** The REST lookup of a message's attached media. Defaults to the Twilio
+   *  SDK; tests pass the record they want Twilio to return. */
+  fetchMessageMedia?: FetchMessageMedia;
 }): SmsRuntime {
   const { config, creds, pipeline } = opts;
   // One sender, two processes: the daemon registers `deliver` as the
@@ -81,6 +94,8 @@ export function createSmsChannel(opts: {
   });
   const own = normalizeHandle(opts.ownNumber);
   const sms = config.sms;
+  const fetchMessageMedia = opts.fetchMessageMedia ?? sdkMessageMediaFetcher(creds);
+  const mediaDir = join(opts.dataDir, "sms-media");
   let syntheticSeq = 0;
 
   const inboundFor = (params: {
@@ -89,8 +104,12 @@ export function createSmsChannel(opts: {
     fromHandle: string;
     text: string;
     messageSid: string;
+    attachments: string[];
+    /** The transcript row's own stamp, so history can bound itself at this
+     *  message exactly (see buildHistoryBundle's SMS branch). */
+    atMs: number;
   }): InboundMessage => {
-    const now = Date.now();
+    const now = params.atMs;
     return {
       rowId: now * 1_000 + (syntheticSeq++ % 1_000),
       msgGuid: `sms-${params.messageSid}`,
@@ -101,9 +120,7 @@ export function createSmsChannel(opts: {
       fromMe: false,
       text: params.text,
       timestampMs: now,
-      // MMS media is not fetched yet; the transcript records that something
-      // arrived so the model can say so instead of ignoring it.
-      attachments: [],
+      attachments: params.attachments,
       attachmentTranscripts: {},
       service: "SMS",
       replyToGuid: null,
@@ -256,32 +273,90 @@ export function createSmsChannel(opts: {
       }
     }
 
-    const mediaNote =
-      Number.parseInt(params.NumMedia ?? "0", 10) > 0
-        ? body
-          ? `${body}\n[attachment received — media over SMS is not supported yet]`
-          : "[attachment received — media over SMS is not supported yet]"
-        : body;
-    if (!mediaNote) return;
+    // Media. Twilio sends each photo as its own message with an empty body,
+    // so an empty body is the signal to ask the REST record what came with
+    // it (see src/sms/media.ts). `NumMedia`, which this used to read, is a
+    // Programmable Messaging parameter the Conversations webhook never
+    // sends: every photo was dropped, 9 of 9 from September to November.
+    const got: SmsMedia[] = [];
+    const attachments: string[] = [];
+    let missed: string[] = [];
+    // The webhook's `Media` field is undocumented in shape, so it is only a
+    // hint to look; "[]" or "null" is no hint at all and must not cost a
+    // REST round trip on every plain text.
+    const webhookHintsMedia = /[^\s[\]]/.test((params.Media ?? "").replace(/^\s*null\s*$/, ""));
+    if (!body || webhookHintsMedia) {
+      try {
+        const media = parseMessageMedia(await fetchMessageMedia(conversationSid, messageSid));
+        const chatServiceSid = params.ChatServiceSid ?? "";
+        for (const m of media) {
+          const path = chatServiceSid
+            ? await downloadMedia({ creds, chatServiceSid, media: m, destDir: mediaDir })
+            : null;
+          if (path) {
+            got.push(m);
+            attachments.push(path);
+          } else {
+            missed.push(mediaNoun(m));
+          }
+        }
+        if (media.length > 0) pruneStagedMedia(mediaDir);
+      } catch (err) {
+        log.warn("sms", "message media lookup failed", {
+          conversationSid,
+          messageSid,
+          err: String(err),
+        });
+        // An empty message is, in practice, always media. Saying something
+        // didn't come through beats pretending nothing was sent.
+        missed = ["attachment"];
+      }
+    }
+    if (!body && attachments.length === 0 && missed.length === 0) return;
+
+    const missedNote =
+      missed.length > 0
+        ? `[${missed.length === 1 ? withArticle(missed[0]!) : `${missed.length} attachments`} they sent didn't come through on your end; if it matters, ask them to send it again]`
+        : "";
+    const text = [body, missedNote].filter(Boolean).join("\n");
+    // The transcript holds text only, so it records that media arrived: the
+    // next turn's history then shows "[photo]" where a photo was, instead of
+    // a gap.
+    const marks = [
+      ...got.map((m) => `[${mediaNoun(m)}]`),
+      ...missed.map((noun) => `[${noun} that didn't come through]`),
+    ];
+    const recorded = [body, ...marks].filter(Boolean).join(" ");
+    const atMs = Date.now();
 
     store.record({
       conversation: conversationId,
       direction: "in",
       fromHandle: author,
-      body: mediaNote,
+      body: recorded,
       messageSid,
+      atMs,
     });
 
     log.info("sms", "inbound", {
       from: author,
       group: isGroup,
+      ...(got.length + missed.length > 0 ? { media: got.length, mediaMissed: missed.length } : {}),
       est: `$${estimateInboundUsd(isGroup ? "mms" : "sms").toFixed(4)}`,
     });
 
     const key = isGroup ? smsGroupKeyFor(conversationSid) : smsKeyFor(cls.peerHandle ?? author);
     pipeline.enqueue(
       key,
-      inboundFor({ conversationId, isGroup, fromHandle: author, text: mediaNote, messageSid }),
+      inboundFor({
+        conversationId,
+        isGroup,
+        fromHandle: author,
+        text,
+        messageSid,
+        attachments,
+        atMs,
+      }),
     );
   };
 
@@ -297,6 +372,10 @@ export function createSmsChannel(opts: {
       },
     },
   };
+}
+
+function withArticle(noun: string): string {
+  return /^[aeiou]/i.test(noun) ? `an ${noun}` : `a ${noun}`;
 }
 
 /** Re-export for wiring code that only has the session key. */

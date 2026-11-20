@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigSchema } from "../src/config/config.ts";
@@ -28,6 +28,8 @@ const config = ConfigSchema.parse({
   paths: { chat_db: "/nonexistent/never/chat.db" },
   sms: { enabled: true, from: "+15550000001" },
 });
+
+const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
 let dataDir: string;
 let sandboxPath: string;
@@ -141,12 +143,29 @@ describe("the other this-chat actions on SMS", () => {
     expect(requests.length).toBe(0);
   });
 
-  test("send_attachment refuses, and says what to do instead", async () => {
+  test("send_attachment takes the MMS path, not the iMessage one", async () => {
+    // A DM with no Twilio conversation on record: the MMS path refuses in
+    // words before any network call. The chat.db getter throws, so a
+    // fall-through to the iMessage path would fail differently.
+    const file = join(sandboxPath, "card.png");
+    writeFileSync(file, PNG_BYTES);
     const res = await tool("send_attachment", "sms:dm:+15551230001").handler({
-      file_path: "/tmp/whatever.pdf",
+      file_path: file,
     });
     expect(res.isError).toBe(true);
-    expect(String(res.content[0]!.text)).toContain("SMS");
+    expect(String(res.content[0]!.text)).toContain("no Twilio conversation");
+    expect(requests.length).toBe(0);
+  });
+
+  test("send_attachment says what to do with a file MMS can't carry", async () => {
+    const file = join(sandboxPath, "notes.docx");
+    writeFileSync(file, "not really a docx");
+    const res = await tool(
+      "send_attachment",
+      "sms:group:CH00000000000000000000000000000000",
+    ).handler({ file_path: file });
+    expect(res.isError).toBe(true);
+    expect(String(res.content[0]!.text)).toMatch(/MMS can't carry a \.docx file.*shelve/);
     expect(requests.length).toBe(0);
   });
 

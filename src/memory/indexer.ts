@@ -112,6 +112,15 @@ export type IndexerConfig = {
   /** Whitelist of extensions to index from sandbox dirs. Other files
    *  (binaries, archives, .resized cache, etc.) are skipped. */
   sandboxExtensions?: string[];
+  /**
+   * While this is true a tick does nothing and leaves its work for the next
+   * one. A tick walks every sandbox on the daemon's main thread: 1.2-2.1 s
+   * with nothing else running, once a minute (measured 2026-11-12 by the
+   * loop monitor). On a FaceTime call that is a second or two each minute in
+   * which Edmund neither hears nor speaks, so the daemon stands the indexer
+   * down for the length of a call. Nothing is lost: it works from watermarks.
+   */
+  standDown?: () => boolean;
 };
 
 export class Indexer {
@@ -165,7 +174,7 @@ export class Indexer {
     artifacts: number;
     coverage: ReturnType<Indexer["coverage"]>;
   }> {
-    if (this.indexing) {
+    if (this.indexing || this.cfg.standDown?.()) {
       // A skipped tick reports the last snapshot instead of computing one.
       return {
         messages: 0,

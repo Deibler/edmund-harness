@@ -42,6 +42,19 @@ export function setSmsDeliverer(fn: SmsDeliverer | null): void {
   smsDeliverer = fn;
 }
 
+/** Captures a reply for the Grok connector requests in a turn's batch.
+ *  `spoken`: one of them is still waiting on the line and takes the reply.
+ *  `textToo`: a request in the batch had already given up and was promised a
+ *  text. Without `spoken` (every request timed out) the reply is texted as usual. */
+type GrokDeliverer = (
+  text: string,
+  msgGuids: readonly string[],
+) => { spoken: boolean; textToo: boolean };
+let grokDeliverer: GrokDeliverer | null = null;
+export function setGrokDeliverer(fn: GrokDeliverer | null): void {
+  grokDeliverer = fn;
+}
+
 export type DeliverArgs = {
   to: string;
   isGroup: boolean;
@@ -60,6 +73,17 @@ export type DeliverArgs = {
    *  fires). Paths that leave it unset always text: a stale outbox reply
    *  flushed mid-call is still a text. */
   sessionKey?: SessionKey;
+  /** Set only by a turn whose batch holds Grok connector requests (the DM
+   *  session runs them beside ordinary texts). Decided per turn, from that
+   *  turn's own batch, never from the session: a turn for an ordinary text
+   *  leaves it unset and nothing here changes.
+   *
+   *  The reply is handed to the requests still waiting on the line. When
+   *  `alsoText` is set (the batch also held a real iMessage) it is texted too,
+   *  because that sender is owed an answer in the thread. A request that has
+   *  timed out is owed one as well: with nobody left on the line the reply is
+   *  an ordinary text, which is how a late answer arrives. */
+  grok?: { msgGuids: readonly string[]; alsoText: boolean };
 };
 
 export type DeliveryResult = {
@@ -67,7 +91,8 @@ export type DeliveryResult = {
   sentChunks: string[];
   errors: string[];
   silenced: boolean;
-  /** "voice" when the reply was spoken on a call rather than texted. */
+  /** "voice" when the reply was spoken (on a call, or back to a waiting Grok
+   *  request) rather than texted. */
   medium?: "voice";
 };
 
@@ -154,6 +179,19 @@ export async function deliverReply(
     });
   }
 
+  // A Grok connector request waiting on the line takes the reply: it is read
+  // aloud by whoever called and is NOT texted, unless the same turn also
+  // answered a real iMessage or another request was already promised a text.
+  // Checked before the call binding: the request is a different listener from a
+  // FaceTime call, and it is the one waiting for this reply. Fall through when
+  // nobody is waiting, so a late answer or a reminder fire is never lost.
+  if (args.grok) {
+    const taken = grokDeliverer?.(cleaned, args.grok.msgGuids);
+    if (taken?.spoken && !args.grok.alsoText && !taken.textToo) {
+      return { sent: 1, sentChunks: [cleaned], errors: [], silenced: false, medium: "voice" };
+    }
+  }
+
   // On a call: the reply is spoken to the person instead of texted. A call
   // that ended before the reply was ready, or a voice that cannot speak right
   // now, falls through to the text path below, so nothing said to the person
@@ -195,6 +233,15 @@ export async function deliverReply(
     } catch (err) {
       return { sent: 0, sentChunks: [], errors: [(err as Error).message], silenced: false };
     }
+  }
+
+  // A `grok:` guid is what the connector's first design stamped on its inbounds
+  // and session rows. Nothing writes one now, but a stale row can still hand one
+  // back (a cron or recovery fire reads its target from the session row), and it
+  // is no chat.db guid: drop it and send down the normal DM path.
+  if (args.chatGuid?.startsWith("grok:") || args.to.startsWith("grok:")) {
+    const to = args.to.startsWith("grok:") ? args.to.slice("grok:".length) : args.to;
+    return deliverReply({ ...args, to, chatGuid: undefined, grok: undefined }, config, echoes);
   }
 
   // SMS channel (Twilio). Discriminated on the `sms:` chat-guid prefix, which

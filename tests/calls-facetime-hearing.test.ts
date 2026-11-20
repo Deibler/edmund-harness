@@ -18,6 +18,8 @@ class FakeHelper {
   status: Record<string, unknown> = { capture: "granted" };
   private socket: Socket;
   private buffer = "";
+  /** The params of each request, in order, by method. */
+  readonly params: Record<string, unknown[]> = {};
   private constructor(socket: Socket) {
     this.socket = socket;
     socket.setEncoding("utf8");
@@ -27,6 +29,9 @@ class FakeHelper {
         const message = JSON.parse(this.buffer.slice(0, i));
         this.buffer = this.buffer.slice(i + 1);
         if (message.method !== "status") this.requests.push(message.method);
+        const seen = this.params[message.method] ?? [];
+        seen.push(message.params);
+        this.params[message.method] = seen;
         const result = message.method === "status" ? this.status : true;
         this.send({ id: message.id, ok: true, result });
       }
@@ -77,7 +82,7 @@ afterEach(async () => {
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
-async function setUp(options: { audioStallMs?: number } = {}) {
+async function setUp(options: { audioStallMs?: number; diedMidCall?: boolean } = {}) {
   dir = mkdtempSync(join(tmpdir(), "ft-hear-"));
   const events: ProviderEvent[] = [];
   const transcribed: number[] = [];
@@ -100,9 +105,11 @@ async function setUp(options: { audioStallMs?: number } = {}) {
     launchFaceTime: () => {},
     launchAudio: () => {},
     launchMouth: () => {},
-    ...options,
+    ...(options.audioStallMs !== undefined ? { audioStallMs: options.audioStallMs } : {}),
   });
-  await provider.start((event) => events.push(event));
+  await provider.start((event) => events.push(event), {
+    diedMidCall: options.diedMidCall ?? false,
+  });
   const socket = join(dir, "a.sock");
   /** A helper connected and its hello taken in (the provider re-checks readiness on hello). */
   const helper = async (hello: Record<string, unknown> = { audio: "pcm16k" }) => {
@@ -268,5 +275,57 @@ describe("FaceTime hearing", () => {
       { type: "hearing-failed", detail: "call tap: AudioDeviceStart failed (-1)" },
     ]);
     helper.close();
+  });
+});
+
+describe("a call left over from before the daemon started", () => {
+  const leftover = (status: number, incoming = false) => ({
+    id: `call_${status}`,
+    faceTime: true,
+    status,
+    incoming,
+    handle: "+15550100001",
+  });
+
+  // FaceTime keeps running, and keeps its call, when the daemon dies. The
+  // other person was left connected to nothing, with no one to hang up.
+  test("is hung up when FaceTime first reports in, and one still ringing is announced", async () => {
+    const { events } = await setUp({ diedMidCall: true });
+    const control = await FakeHelper.dial(join(dir, "c.sock"), {});
+    control.status = { faceTimeProvider: 1, calls: [leftover(1), leftover(4, true)] };
+    await until(() => control.requests.includes("hangup"));
+    expect(control.params.hangup).toEqual([{ id: "call_1" }]);
+    await until(() => events.some((e) => e.type === "call"));
+    const announced = events.filter((e) => e.type === "call");
+    expect(announced).toHaveLength(1);
+    expect(announced[0]!.type === "call" && announced[0]!.call.id).toBe("call_4");
+    control.close();
+  });
+
+  test("only then: a call up when FaceTime reports in again later is the daemon's own", async () => {
+    await setUp({ diedMidCall: true });
+    const control = await FakeHelper.dial(join(dir, "c.sock"), {});
+    control.status = { faceTimeProvider: 1, calls: [] };
+    await new Promise((r) => setTimeout(r, 100));
+    control.status = { faceTimeProvider: 1, calls: [leftover(1)] };
+    control.send({ event: "hello", pid: 3 });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(control.requests).not.toContain("hangup");
+    control.close();
+  });
+});
+
+describe("a call on this Mac the daemon never had", () => {
+  // Someone using FaceTime by hand when the daemon starts: not Edmund's to end.
+  test("is left alone when the last daemon did not die mid-call", async () => {
+    await setUp({ diedMidCall: false });
+    const control = await FakeHelper.dial(join(dir, "c.sock"), {});
+    control.status = {
+      faceTimeProvider: 1,
+      calls: [{ id: "theirs", faceTime: true, status: 1, incoming: false, handle: "+15550100001" }],
+    };
+    await new Promise((r) => setTimeout(r, 200));
+    expect(control.requests).not.toContain("hangup");
+    control.close();
   });
 });

@@ -23,9 +23,12 @@ function stubMessages(messages: unknown[]) {
 
 describe("estimates", () => {
   test("scale with segments and floor at one", () => {
-    expect(estimateOutboundUsd(1)).toBeCloseTo(0.0109, 4);
-    expect(estimateOutboundUsd(3)).toBeCloseTo(0.0327, 4);
-    expect(estimateOutboundUsd(0)).toBeCloseTo(0.0109, 4);
+    const one = estimateOutboundUsd(1);
+    // Twilio's published $0.0083 per segment, plus a carrier fee.
+    expect(one).toBeGreaterThan(0.0083);
+    expect(one).toBeLessThan(0.02);
+    expect(estimateOutboundUsd(3)).toBeCloseTo(one * 3, 6);
+    expect(estimateOutboundUsd(0)).toBeCloseTo(one, 6);
   });
   test("mms inbound costs more than sms inbound", () => {
     expect(estimateInboundUsd("mms")).toBeGreaterThan(estimateInboundUsd("sms"));

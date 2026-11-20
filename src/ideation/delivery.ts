@@ -45,3 +45,24 @@ export function sweepDeliveries(
   }
   return found;
 }
+
+/** Did they write in this chat (a message or a reaction) between the two times? */
+export function repliedBetween(
+  chatDb: ChatDb,
+  chatGuids: string[],
+  fromMs: number,
+  toMs: number,
+): boolean {
+  if (chatGuids.length === 0) return false;
+  const r = chatDb
+    .query<{ n: number }>(
+      `SELECT 1 AS n FROM message m
+         JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         JOIN chat c ON c.ROWID = cmj.chat_id
+        WHERE c.guid IN (${chatGuids.map(() => "?").join(",")})
+          AND m.is_from_me = 0 AND m.date > ? AND m.date <= ?
+        LIMIT 1`,
+    )
+    .get(...chatGuids, (fromMs - APPLE_EPOCH_MS) * 1_000_000, (toMs - APPLE_EPOCH_MS) * 1_000_000);
+  return r !== null;
+}

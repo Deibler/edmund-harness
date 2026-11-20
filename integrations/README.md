@@ -152,6 +152,7 @@ structurally unable to reach into the pipeline.
 | `fishing` | — | — | Direct query/viz tools; endpoint guidance in `skills/fishing`. |
 | `cloudflare-browser` | — | — | Rendering runs at Cloudflare's edge. |
 | `kitchen` | — | schedules + Notes sync | Per-household inventory, meals and deals; 21 tools. Available in every session; isolation is per account. |
+| `pixelbar` | — | — | The LED bar on the desk: status light, text, progress, a picture, a countdown, mode and scene. The bar enforces its own limits. |
 | `printer` | — | printer link, watches, approvals, live page | Bambu Lab printer: status, camera, slicing and previews, MakerWorld; prints start only after the approver's yes in Messages. |
 
 ## Failure stance

@@ -30,6 +30,9 @@ function baseProfile(
       effort: intSettings.trading(config).effort || config.claude.effort,
     };
   }
+  // No Grok branch: connector requests run inside the person's DM session and
+  // use its model (src/grok/session.ts). A model is chosen per session, not per
+  // turn, so an override would also move their texts.
   if (sessionKey === intSettings.mirror(config).session_key) {
     return {
       model: intSettings.mirror(config).model,

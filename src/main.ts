@@ -10,8 +10,10 @@ import { AlertStore } from "./alerts/store.ts";
 import { UndeliveredAlert } from "./alerts/undelivered.ts";
 import { BgJobStore } from "./background/store.ts";
 import { banner, highWaterMark } from "./boot/banner.ts";
+import { daemonBusy } from "./boot/busy.ts";
 import { type CatchUp, runCatchUp } from "./boot/catchup.ts";
 import { hardenHarnessPermissions } from "./boot/harden-permissions.ts";
+import { LoopLagMonitor } from "./boot/loop-lag.ts";
 import { schedulingPriority, throttledQosWarning } from "./boot/qos.ts";
 import {
   ResourceGovernor,
@@ -23,9 +25,10 @@ import { missingStorage } from "./boot/storage.ts";
 import { wireRecall } from "./boot/wire-recall.ts";
 import { wireRecovery } from "./boot/wire-recovery.ts";
 import { toPendingEntry, writePending } from "./bridge/session-queue.ts";
+import { anyVoiceLive } from "./calls/binding.ts";
 import { startCallRuntime } from "./calls/runtime.ts";
 import { isBargeIn } from "./channels/barge-in.ts";
-import { deliverReply, setSmsDeliverer } from "./channels/deliver.ts";
+import { deliverReply, setGrokDeliverer, setSmsDeliverer } from "./channels/deliver.ts";
 import type { Deps } from "./channels/deps.ts";
 import { wakeThread } from "./channels/history.ts";
 import { SessionPipeline } from "./channels/pipeline.ts";
@@ -38,7 +41,6 @@ import {
   flushWorkerPool,
   getWorkerPoolStats,
   injectIntoRunningTurn,
-  isWorkerPoolBusy,
   shutdownWorkerPool,
 } from "./claude/runner.ts";
 import { loadConfig } from "./config/config.ts";
@@ -54,6 +56,8 @@ import { GhostObserver } from "./ghost/observer.ts";
 import { sweepFireOutcomes } from "./ghost/outcomes.ts";
 import { GhostPrefsStore, autoEnrollSessions } from "./ghost/prefs.ts";
 import { setGhostAlertHook } from "./ghost/think.ts";
+import { createGrokChannel } from "./grok/channel.ts";
+import { type GrokRelay, trackGrokTurns } from "./grok/relay.ts";
 import { resolveDmTier } from "./guests/access.ts";
 import { GuestStore } from "./guests/store.ts";
 import { IdeationObserver } from "./ideation/observer.ts";
@@ -296,6 +300,7 @@ async function main() {
         contacts,
         store: new IdeationStore(config.paths.data_dir),
         agents: new AgentStore(config.paths.data_dir),
+        isExcludedSession: isGuestExcludedSession,
       })
     : undefined;
   // Cross-conversation skill curation. Unlike the person maintainer this is
@@ -476,7 +481,8 @@ async function main() {
         (getWorkerPoolStats()?.workers ?? [])
           .map((worker) => worker.pid)
           .filter((pid): pid is number => pid !== null),
-      isBusy: isWorkerPoolBusy,
+      // A live call counts: see boot/busy.ts.
+      isBusy: daemonBusy,
       evictIdleWorker: evictIdleWorkerForMemory,
       trimEmbeddings: trimTransformerEmbeddingWorkers,
       collectMemory: () => ({
@@ -494,6 +500,14 @@ async function main() {
     },
   );
   resourceGovernor.start();
+
+  // A stopped main thread is a call nobody is on: see boot/loop-lag.ts.
+  const loopLag = new LoopLagMonitor({
+    onCall: anyVoiceLive,
+    report: ({ ms, onCall }) =>
+      console.warn(`[loop] main thread stopped ms=${ms}${onCall ? " during_call=true" : ""}`),
+  });
+  loopLag.start();
 
   const deps: Deps = {
     config,
@@ -513,16 +527,49 @@ async function main() {
     locks,
   };
 
+  // Late-bound: the Grok channel is built after the pipeline it feeds.
+  let grokRelay: GrokRelay | null = null;
   const pipeline = new SessionPipeline({
     debounceMs: config.behavior.debounce_ms,
     voiceDebounceMs: config.behavior.voice_debounce_ms,
     maxMs: config.behavior.debounce_max_ms,
     captionedAttachmentMs: config.behavior.attachment_debounce_ms,
     bareAttachmentMs: config.behavior.bare_attachment_debounce_ms,
-    handler: (key, batch) => handleBatch(key, batch, deps),
+    // trackGrokTurns lets the Grok channel know when a turn holding one of its
+    // requests ends; a batch without one passes straight through.
+    handler: trackGrokTurns(
+      (key, batch) => handleBatch(key, batch, deps),
+      () => grokRelay,
+    ),
     locks,
   });
   deps.pipeline = pipeline;
+
+  // ── Grok channel (the car's voice assistant) ───────────────────────────
+  // Inert unless [grok].enabled. A remote MCP listener (loopback, behind a
+  // tunnel, token-gated) whose one tool runs a real turn in the owner's ordinary
+  // iMessage DM session; the reply is returned on the line, or texted if it
+  // runs long or the line has given up. See src/grok/relay.ts.
+  let grokRuntime: { stop: () => void } | null = null;
+  if (config.grok.enabled) {
+    const grokChannel = createGrokChannel({
+      config,
+      pipeline,
+      contacts,
+      chatGuidFor: (sessionKey) => state.getSession(sessionKey)?.chatGuid,
+      turnRunning: (sessionKey) => locks.isBusy(sessionKey) || pipeline.queuedCount(sessionKey) > 0,
+    });
+    if (grokChannel) {
+      grokRelay = grokChannel.relay;
+      setGrokDeliverer((text, msgGuids) => grokChannel.relay.capture(text, msgGuids));
+      grokRuntime = {
+        stop: () => {
+          setGrokDeliverer(null);
+          grokChannel.stop();
+        },
+      };
+    }
+  }
 
   // ── SMS channel (Twilio) ──────────────────────────────────────────────
   // Inert unless [sms].enabled — no routes, no deliverer, no store. The
@@ -677,7 +724,7 @@ async function main() {
   // route into a session.
   const integrationRuntimes = await startIntegrationRuntimes({
     config,
-    isBusy: isWorkerPoolBusy,
+    isBusy: daemonBusy,
     fireSystemEvent: (sessionKey, systemEvent, opts) => {
       crons.create({
         sessionKey,
@@ -1207,6 +1254,7 @@ async function main() {
       if (moved > 0) scheduler.poke();
     },
     alert: (message) => void alert.notify({ category: "facetime", error: message }),
+    state,
     activeSessions,
     turnControllers,
   });
@@ -1218,11 +1266,13 @@ async function main() {
     clearInterval(outcomeSweep);
     clearInterval(poolStatsTimer);
     resourceGovernor.stop();
+    loopLag.stop();
     // Integration runtimes own their own teardown (watchers, bridges, stores,
     // speech sidecars). Failures are isolated per-integration so one hung
     // plugin can't block the rest of shutdown.
     await stopIntegrationRuntimes(integrationRuntimes);
     smsRuntime?.stop();
+    grokRuntime?.stop();
     await callRuntime?.stop();
     creditsMaintenance.stop();
     dataTriggerWatcher?.stop();

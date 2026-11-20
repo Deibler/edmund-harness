@@ -10,15 +10,19 @@ import { log } from "../util/log.ts";
 import { startBuild } from "./build.ts";
 import { sweepDeliveries } from "./delivery.ts";
 import { mayRun, runIdeator } from "./ideator.ts";
-import { firstName } from "./settle.ts";
+import { nextLookMs } from "./pacing.ts";
+import { firstName, heldPage, heldPageText } from "./settle.ts";
 import type { IdeationStore } from "./store.ts";
 
 /**
  * When to look for something to build. After Edmund replies, the ideator
  * waits until the conversation has been quiet for a while (each reply resets
  * the wait), so it never competes with a live exchange for the machine or
- * reads a conversation mid-thought. Then, at most once a day per person and
- * only for the people configured, it runs; a pick starts a build.
+ * reads a conversation mid-thought. Then, only for the people configured and
+ * only when pacing allows (src/ideation/pacing.ts: jittered gaps between
+ * pages, a backoff after a pass that found nothing, few pages a day across
+ * everyone), it runs; a pick starts a build. Most quiet conversations end
+ * with nothing happening at all.
  *
  * Each reply is also when a delivered link would have just appeared, so the
  * delivery sweep runs then too.
@@ -26,8 +30,7 @@ import type { IdeationStore } from "./store.ts";
 
 /** Quiet for this long after the last reply before the ideator looks. */
 export const SETTLE_MS = 20 * 60_000;
-/** At most one ideator pass per person in this long. */
-export const RUN_INTERVAL_MS = 20 * 3_600_000;
+export { RUN_INTERVAL_MS } from "./pacing.ts";
 
 export type ObserverDeps = {
   config: Config;
@@ -35,18 +38,32 @@ export type ObserverDeps = {
   contacts: ContactBook;
   store: IdeationStore;
   agents: AgentStore;
+  /** Guest and vouched DMs share the `imessage:dm:` namespace; main.ts wires
+   *  the same rule that keeps them out of ghost outreach. */
+  isExcludedSession?: (sessionKey: SessionKey) => boolean;
 };
+
+/** `people = ["*"]`: everyone in a one-to-one iMessage chat who isn't a guest. */
+export const EVERYONE = "*";
 
 /**
  * Whether this conversation is one the ideator may look at. The builder makes
  * the page with a shell (copy the template, install, build, check), and a
  * sandboxed deployment gives the model none, so there every build would fail
- * after the ideator had already been paid for: nothing runs at all.
+ * after the ideator had already been paid for: nothing runs at all. A guest
+ * is never looked at, even when listed by name.
  */
-export function eligible(config: Config, contacts: ContactBook, sessionKey: SessionKey): boolean {
+export function eligible(
+  config: Config,
+  contacts: ContactBook,
+  sessionKey: SessionKey,
+  isExcludedSession?: (sessionKey: SessionKey) => boolean,
+): boolean {
   if (!config.ideation.enabled) return false;
   if (hostAccess(config) !== "full") return false;
   if (!sessionKey.startsWith("imessage:dm:")) return false;
+  if (isExcludedSession?.(sessionKey)) return false;
+  if (config.ideation.people.includes(EVERYONE)) return true;
   const handle = contacts.canon(chatIdFromKey(sessionKey));
   return config.ideation.people.some((p) => contacts.canon(p) === handle);
 }
@@ -62,7 +79,8 @@ export class IdeationObserver {
   ) {}
 
   onMainReplied(sessionKey: SessionKey): void {
-    if (this.stopped || !eligible(this.deps.config, this.deps.contacts, sessionKey)) return;
+    const { config, contacts, isExcludedSession } = this.deps;
+    if (this.stopped || !eligible(config, contacts, sessionKey, isExcludedSession)) return;
     try {
       const guids = chatGuidsForSession(sessionKey, this.deps.chatDb, this.deps.contacts);
       const n = sweepDeliveries(this.deps.store, this.deps.chatDb, sessionKey, guids);
@@ -80,6 +98,38 @@ export class IdeationObserver {
     this.pending.set(sessionKey, t);
   }
 
+  /**
+   * For an inbound turn: the finished page waiting for a natural moment in
+   * this conversation, as the block to add to the turn, or null. Swept
+   * against chat.db first, because a link given in the last reply reaches
+   * chat.db a moment after the send and must not be offered again.
+   */
+  heldPageBlock(sessionKey: SessionKey, nowMs = Date.now()): { id: string; block: string } | null {
+    const { config, contacts, isExcludedSession, store, chatDb } = this.deps;
+    if (this.stopped || !eligible(config, contacts, sessionKey, isExcludedSession)) return null;
+    try {
+      sweepDeliveries(store, chatDb, sessionKey, chatGuidsForSession(sessionKey, chatDb, contacts));
+      const page = heldPage(store, sessionKey, nowMs);
+      if (!page) return null;
+      log.info("ideation", "held page offered in this turn", {
+        session: sessionKey,
+        page: page.id,
+      });
+      return { id: page.id, block: heldPageText(page, this.nameFor(sessionKey)) };
+    } catch (err) {
+      log.warn("ideation", "held page check failed", { err: (err as Error).message });
+      return null;
+    }
+  }
+
+  private nameFor(sessionKey: SessionKey): string {
+    const handle = chatIdFromKey(sessionKey);
+    return firstName(
+      this.deps.contacts.displayName(handle) ??
+        readPersonFile(handle)?.body.match(/^# (.+)$/m)?.[1],
+    );
+  }
+
   stop(): void {
     this.stopped = true;
     for (const t of this.pending.values()) clearTimeout(t);
@@ -89,9 +139,16 @@ export class IdeationObserver {
   /** One pass for one person, if it is due. Exposed for tests and the CLI. */
   async runIfDue(sessionKey: SessionKey, nowMs = Date.now()): Promise<string> {
     if (this.stopped || this.running.has(sessionKey)) return "busy";
-    const last = this.deps.store.lastRunMs(sessionKey);
-    if (last !== null && nowMs - last < RUN_INTERVAL_MS) return "ran recently";
-    const gate = mayRun(this.deps, sessionKey, nowMs);
+    const next = nextLookMs(this.deps.store.lastRun(sessionKey));
+    if (next !== null && nowMs < next) return "ran recently";
+    let gate: ReturnType<typeof mayRun>;
+    try {
+      gate = mayRun(this.deps, sessionKey, nowMs);
+    } catch (err) {
+      // Runs from a timer: nothing above would catch it.
+      log.warn("ideation", "pacing check failed", { err: (err as Error).message });
+      return "crashed";
+    }
     if (!gate.ok) {
       this.deps.store.recordRun({
         sessionKey,
@@ -121,12 +178,7 @@ export class IdeationObserver {
         detail: detail.slice(0, 200),
       });
       if (!r.pick) return r.outcome;
-      const handle = chatIdFromKey(sessionKey);
-      const name = firstName(
-        this.deps.contacts.displayName(handle) ??
-          readPersonFile(handle)?.body.match(/^# (.+)$/m)?.[1],
-      );
-      const row = startBuild(this.deps, sessionKey, r.pick, name, nowMs);
+      const row = startBuild(this.deps, sessionKey, r.pick, this.nameFor(sessionKey), nowMs);
       return row.status === "failed" ? "build could not start" : "building";
     } catch (err) {
       log.warn("ideation", "ideator pass crashed", {

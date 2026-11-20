@@ -100,6 +100,19 @@ export const METHOD_LABEL: Record<Method, string> = {
   nocook: "No cook",
 };
 
+/**
+ * The method a dish states, or the one its name gives away. Written recipes
+ * often carry no `method`, but "Crockpot bourbon chicken" is not ambiguous.
+ */
+export function methodOf(r: Pick<Recipe, "method" | "name" | "id">): Method | null {
+  if (r.method) return r.method;
+  const s = `${r.name} ${r.id}`.toLowerCase().replace(/[-_]/g, " ");
+  if (/\bcrock ?pot\b|\bslow cooke[rd]\b/.test(s)) return "crockpot";
+  if (/\binstant ?pot\b|\bpressure cooke[rd]\b/.test(s)) return "instantpot";
+  if (/\bair ?fr(y|ied|yer)\b/.test(s)) return "airfryer";
+  return null;
+}
+
 /** True when this dish is claimed for the given month (1-12). */
 export function inSeason(r: Recipe, month: number): boolean {
   return !!r.season?.length && r.season.includes(month);

@@ -95,10 +95,10 @@ dry_run = false               # true = compute the edit and log it, don't write
 # so nothing runs unless [security].model_host_access = "full". See
 # src/ideation/.
 [ideation]
-enabled = false
-people = []                   # handles, e.g. ["+15550100001"]; empty = nobody
+enabled = true
+people = ["*"]                   # handles, e.g. ["+15550100001"]; ["*"] = every non-guest DM; empty = nobody
 model = "claude-sonnet-5-5"
-weekly_budget_usd = 25
+weekly_budget_usd = 100
 
 # Keyed guest access. Off = unknown DM senders are silently dropped (the
 # classic behavior). On = an unknown sender who DMs an active campaign key
@@ -215,6 +215,12 @@ config_file = "./integrations/integrations-config.yaml"
 # integrations/printer/README.md. The access code is a LAN password: put the
 # real one only in your own config.toml. Prints start only after an approver's
 # yes in Messages; approvers default to [security] operator_handles.
+[pixelbar]
+# enabled = false
+# url = "http://pixelbar.local"
+# key = "KEY_FROM_THE_BAR"        # hold the bar's left key; it is on the small screen
+# timeout_ms = 4000
+
 [printer]
 # enabled = false
 # host = "192.168.1.50"
@@ -327,6 +333,57 @@ allow_unknown_senders = false
 # Lines of SMS transcript shown on a cold start (chat.db knows nothing here).
 history_messages = 20
 
+# Grok (the Tesla's voice assistant) as a way to talk to Edmund. Grok calls a
+# remote MCP tool, ask_edmund, which runs a real turn inside `handle`'s own
+# iMessage DM session (the same conversation and memory as their texts) and
+# returns a short spoken-style answer. Sends and files from that turn go to
+# `handle`'s iMessage DM. The listener binds loopback only; put a Cloudflare
+# tunnel in front of `port` (scripts/launchd/run-grok-tunnel.sh). See
+# docs/grok-channel.md.
+[grok]
+enabled = false
+handle = "+15550100001"
+port = 4796
+# A long random string, 24+ characters: `openssl rand -hex 32`. Never commit a
+# real one. Without it the listener refuses to start.
+token = "REPLACE_WITH_openssl_rand_hex_32"
+# Where the token may be presented: "bearer" (Authorization header), "query"
+# (?key= on the URL) or "both".
+auth_mode = "both"
+# A request that runs longer than this returns slow_reply; the turn keeps
+# running and its answer is texted.
+answer_timeout_ms = 25000
+slow_reply = "Edmund's working on it, he'll text you the answer."
+max_message_chars = 1000
+max_reply_chars = 700
+requests_per_minute = 60
+asks_per_minute = 6
+max_auth_failures = 10
+# Optional: names of the bots that may call through the connector and what they
+# are like. Shown to the model on a turn that holds a connector request.
+# caller_note = "Known callers include ExampleBot, a deliberately simple bot."
+# (model / effort are ignored: connector turns use the DM session's model.)
+#
+# Grok Bots Edmund may hand tasks to (the `grokbot_task` tool: the owner's DM, and
+# iMessage groups the owner is in; the report comes back to the chat it was asked in).
+# One table per bot: a Grok routine with a webhook trigger. webhook_url is the
+# trigger's URL; key is the bearer key Grok shows next to it. Real values go in
+# config.toml only (gitignored), never here. See docs/grok-channel.md, "Set up a
+# Grok Bot routine for Edmund".
+# [grok.bots.main]
+# webhook_url = "https://example.com/REPLACE_WITH_THE_ROUTINE_WEBHOOK_URL"
+# key = "REPLACE_WITH_THE_ROUTINE_WEBHOOK_KEY"
+# Optional, per bot: a connector key of its own for calling Edmund back, so the
+# envelope names the caller from the key instead of from the bot introducing
+# itself. Give the bot its own connector URL ending ?key=<connector_token>.
+# `openssl rand -hex 32`, 24+ characters, different from [grok].token and from
+# every other bot's. Not the webhook `key` above. Without one the bot calls on
+# the shared [grok].token and is "a caller on the shared key". `label` is what
+# Edmund calls it; `description` is one line on what it is like.
+# connector_token = "REPLACE_WITH_openssl_rand_hex_32_FOR_THIS_BOT"
+# label = "Example Bot"
+# description = "An example Grok bot"
+
 # FaceTime calls. A call runs inside the caller's existing conversation: a
 # contact's DM session, or a group's session for a Group FaceTime. Needs the
 # native pieces built (make -C native/facetime) and the split virtual mic
@@ -358,6 +415,27 @@ effort = "low"
 # memory either way.
 model = "claude-sonnet-5-5"
 kokoro_voice = ""
+# kokoro_voice is the voice until one is chosen in the voice lab, which keeps
+# its choice in <data dir>/calls/voice.json: a Kokoro voice or blend, or one
+# of Phonon's as {"voice": "phonon:Micah", "speed": 1}. Phonon says a sentence
+# in about 0.12 s against Kokoro's 0.7 s (M4, 2026-11-12); Kokoro says any
+# line Phonon cannot, in kokoro_voice.
+#
+# How Kokoro says a word can be set in <data dir>/calls/pronounce.json, a word
+# to its phonemes in misaki's alphabet: {"Kyiv": "kˈiv"}. It is read again
+# whenever it changes; see src/voice/pronounce.py.
+# Said when a call connects before Edmund's own opening line is written, so
+# nobody picks up to silence. His line follows it. Empty says nothing.
+opener = "Hello?"
+# Short sounds of thinking. One is said when the caller has finished and no
+# word of Edmund's reply has been written thinking_sound_after_ms after they
+# stopped. Use words Kokoro can say: it reads "Mm" and "Mhm" out as letters.
+# An empty list, or 0, turns them off.
+thinking_sounds = ["Hmm.", "Let's see.", "Um,"]
+thinking_sound_after_ms = 2000
+# Seconds of quiet on both sides before Edmund is told, so he can check they
+# are still there or end the call. 0 never tells him.
+quiet_check_seconds = 12
 
 # A page on the local network for talking to Edmund the way a FaceTime call
 # does (same conversation, model, voice and turn-taking) and for tuning his

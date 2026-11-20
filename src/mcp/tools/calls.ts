@@ -66,6 +66,21 @@ export function callTools(
         "Call someone on FaceTime (audio). The call runs inside your conversation with them: what you say there and here is one conversation. End your turn after calling; you are told when they pick up (and why you called), or that they did not.",
       inputSchema: CallInput,
       handler: async (args) => {
+        // One call at a time, and said here, at once. Left to the daemon, a
+        // second request was refused seconds later by a wake-up that took a
+        // turn of its own in the middle of the call; and asked, while his
+        // call to someone was ringing, to write its opening line, Edmund
+        // called them again instead (2026-11-12).
+        const live = withStore((store) => store.anyLiveCall());
+        if (live) {
+          const who = live.conversation.label;
+          return text(
+            live.conversation.sessionKey === ctx.sessionKey
+              ? `You are already on a call with ${who} (ringing or connected). Do not call again: what you write as your reply is spoken to them.`
+              : `You are already on a call with ${who} (ringing or connected). One call at a time: that one has to end first.`,
+            true,
+          );
+        }
         let handle: string;
         if (looksLikeHandle(args.who)) {
           handle = normalizeHandle(args.who);

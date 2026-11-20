@@ -52,6 +52,24 @@ describe("eligible", () => {
     expect(eligible(config(on, undefined, "full"), contacts, `imessage:dm:${PERSON}`)).toBe(true);
   });
 
+  test('"*" admits every one-to-one iMessage chat, and still no guest', () => {
+    const all = config({ enabled: true, people: ["*"] });
+    expect(eligible(all, contacts, `imessage:dm:${PERSON}`)).toBe(true);
+    expect(eligible(all, contacts, `imessage:dm:${OTHER}`)).toBe(true);
+    expect(eligible(all, contacts, "imessage:group:any;+;chat123")).toBe(false);
+    expect(eligible(all, contacts, `sms:dm:${PERSON}`)).toBe(false);
+    expect(eligible(all, contacts, `orch:helper:imessage:dm:${PERSON}`)).toBe(false);
+    const guest = (k: string) => k === `imessage:dm:${OTHER}`;
+    expect(eligible(all, contacts, `imessage:dm:${PERSON}`, guest)).toBe(true);
+    expect(eligible(all, contacts, `imessage:dm:${OTHER}`, guest)).toBe(false);
+    // Listing a guest by name does not let them in either.
+    const named = config({ enabled: true, people: [OTHER] });
+    expect(eligible(named, contacts, `imessage:dm:${OTHER}`, guest)).toBe(false);
+    expect(
+      eligible(config({ enabled: false, people: ["*"] }), contacts, `imessage:dm:${PERSON}`),
+    ).toBe(false);
+  });
+
   test("a disabled section admits nobody even when people are listed", () => {
     expect(
       eligible(config({ enabled: false, people: [PERSON] }), contacts, `imessage:dm:${PERSON}`),
@@ -60,23 +78,29 @@ describe("eligible", () => {
 });
 
 describe("IdeationObserver.runIfDue, before any model is called", () => {
-  function setup() {
+  function setup(people: string[] = [PERSON], isExcludedSession?: (sessionKey: string) => boolean) {
     const dataDir = mkdtempSync(join(tmpdir(), "ideation-obs-"));
     const chatPath = join(dataDir, "chat.db");
     const w = new Database(chatPath);
     w.exec("PRAGMA journal_mode = WAL");
     w.exec(
-      "CREATE TABLE message (ROWID INTEGER PRIMARY KEY); CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT);",
+      `CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, attributedBody BLOB, date INTEGER,
+         is_from_me INTEGER DEFAULT 0);
+       CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, chat_identifier TEXT, style INTEGER);
+       CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
+       CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
+       CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);`,
     );
     w.close();
     const store = new IdeationStore(dataDir);
     const obs = new IdeationObserver(
       {
-        config: config({ enabled: true, people: [PERSON] }, dataDir),
+        config: config({ enabled: true, people }, dataDir),
         chatDb: new ChatDb(chatPath),
         contacts,
         store,
         agents: new AgentStore(dataDir),
+        isExcludedSession,
       },
       60_000,
     );
@@ -85,19 +109,34 @@ describe("IdeationObserver.runIfDue, before any model is called", () => {
   const key = `imessage:dm:${PERSON}`;
   const NOW = Date.parse("2026-11-03T14:00:00-05:00");
 
-  test("one pass a day per person", async () => {
+  test("a pass turned back by a gate looks again after a day", async () => {
     const { store, obs } = setup();
     store.recordRun({
       sessionKey: key,
       ranMs: NOW - RUN_INTERVAL_MS + 60_000,
-      outcome: "none",
+      outcome: "skipped",
       detail: "",
-      costUsd: 0.1,
+      costUsd: null,
     });
     expect(await obs.runIfDue(key, NOW)).toBe("ran recently");
   });
 
-  test("no pass in a week that already had a build for them, and the skip is recorded", async () => {
+  test("a pass that found nothing waits days, not hours, before the next look", async () => {
+    const { store, obs } = setup();
+    store.recordRun({
+      sessionKey: key,
+      ranMs: NOW - 30 * 3_600_000,
+      outcome: "none",
+      detail: "",
+      costUsd: 0.2,
+    });
+    expect(await obs.runIfDue(key, NOW)).toBe("ran recently");
+    // Six days on, past the longest wait, it may look again (and the empty
+    // test chat.db gives it nothing to read).
+    expect(await obs.runIfDue(key, NOW + 6 * 86_400_000)).not.toBe("ran recently");
+  });
+
+  test("no pass while a page for them is still being built, and the skip is recorded", async () => {
     const { store, obs } = setup();
     store.create({
       id: newIdeationId(),
@@ -112,7 +151,7 @@ describe("IdeationObserver.runIfDue, before any model is called", () => {
       days: ["2026-10-30", "2026-10-31", "2026-11-01"],
       createdMs: NOW - 2 * 86_400_000,
     });
-    expect(await obs.runIfDue(key, NOW)).toContain("built for them in the last 7 days");
+    expect(await obs.runIfDue(key, NOW)).toContain("a page for them is still being built");
     expect(store.lastRunMs(key)).toBe(NOW);
   });
 
@@ -122,6 +161,17 @@ describe("IdeationObserver.runIfDue, before any model is called", () => {
     expect((obs as unknown as { pending: Map<string, unknown> }).pending.size).toBe(0);
     obs.onMainReplied(key);
     expect((obs as unknown as { pending: Map<string, unknown> }).pending.size).toBe(1);
+    obs.stop();
+  });
+
+  test("with \"*\", anyone's reply arms a pass except a guest's", () => {
+    const { obs } = setup(["*"], (k) => k === `imessage:dm:${OTHER}`);
+    const pending = () => (obs as unknown as { pending: Map<string, unknown> }).pending;
+    obs.onMainReplied(`imessage:dm:${OTHER}`);
+    expect(pending().size).toBe(0);
+    obs.onMainReplied(key);
+    obs.onMainReplied("imessage:dm:+15550100003");
+    expect([...pending().keys()]).toEqual([key, "imessage:dm:+15550100003"]);
     obs.stop();
   });
 });

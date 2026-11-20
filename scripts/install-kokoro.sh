@@ -61,6 +61,30 @@ if ! "$VENV/bin/python3" -c 'import parakeet_mlx' >/dev/null 2>&1; then
   "$VENV/bin/pip" install --quiet parakeet-mlx
 fi
 
+# The phonemes Kokoro was trained on (src/voice/pronounce.py); without this
+# the sidecar still speaks, from espeak's phonemes. misaki's metadata stops at
+# Python 3.12, hence the flag: 0.9.4 on 3.13 wrote the same phonemes as on
+# 3.12 for all 200 sentences checked (2026-11-12). Its [en] extra is not
+# used: it brings torch and transformers for a tagger the sidecar never loads
+# (trf=False), and spaCy imports torch when it is there, 250 MB resident
+# against 126.
+if ! "$VENV/bin/python3" -c 'import misaki, spacy, num2words, en_core_web_sm' >/dev/null 2>&1; then
+  say 'installing misaki for Kokoro phonemes'
+  "$VENV/bin/pip" install --quiet --ignore-requires-python 'misaki==0.9.4'
+  "$VENV/bin/pip" install --quiet spacy num2words \
+    'en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl'
+fi
+
+# Phonon (src/voice/phonon-sidecar.py): the voice a call speaks in once the
+# voice lab has picked one of its voices. The wheel carries no weights, so the
+# model (about 100 MB) is fetched here and not while a call is ringing.
+if ! "$VENV/bin/python3" -c 'import ptts' >/dev/null 2>&1; then
+  say 'installing ptts for Phonon voices'
+  "$VENV/bin/pip" install --quiet ptts
+fi
+"$VENV/bin/python3" -c 'import ptts; ptts.TTS(ptts.DEFAULT_MODEL, lang="en", device="cpu")' >/dev/null 2>&1 \
+  || say 'Phonon model not fetched (no network?); it is fetched when a Phonon voice is first used'
+
 # ~325 MB. The 92 MB int8 build is deliberately not used; see the header.
 fetch() {
   local name=$1 min_bytes=$2 path=$MODELS/$1

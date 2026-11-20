@@ -5,10 +5,12 @@ import {
   isRetryable,
 } from "../alerts/operator-alert.ts";
 import { parseInboundDepth } from "../bridge/relay.ts";
+import { voiceBindingFor } from "../calls/binding.ts";
 import { deliverReply } from "../channels/deliver.ts";
 import { injectIntoRunningTurnAndConfirm } from "../claude/runner.ts";
 import type { Config } from "../config/config.ts";
 import type { GhostPrefsStore } from "../ghost/prefs.ts";
+import { IDEATION_READY_HEAD, pageStillToGive } from "../ideation/settle.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { isPermanentSendError } from "../imessage/send.ts";
 import { compactConfigFor, reanchorCodexIfNeeded, runModel } from "../model/runner.ts";
@@ -120,6 +122,19 @@ export async function fireJob(
     return;
   }
 
+  // A page Edmund made someone is scheduled as a fallback; when he already
+  // gave it in conversation (or it was taken down), the fallback is spent.
+  if (
+    job.systemEvent.startsWith(IDEATION_READY_HEAD) &&
+    !pageStillToGive(config, job.sessionKey, job.systemEvent, opts.chatDb)
+  ) {
+    log.info("cron", "skip page message: already given or taken down", {
+      job: job.id,
+      session: job.sessionKey,
+    });
+    return;
+  }
+
   const session = state.getSession(job.sessionKey);
   if (!session) {
     console.warn(`[cron] ${job.id}: no session record for ${job.sessionKey}, skipping`);
@@ -175,6 +190,32 @@ export async function fireJob(
   });
 }
 
+/**
+ * What a wake-up says to the model. In a conversation on a call it carries
+ * the same "you are on a call, your reply is spoken" block every other turn
+ * of that conversation gets (calls/envelope.ts). Wake-ups were the one path
+ * without it, and they include the first turn of every call Edmund places:
+ * with nothing but the event to go on, he answered "it is ringing, write
+ * your opening line" by narrating what he was doing, and that is what the
+ * person heard when they picked up (2026-11-12).
+ */
+export function wakeEnvelope(
+  job: Pick<CronJob, "sessionKey" | "systemEvent">,
+  header: string,
+  reception: string | null,
+  thread: string | null,
+): string {
+  const call = voiceBindingFor(job.sessionKey)?.envelopeBlock() ?? null;
+  return [
+    header,
+    "",
+    job.systemEvent,
+    ...(call ? ["", call] : []),
+    ...(reception ? ["", reception] : []),
+    ...(thread ? ["", thread] : []),
+  ].join("\n");
+}
+
 async function runAndDeliver(
   job: CronJob,
   config: Config,
@@ -204,13 +245,12 @@ async function runAndDeliver(
       log.warn("cron", "reception lookup failed", { job: job.id, err: (err as Error).message });
     }
   }
-  const envelope = [
+  const envelope = wakeEnvelope(
+    job,
     scheduledEventHeader(job.nextFireMs, now, latenessNote),
-    "",
-    job.systemEvent,
-    ...(reception ? ["", reception] : []),
-    ...(thread ? ["", thread] : []),
-  ].join("\n");
+    reception,
+    thread,
+  );
 
   log.info("cron", `fire ${kind}`, {
     job: job.id,

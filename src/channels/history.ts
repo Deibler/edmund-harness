@@ -138,24 +138,52 @@ export function buildHistoryBundle(
     if (!deps.sms) {
       return { lines: [], scope: undefined, invocation: undefined, catchUpNudge: undefined };
     }
-    // Same cold-start economics as the DM path: warm turns carry no history
-    // block (the model has the running conversation), cold starts get the
-    // recent transcript so the person is never re-introduced to Edmund.
-    const full = config.behavior.history_always || coldStart;
-    if (!full && !isGroup) {
-      return { lines: [], scope: undefined, invocation: undefined, catchUpNudge: undefined };
+    const conversation = chatIdFromKey(sessionKey);
+    // Strictly before the batch, as `historyBefore` bounds chat.db. The
+    // webhook records a message before enqueueing it, stamped with the
+    // inbound's own timestamp, so without this bound the transcript showed
+    // the very text the body was about to show.
+    const beforeBatch = (l: HistoryLine) => l.timestampMs < first.timestampMs;
+    if (!isGroup) {
+      // Same cold-start economics as the chat.db DM path: warm turns carry
+      // no history block (the model has the running conversation), cold
+      // starts get the recent transcript so nobody is re-introduced.
+      const full = config.behavior.history_always || coldStart;
+      if (!full) {
+        return { lines: [], scope: undefined, invocation: undefined, catchUpNudge: undefined };
+      }
+      const lines = deps.sms
+        .history(conversation, config.behavior.history_messages)
+        .filter(beforeBatch);
+      return {
+        lines: formatHistoryLines(lines, contacts),
+        scope: undefined,
+        invocation: undefined,
+        catchUpNudge: undefined,
+        shownSinceMs: lines[0]?.timestampMs,
+      };
     }
-    const raw = deps.sms.history(chatIdFromKey(sessionKey), config.behavior.history_messages);
-    const lines = formatHistoryLines(raw, contacts);
-    return {
-      lines,
-      scope:
-        isGroup && lines.length > 0
-          ? `${lines.length} recent messages in this group text`
-          : undefined,
-      invocation: undefined,
-      catchUpNudge: undefined,
-    };
+    // A group text gets the same active-thread view as an iMessage group.
+    // It used to get the last `history_messages` lines on EVERY turn, warm
+    // or cold: two months of one group on a "Good to know Edmund", eight
+    // weeks of its own "Anytime, <name>. If you only catch one…" replies
+    // in view, and a reply that was the ninth copy of that pattern
+    // (measured 2026-11-03: ~3k history tokens per SMS group turn against
+    // ~400 for an iMessage group).
+    const candidates = deps.sms
+      .history(conversation, config.behavior.history_candidate_window)
+      .filter(beforeBatch);
+    return groupHistoryBundle(candidates, {
+      inboundBatch,
+      inboundMs: first.timestampMs,
+      lastOutboundMs,
+      config,
+      contacts,
+      // Recall indexes chat.db only, so for a Twilio conversation nothing
+      // outside the shown thread is reachable unless the model reads back.
+      // A fresh session is the one turn that has none of it in context.
+      pointToEarlier: coldStart,
+    });
   }
 
   // Per-orchestrator visibility: chat.db is shared across personas, so the
@@ -192,13 +220,42 @@ export function buildHistoryBundle(
   }
 
   // ---- Group path: segment + classify ----
-  const candidateLimit = config.behavior.history_candidate_window;
   const candidates = getRecentMessages(
     chatDb,
     first.chatGuid,
     historyBefore(first),
-    candidateLimit,
+    config.behavior.history_candidate_window,
   ).filter(visible);
+  return groupHistoryBundle(candidates, {
+    inboundBatch,
+    inboundMs: first.timestampMs,
+    lastOutboundMs,
+    config,
+    contacts,
+    pointToEarlier: false,
+  });
+}
+
+/**
+ * The group view over candidate lines, whichever store they came from:
+ * active-thread selection, the per-thread cap, topic-shift markers, the
+ * scope line, the invocation class and the catch-up nudge. chat.db groups
+ * and Twilio group texts both come through here, so the two cannot drift
+ * into showing a group different amounts of its own past.
+ */
+function groupHistoryBundle(
+  candidates: HistoryLine[],
+  args: {
+    inboundBatch: InboundMessage[];
+    inboundMs: number;
+    lastOutboundMs: number;
+    config: Deps["config"];
+    contacts: Deps["contacts"];
+    /** Say so when earlier threads exist but aren't shown (no recall reaches them). */
+    pointToEarlier: boolean;
+  },
+): HistoryBundle {
+  const { inboundBatch, inboundMs, lastOutboundMs, config, contacts } = args;
   if (candidates.length === 0) {
     return {
       lines: [],
@@ -210,7 +267,6 @@ export function buildHistoryBundle(
 
   const breakMs = config.behavior.thread_break_minutes * 60_000;
   const minorBreakMs = config.behavior.topic_shift_minutes * 60_000;
-  const inboundMs = first.timestampMs;
   const segments = segmentByGaps(candidates, breakMs);
   const active = pickActiveSegment(segments, inboundMs);
   if (!active) {
@@ -236,6 +292,11 @@ export function buildHistoryBundle(
   if (omitted > 0) {
     renderedLines.unshift(
       `  (${omitted} earlier message${omitted === 1 ? "" : "s"} in this thread omitted — call get_thread_context to fetch them)`,
+    );
+  }
+  if (args.pointToEarlier && candidates[0]!.timestampMs < active.startMs) {
+    renderedLines.unshift(
+      "  (Earlier conversations in this chat, from before this thread, are not shown and recall does not reach them — call get_thread_context if you need what was said before)",
     );
   }
 

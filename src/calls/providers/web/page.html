@@ -362,22 +362,29 @@ $("call").onclick = async () => {
 
 // ── Voice ─────────────────────────────────────────────────────────────
 const ACCENTS = { a: "American", b: "British", e: "Spanish", f: "French", h: "Hindi", i: "Italian", j: "Japanese", p: "Portuguese", z: "Mandarin" };
+// A voice is Kokoro's ("am_fenrir") or one from Phonon's catalog ("phonon:Micah").
+const isPhonon = (v) => v.startsWith("phonon:");
 function describe(v) {
+  if (isPhonon(v)) return v.slice("phonon:".length);
   const [tag, name] = v.split("_");
   const who = tag[1] === "f" ? "female" : tag[1] === "m" ? "male" : "";
   return `${name[0].toUpperCase()}${name.slice(1)} (${ACCENTS[tag[0]] || tag[0]} ${who})`.replace(" )", ")");
 }
 function parse(setting) {
+  if (isPhonon(setting.voice)) return { parts: [[setting.voice, 1]], speed: setting.speed };
   const parts = setting.voice.split(",").map((p) => { const [n, w] = p.split(":"); return [n, w === undefined ? 1 : Number(w)]; });
   return { parts, speed: setting.speed };
 }
 function chosen() {
-  const v = $("voice").value, b = $("blend").value, mix = Number($("mix").value);
+  const v = $("voice").value, b = isPhonon(v) ? "" : $("blend").value, mix = Number($("mix").value);
   const voice = b && b !== v ? `${v}:${(1 - mix).toFixed(2)},${b}:${mix.toFixed(2)}` : v;
   return { voice, speed: Number($("speed").value) };
 }
 function sync() {
-  $("blendRow").hidden = !$("blend").value;
+  // A blend is a mix of Kokoro's voices; Phonon's are spoken as they are.
+  const phonon = isPhonon($("voice").value);
+  $("blend").disabled = phonon;
+  $("blendRow").hidden = phonon || !$("blend").value;
   $("mixValue").textContent = `${Math.round(Number($("mix").value) * 100)}% ${$("blend").value ? describe($("blend").value).split(" (")[0] : ""}`;
   $("speedValue").textContent = `${Number($("speed").value).toFixed(2)}x`;
   const c = chosen();
@@ -386,15 +393,22 @@ function sync() {
 function showSaved() {
   if (!current) return;
   const { parts } = parse(current);
-  $("saved").textContent = `Calls use: ${parts.map(([n, w]) => parts.length > 1 ? `${describe(n).split(" (")[0]} ${Math.round(w * 100)}%` : describe(n)).join(" + ")}, ${current.speed.toFixed(2)}x`;
+  $("saved").textContent = `Calls use: ${parts.map(([n, w]) => parts.length > 1 ? `${describe(n).split(" (")[0]} ${Math.round(w * 100)}%` : isPhonon(n) ? `${describe(n)} (Phonon)` : describe(n)).join(" + ")}, ${current.speed.toFixed(2)}x`;
 }
 async function loadVoices() {
   const r = await fetch("/api/voices");
   if (!r.ok) return;
   const j = await r.json();
   voices = j.voices; current = j.current;
-  const opts = (sel) => { for (const v of voices) { const o = document.createElement("option"); o.value = v; o.textContent = describe(v); sel.append(o); } };
-  opts($("voice")); opts($("blend"));
+  const group = (sel, label, list) => {
+    if (!list.length) return;
+    const g = document.createElement("optgroup"); g.label = label;
+    for (const v of list) { const o = document.createElement("option"); o.value = v; o.textContent = describe(v); g.append(o); }
+    sel.append(g);
+  };
+  const phonon = voices.filter(isPhonon), kokoro = voices.filter((v) => !isPhonon(v));
+  group($("voice"), "Phonon", phonon); group($("voice"), "Kokoro", kokoro);
+  group($("blend"), "Kokoro", kokoro);
   const { parts, speed } = parse(current);
   $("voice").value = parts[0][0];
   if (parts[1]) { $("blend").value = parts[1][0]; const sum = parts[0][1] + parts[1][1]; $("mix").value = String(parts[1][1] / sum); }

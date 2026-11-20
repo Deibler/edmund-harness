@@ -175,6 +175,15 @@ describe("parseIdeatorOutput", () => {
     );
   });
 
+  test("a reason put inside a candidate is lifted, and a missing one is not fatal", () => {
+    const { reason, ...noReason } = good;
+    const nested = { ...noReason, candidates: [{ ...candidate("fishing"), reason }] };
+    const r = parseIdeatorOutput(JSON.stringify(nested));
+    expect(r?.reason).toBe("nothing yet");
+    expect(r?.candidates).toHaveLength(1);
+    expect(parseIdeatorOutput(JSON.stringify(noReason))?.reason).toBe("");
+  });
+
   test("rejects an unknown category instead of guessing", () => {
     const bad = { ...good, threads: [{ label: "fishing", category: "hobby", evidence: [1] }] };
     expect(parseIdeatorOutput(JSON.stringify(bad))).toBeNull();

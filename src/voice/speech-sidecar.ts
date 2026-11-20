@@ -73,7 +73,13 @@ export type SpeechSidecarOptions = {
   python?: string;
   model?: string;
   voices?: string;
-  /** Kokoro voice used when a request names none. */
+  /**
+   * Which model speaks: Kokoro (speech-sidecar.py, the default) or Phonon
+   * (phonon-sidecar.py). Phonon needs no model files of its own here: `ptts`
+   * fetches the model once and reads it from its cache after that.
+   */
+  engine?: "kokoro" | "phonon";
+  /** The voice used when a request names none, and the one warmed at boot. */
   voice: string;
   /** Whisper model for local recognition; "" turns recognition off. */
   sttModel: string;
@@ -84,8 +90,17 @@ export type SpeechSidecarOptions = {
    * warmup(), never in the middle of use. For calls: an unload or a recycle
    * is a pause the caller hears, and calls warm the voice at ring time,
    * before anyone is listening.
+   *
+   * A function is asked each time it matters, so of two sidecars the one
+   * whose voice is in use stays loaded and the other gives its memory back.
    */
-  resident?: boolean;
+  resident?: boolean | (() => boolean);
+  /**
+   * A JSON file of the operator's own pronunciations, word to phonemes
+   * (src/voice/pronounce.py). Read by the sidecar, again whenever it changes;
+   * absent is fine.
+   */
+  pronounce?: string;
 };
 
 export class SpeechSidecar {
@@ -96,7 +111,9 @@ export class SpeechSidecar {
   private readonly voicesPath: string;
   private readonly defaultVoice: string;
   private readonly sttModel: string;
-  private readonly stayResident: boolean;
+  private readonly stayResident: () => boolean;
+  private readonly engine: "kokoro" | "phonon";
+  private readonly pronouncePath: string;
   private proc: ChildProcessWithoutNullStreams | null = null;
   private booting: Promise<boolean> | null = null;
   private ready = false;
@@ -120,30 +137,31 @@ export class SpeechSidecar {
     this.defaultVoice = options.voice;
     this.sttModel = options.sttModel;
     this.tag = options.tag;
-    this.stayResident = options.resident === true;
-    this.scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), "speech-sidecar.py");
+    const resident = options.resident;
+    this.stayResident = typeof resident === "function" ? resident : () => resident === true;
+    this.engine = options.engine ?? "kokoro";
+    this.pronouncePath = options.pronounce ? expandHome(options.pronounce) : "";
+    this.scriptPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      this.engine === "phonon" ? "phonon-sidecar.py" : "speech-sidecar.py",
+    );
   }
 
   /** True when the sidecar's dependencies are present on this machine. */
   installed(): boolean {
-    return (
-      existsSync(this.pythonBin) &&
-      existsSync(this.scriptPath) &&
-      existsSync(this.modelPath) &&
-      existsSync(this.voicesPath)
-    );
+    return this.missingPaths().length === 0;
   }
 
   /** Absent files are a misconfiguration worth naming precisely at boot. */
   missingPaths(): string[] {
-    return (
-      [
-        ["python", this.pythonBin],
-        ["script", this.scriptPath],
-        ["model", this.modelPath],
-        ["voices", this.voicesPath],
-      ] as const
-    )
+    const needed: [string, string][] = [
+      ["python", this.pythonBin],
+      ["script", this.scriptPath],
+    ];
+    // Kokoro's graph and voices are files of ours; Phonon's model is ptts's.
+    if (this.engine === "kokoro")
+      needed.push(["model", this.modelPath], ["voices", this.voicesPath]);
+    return needed
       .filter(([, path]) => !existsSync(path))
       .map(([label, path]) => `${label}=${path}`);
   }
@@ -163,11 +181,13 @@ export class SpeechSidecar {
   async warmup(): Promise<void> {
     if (this.stopped || !this.installed()) return;
     if (
-      this.stayResident &&
+      this.stayResident() &&
       this.servedSinceSpawn >= RESTART_AFTER_REQUESTS &&
       this.pending.size + this.pendingText.size === 0
     ) {
-      console.log(`[${this.tag}] kokoro recycling sidecar after 500 requests, while warming`);
+      console.log(
+        `[${this.tag}] ${this.engine} recycling sidecar after 500 requests, while warming`,
+      );
       this.restart("request budget reached");
     }
     await this.ensureRunning().catch(() => false);
@@ -186,8 +206,8 @@ export class SpeechSidecar {
     const proc = this.proc;
     if (!proc?.stdin.writable) return null;
 
-    if (!this.stayResident && this.servedSinceSpawn >= RESTART_AFTER_REQUESTS) {
-      console.log(`[${this.tag}] kokoro recycling sidecar after 500 requests`);
+    if (!this.stayResident() && this.servedSinceSpawn >= RESTART_AFTER_REQUESTS) {
+      console.log(`[${this.tag}] ${this.engine} recycling sidecar after 500 requests`);
       this.restart("request budget reached");
       if (!(await this.ensureRunning())) return null;
     }
@@ -203,7 +223,7 @@ export class SpeechSidecar {
     return new Promise<KokoroAudio | null>((resolvePromise) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        console.warn(`[${this.tag}] kokoro timed out after ${REQUEST_TIMEOUT_MS}ms`);
+        console.warn(`[${this.tag}] ${this.engine} timed out after ${REQUEST_TIMEOUT_MS}ms`);
         // A timeout means the sidecar is wedged or pathologically slow; its
         // late reply would desynchronize this stream from every later request.
         this.restart("request timed out");
@@ -216,7 +236,7 @@ export class SpeechSidecar {
         this.proc?.stdin.write(`${request}\n`);
       } catch (err) {
         this.settle(id, null);
-        console.warn(`[${this.tag}] kokoro write failed: ${safeError(err)}`);
+        console.warn(`[${this.tag}] ${this.engine} write failed: ${safeError(err)}`);
       }
     });
   }
@@ -254,7 +274,7 @@ export class SpeechSidecar {
     });
   }
 
-  /** Kokoro's voice names, or null when the sidecar cannot say. */
+  /** The engine's voice names, or null when the sidecar cannot say. */
   async voices(): Promise<string[] | null> {
     if (this.stopped || !(await this.ensureRunning()) || !this.proc?.stdin.writable) return null;
     const id = `v${++this.sequence}`;
@@ -281,10 +301,11 @@ export class SpeechSidecar {
   /** Measured from the last finished request, so a long exchange is never cut off. */
   private armIdleUnload(): void {
     this.clearIdleUnload();
-    if (this.stayResident) return;
     const timer = setTimeout(() => {
       this.idleTimer = null;
-      if (this.pending.size + this.pendingText.size > 0 || this.booting) {
+      // Asked when the quiet spell ends, not when it began: which sidecar is
+      // the resident one can change in between.
+      if (this.stayResident() || this.pending.size + this.pendingText.size > 0 || this.booting) {
         this.armIdleUnload();
         return;
       }
@@ -315,7 +336,9 @@ export class SpeechSidecar {
 
   private spawnSidecar(): Promise<boolean> {
     if (!this.installed()) {
-      console.warn(`[${this.tag}] kokoro unavailable (missing ${this.missingPaths().join(", ")})`);
+      console.warn(
+        `[${this.tag}] ${this.engine} unavailable (missing ${this.missingPaths().join(", ")})`,
+      );
       this.consecutiveFailures = MAX_CONSECUTIVE_FAILURES;
       return Promise.resolve(false);
     }
@@ -331,6 +354,8 @@ export class SpeechSidecar {
             KOKORO_VOICES: this.voicesPath,
             KOKORO_VOICE: this.defaultVoice,
             WHISPER_MODEL: this.sttModel,
+            KOKORO_PRONOUNCE: this.pronouncePath,
+            PHONON_VOICE: this.defaultVoice,
             // The phonemizer resolves espeak-ng through its bundled loader;
             // an inherited override from the parent shell only breaks it.
             PHONEMIZER_ESPEAK_LIBRARY: "",
@@ -338,7 +363,7 @@ export class SpeechSidecar {
         });
       } catch (err) {
         this.consecutiveFailures += 1;
-        console.error(`[${this.tag}] kokoro spawn failed: ${safeError(err)}`);
+        console.error(`[${this.tag}] ${this.engine} spawn failed: ${safeError(err)}`);
         resolveBoot(false);
         return;
       }
@@ -359,9 +384,11 @@ export class SpeechSidecar {
           this.armIdleUnload();
         } else {
           this.consecutiveFailures += 1;
-          if (reason) console.error(`[${this.tag}] kokoro boot failed: ${reason}`);
+          if (reason) console.error(`[${this.tag}] ${this.engine} boot failed: ${reason}`);
           if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            console.error(`[${this.tag}] kokoro disabled for this run; using OpenRouter TTS`);
+            console.error(
+              `[${this.tag}] ${this.engine} disabled for this run; its caller falls back`,
+            );
           }
         }
         resolveBoot(ok);
@@ -378,7 +405,7 @@ export class SpeechSidecar {
         this.stdoutBuffer += chunk;
         if (this.stdoutBuffer.length > MAX_RESPONSE_BYTES) {
           this.stdoutBuffer = "";
-          console.warn(`[${this.tag}] kokoro response exceeded bounds; restarting`);
+          console.warn(`[${this.tag}] ${this.engine} response exceeded bounds; restarting`);
           this.restart("oversized response");
           return;
         }
@@ -396,9 +423,10 @@ export class SpeechSidecar {
           // onnxruntime and phonemizer are chatty on stderr; surface only the
           // sidecar's own lines and anything that reads like a real failure.
           if (!trimmed) continue;
-          if (trimmed.startsWith("[kokoro]")) console.log(`[${this.tag}] ${trimmed}`);
+          if (trimmed.startsWith("[kokoro]") || trimmed.startsWith("[phonon]"))
+            console.log(`[${this.tag}] ${trimmed}`);
           else if (/error|traceback|exception/i.test(trimmed)) {
-            console.warn(`[${this.tag}] kokoro: ${trimmed.slice(0, 240)}`);
+            console.warn(`[${this.tag}] ${this.engine}: ${trimmed.slice(0, 240)}`);
           }
         }
       });
@@ -421,11 +449,13 @@ export class SpeechSidecar {
         if (this.postBootCrashes >= MAX_POST_BOOT_CRASHES) {
           this.consecutiveFailures = MAX_CONSECUTIVE_FAILURES;
           console.error(
-            `[${this.tag}] kokoro crashed ${this.postBootCrashes}x after booting; disabled for this run, using OpenRouter TTS`,
+            `[${this.tag}] ${this.engine} crashed ${this.postBootCrashes}x after booting; disabled for this run, its caller falls back`,
           );
           return;
         }
-        console.warn(`[${this.tag}] kokoro exited (code=${code}); next request respawns it`);
+        console.warn(
+          `[${this.tag}] ${this.engine} exited (code=${code}); next request respawns it`,
+        );
       });
     });
   }
@@ -435,6 +465,8 @@ export class SpeechSidecar {
       id?: unknown;
       ok?: unknown;
       ready?: unknown;
+      g2p?: unknown;
+      detail?: unknown;
       error?: unknown;
       pcm16?: unknown;
       rate?: unknown;
@@ -445,13 +477,24 @@ export class SpeechSidecar {
     try {
       message = JSON.parse(line);
     } catch {
-      console.warn(`[${this.tag}] kokoro emitted a non-protocol line: ${line.slice(0, 160)}`);
+      console.warn(
+        `[${this.tag}] ${this.engine} emitted a non-protocol line: ${line.slice(0, 160)}`,
+      );
       return;
     }
 
     if (message.id === "boot") {
-      if (message.ok === true && message.ready === true) settleBoot(true);
-      else settleBoot(false, String(message.error ?? "unknown boot failure"));
+      if (message.ok === true && message.ready === true) {
+        // Kokoro says which phonemes it is being fed: misaki's (what it was
+        // trained on) or espeak's, when misaki is not installed. Heard, so
+        // logged. Phonon says its device and how many voices it found.
+        const detail =
+          typeof message.detail === "string"
+            ? message.detail
+            : `phonemes=${String(message.g2p ?? "espeak")}`;
+        console.log(`[${this.tag}] ${this.engine} ready ${detail}`);
+        settleBoot(true);
+      } else settleBoot(false, String(message.error ?? "unknown boot failure"));
       return;
     }
 
@@ -477,7 +520,9 @@ export class SpeechSidecar {
     if (!this.pending.has(id)) return;
 
     if (message.ok !== true || typeof message.pcm16 !== "string") {
-      console.warn(`[${this.tag}] kokoro synthesis failed: ${String(message.error ?? "unknown")}`);
+      console.warn(
+        `[${this.tag}] ${this.engine} synthesis failed: ${String(message.error ?? "unknown")}`,
+      );
       this.settle(id, null);
       return;
     }

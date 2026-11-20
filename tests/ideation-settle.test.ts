@@ -89,29 +89,52 @@ describe("settleIdeation", () => {
     expect(f.created).toEqual([]);
   });
 
-  test("a published page is offered to Edmund once, at the next hour they accept messages", () => {
+  test("a published page is scheduled once, held, and never at night", () => {
     const f = fixture();
     const a = f.addAgent();
     const i = f.addIdeation(a.id, true);
-    expect(settleIdeation(f.deps(NIGHT), { id: a.id, status: "done" })).toBe(true);
-    expect(settleIdeation(f.deps(NIGHT), { id: a.id, status: "done" })).toBe(true);
+    // A draw of 0 asks for "soon", but 03:05-04:30 is outside their hours.
+    const deps = { ...f.deps(NIGHT), random: () => 0 };
+    expect(settleIdeation(deps, { id: a.id, status: "done" })).toBe(true);
+    expect(settleIdeation(deps, { id: a.id, status: "done" })).toBe(true);
     expect(f.created).toHaveLength(1);
-    expect(f.created[0]?.atMs).toBe(NINE_AM);
+    const at = f.created[0]?.atMs ?? 0;
+    expect(at).toBeGreaterThanOrEqual(NIGHT + 20 * 3_600_000);
+    expect(at).toBeLessThanOrEqual(NIGHT + 72 * 3_600_000);
+    expect(at).toBeGreaterThanOrEqual(NINE_AM);
     expect(f.created[0]?.sessionKey).toBe(PARENT);
     const ev = f.created[0]?.systemEvent ?? "";
     expect(ev).toStartWith(IDEATION_READY_HEAD);
+    expect(ev).toContain("keeping it for a natural moment");
     expect(ev).toContain(`https://pages.example.com/i/${i.id}/`);
     expect(ev).toContain("KEEP_QUIET");
     expect(ev).toContain("Oct 24, Oct 27, Nov 1");
     expect(isCompletionEvent(ev)).toBe(false);
+    // Announced is what makes it held for their next message.
+    expect(f.store.get(i.id)?.announcedMs).toBe(NIGHT);
   });
 
-  test("inside their hours it waits only long enough for a reply in flight", () => {
+  test("a page finished while they are mid-conversation is held for that conversation", () => {
     const f = fixture();
     const a = f.addAgent();
     f.addIdeation(a.id, true);
-    settleIdeation(f.deps(AFTERNOON), { id: a.id, status: "done" });
-    expect(f.created[0]?.atMs).toBe(AFTERNOON + 30_000);
+    settleIdeation(
+      { ...f.deps(AFTERNOON), random: () => 0, lastInboundMsFor: () => AFTERNOON - 5 * 60_000 },
+      { id: a.id, status: "done" },
+    );
+    expect(f.created[0]?.atMs).toBeGreaterThanOrEqual(AFTERNOON + 20 * 3_600_000);
+    expect(f.created[0]?.systemEvent).toContain("keeping it for a natural moment");
+  });
+
+  test("a soon draw in their hours sends it within the next hour and a half, not on the dot", () => {
+    const f = fixture();
+    const a = f.addAgent();
+    f.addIdeation(a.id, true);
+    settleIdeation({ ...f.deps(AFTERNOON), random: () => 0.2 }, { id: a.id, status: "done" });
+    const at = f.created[0]?.atMs ?? 0;
+    expect(at).toBeGreaterThanOrEqual(AFTERNOON + 5 * 60_000);
+    expect(at).toBeLessThanOrEqual(AFTERNOON + 90 * 60_000);
+    expect(f.created[0]?.systemEvent).toContain("You finished it a little while ago.");
   });
 
   test("an agent that built nothing is not an ideation", () => {

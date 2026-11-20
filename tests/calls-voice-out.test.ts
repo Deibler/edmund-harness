@@ -3,19 +3,27 @@
  * when the caller talks over him or the call drops.
  */
 import { describe, expect, test } from "bun:test";
-import { VoiceOut } from "../src/calls/voice-out.ts";
+import { VoiceOut, takeFirstClause } from "../src/calls/voice-out.ts";
 
 type Said = { text: string; heard: boolean };
 
-function harness(opts: { failSynthesis?: boolean } = {}) {
+function harness(opts: { failSynthesis?: boolean; voice?: () => string } = {}) {
   const queued: { chunkId: string; text: string }[] = [];
   const said: Said[] = [];
+  const kinds: string[] = [];
+  const synthesized: string[] = [];
   let flushes = 0;
   const voice = new VoiceOut({
     speaker: {
-      synthesize: async (text: string) =>
-        opts.failSynthesis ? null : { pcm: new TextEncoder().encode(text), sampleRate: 24_000 },
+      synthesize: async (text: string) => {
+        synthesized.push(text);
+        return opts.failSynthesis
+          ? null
+          : { pcm: new TextEncoder().encode(text), sampleRate: 24_000 };
+      },
+      ...(opts.voice ? { voiceKey: opts.voice } : {}),
     },
+    onSpeaking: (kind) => kinds.push(kind),
     provider: {
       say: async (chunkId: string, pcm: Uint8Array) => {
         queued.push({ chunkId, text: new TextDecoder().decode(pcm) });
@@ -26,7 +34,7 @@ function harness(opts: { failSynthesis?: boolean } = {}) {
     },
     onSaid: (text, heard) => said.push({ text, heard }),
   });
-  return { voice, queued, said, flushes: () => flushes };
+  return { voice, queued, said, kinds, synthesized, flushes: () => flushes };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 5));
@@ -277,5 +285,112 @@ describe("a finished sentence before a pause in the text", () => {
     voice.delta("t1", "So the thing about the");
     await new Promise((r) => setTimeout(r, 300));
     expect(queued).toEqual([]);
+  });
+});
+
+describe("a long opening sentence", () => {
+  const LONG =
+    "Honestly, the easiest thing is to brown the chicken first, then add the stock and let it simmer for about twenty minutes.";
+
+  test("is begun at its first clause worth saying, not held until its full stop", async () => {
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    voice.delta("t1", LONG.slice(0, 70));
+    await settle();
+    expect(queued.map((q) => q.text)).toEqual([
+      "Honestly, the easiest thing is to brown the chicken first,",
+    ]);
+    voice.delta("t1", LONG.slice(70));
+    await voice.deliver(LONG, "t1");
+    expect(queued.map((q) => q.text).join(" ")).toBe(LONG);
+  });
+
+  test("only the opening is cut that way: later sentences are said whole", async () => {
+    const { voice, queued } = harness();
+    voice.beginTurn("t1");
+    voice.delta("t1", `Sure. ${LONG.slice(0, 70)}`);
+    await settle();
+    expect(queued.map((q) => q.text)).toEqual(["Sure."]);
+  });
+
+  test("a short one is left alone, and so are times and numbers", () => {
+    expect(takeFirstClause("Yeah, that works for me.")).toBeNull();
+    // Long enough, but its only breaks are inside a time and a number.
+    expect(
+      takeFirstClause("The reservation I made for all of us is at 7:30 and it costs 82,400 yen"),
+    ).toBeNull();
+    expect(
+      takeFirstClause("Well, I looked at the forecast for the weekend, and it is going to rain")
+        ?.clause,
+    ).toBe("Well, I looked at the forecast for the weekend,");
+  });
+});
+
+describe("an aside", () => {
+  test("is said into silence, and the reply follows it", async () => {
+    const { voice, queued, kinds } = harness();
+    voice.beginTurn("t1");
+    expect(voice.aside("Hmm.")).toBe(true);
+    // It is not the reply beginning: a caller who talks now still has the reply held.
+    expect(voice.awaitingFirstWords()).toBe(true);
+    voice.delta("t1", "Tacos. ");
+    await voice.deliver("Tacos.", "t1");
+    expect(queued.map((q) => q.text)).toEqual(["Hmm.", "Tacos."]);
+    expect(kinds).toEqual(["aside", "reply"]);
+  });
+
+  test("is never said over Edmund, into a held line, or once his reply has begun", async () => {
+    const speaking = harness();
+    await speaking.voice.deliver("The agent finished.");
+    expect(speaking.voice.aside("Hmm.")).toBe(false);
+
+    const ringing = harness();
+    ringing.voice.hold();
+    expect(ringing.voice.aside("Hello?")).toBe(false);
+
+    const begun = harness();
+    begun.voice.beginTurn("t1");
+    begun.voice.delta("t1", "Sure thing. Give me");
+    expect(begun.voice.aside("Hmm.")).toBe(false);
+    await settle();
+    expect(begun.queued.map((q) => q.text)).toEqual(["Sure thing."]);
+  });
+
+  test("talked over, it is stopped and the reply is held for them, with nothing noted as missed", async () => {
+    const { voice, queued, flushes } = harness();
+    voice.beginTurn("t1");
+    voice.aside("Hmm.");
+    await settle();
+    expect(queued.map((q) => q.text)).toEqual(["Hmm."]);
+    await voice.bargeIn();
+    expect(flushes()).toBe(1);
+    expect(voice.holding()).toBe(true);
+    expect(await voice.deliver("The store closes at nine.", "t1")).toBe("silent");
+    voice.dropHeld();
+    expect(voice.takeCutOff()).toEqual({ kind: "kept-talking", text: "The store closes at nine." });
+  });
+
+  test("prepared ahead, it is synthesised once; in a new voice, again", async () => {
+    let current = "am_fenrir@1";
+    const { voice, queued, synthesized } = harness({ voice: () => current });
+    voice.prepare("Hello?");
+    voice.prepare("Hello?");
+    expect(voice.aside("Hello?")).toBe(true);
+    await settle();
+    expect(synthesized).toEqual(["Hello?"]);
+    voice.onSpoken(queued[0]!.chunkId, true);
+
+    current = "bm_daniel@1"; // call_voice: a line kept in the old voice is not his any more
+    expect(voice.aside("Hello?")).toBe(true);
+    await settle();
+    expect(synthesized).toEqual(["Hello?", "Hello?"]);
+  });
+
+  test("has spoken only once something was handed over to play", async () => {
+    const { voice } = harness();
+    expect(voice.hasSpoken()).toBe(false);
+    voice.aside("Hello?");
+    await settle();
+    expect(voice.hasSpoken()).toBe(true);
   });
 });

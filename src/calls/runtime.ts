@@ -21,10 +21,10 @@ import { operatorHandles } from "../security/policy.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { log } from "../util/log.ts";
-import { SpeechSidecar, defaultPython } from "../voice/speech-sidecar.ts";
+import { SpeechSidecar, defaultPython, kokoroVoices } from "../voice/speech-sidecar.ts";
 import { Transcriber } from "../voice/transcriber.ts";
 import { TurnDetector } from "../voice/turn-detector.ts";
-import { conversationForPeer } from "./conversation.ts";
+import { type SessionRecords, conversationForPeer, ensureSessionFor } from "./conversation.ts";
 import { CallManager } from "./manager.ts";
 import { CallPolicy } from "./policy.ts";
 import { FaceTimeProvider } from "./providers/facetime/provider.ts";
@@ -33,10 +33,23 @@ import { LabServer } from "./providers/web/server.ts";
 import { CallStore } from "./store.ts";
 import { clearForCall } from "./takeover.ts";
 import type { CallProvider, Speaker } from "./types.ts";
-import { VoiceSettingsStore, voiceForCall } from "./voice-settings.ts";
+import { routeVoice } from "./voice-router.ts";
+import {
+  VoiceSettingsStore,
+  engineOf,
+  phononName,
+  phononVoice,
+  voiceForCall,
+} from "./voice-settings.ts";
 
-/** Kokoro synthesises at 24 kHz; the mouth is opened at the same rate. */
+/** Kokoro and Phonon both synthesise at 24 kHz; the mouth is opened at the same rate. */
 const SAMPLE_RATE = 24_000;
+/**
+ * How long after the last call (or the last thing heard) the transcriber
+ * stays loaded: long enough for "call me back", short enough that its
+ * 1.5 GB is not held all day for a few minutes of calls.
+ */
+const HEARING_IDLE_UNLOAD_MS = 10 * 60_000;
 /** Edmund's voice on the mirror too (Kokoro's British male), so he sounds the same everywhere. */
 const DEFAULT_VOICE = "bm_daniel";
 
@@ -50,6 +63,8 @@ export type CallRuntimeDeps = {
   /** Fire the session's pending agent-completion wake-ups now (see CallManagerDeps). */
   expediteWakeUps: (sessionKey: SessionKey) => void;
   alert: (message: string) => void;
+  /** Session records, so a call to someone never texted still has a conversation to wake. */
+  state: SessionRecords;
   activeSessions: Set<SessionKey>;
   turnControllers: Map<SessionKey, AbortController>;
 };
@@ -98,39 +113,70 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
   const dataDir = config.paths.data_dir;
   // As tuned in the voice lab; read at every sentence, so a change is heard
   // from the next one on.
+  const kokoroVoice = settings.kokoro_voice || DEFAULT_VOICE;
   const voiceSettings = new VoiceSettingsStore(join(dataDir, "calls", "voice.json"), {
-    voice: settings.kokoro_voice || DEFAULT_VOICE,
+    voice: kokoroVoice,
     speed: 1,
   });
-  // Its own process, so a call never waits behind the mirror. Resident: an
-  // idle unload or a mid-call recycle is a pause the caller hears.
-  const sidecar = new SpeechSidecar({
-    voice: settings.kokoro_voice || DEFAULT_VOICE,
+  const tunedEngine = () => engineOf(voiceSettings.get().voice);
+  // A process for each engine, and neither is the mirror's, so a call never
+  // waits behind it. The one whose voice is in use is resident: an idle
+  // unload or a mid-call recycle is a pause the caller hears. The other loads
+  // when it is asked for (a preview in the lab, a line Phonon could not say)
+  // and gives its memory back when left alone.
+  const kokoro = new SpeechSidecar({
+    voice: kokoroVoice,
     sttModel: "",
     tag: "facetime",
-    resident: true,
+    resident: () => tunedEngine() === "kokoro",
+    pronounce: join(dataDir, "calls", "pronounce.json"),
   });
+  const tunedAtBoot = voiceSettings.get().voice;
+  const phonon = new SpeechSidecar({
+    engine: "phonon",
+    // Spoken once as it loads, so the voice is in its cache before a call is.
+    voice: engineOf(tunedAtBoot) === "phonon" ? phononName(tunedAtBoot) : "",
+    sttModel: "",
+    tag: "facetime",
+    resident: () => tunedEngine() === "phonon",
+  });
+  const say = routeVoice({
+    phonon: (text, voice, speed) => phonon.synthesize(text, voice, speed),
+    kokoro: (text, voice, speed) => kokoro.synthesize(text, voice, speed),
+    fallbackVoice: kokoroVoice,
+    warn: (message, fields) => log.warn("calls", message, fields),
+  });
+  const warmVoice = () => void (tunedEngine() === "phonon" ? phonon : kokoro).warmup();
   const store = new CallStore(dataDir);
   let manager: CallManager | null = null;
   // The voice Edmund chose for this call (call_voice) is checked here, where
   // it is used, against the rule and the voices Kokoro has: the tool's own
-  // check runs in another process. Asked of Kokoro once, when first needed.
+  // check runs in another process. Read from Kokoro's voices file once, when
+  // first needed, without starting Kokoro to ask.
   let installed: string[] | null = null;
   const speaker: Speaker = {
     synthesize: async (text) => {
       const tuned = voiceSettings.get();
       const call = manager?.current();
       const chosen = call ? store.voice(call.id) : null;
-      if (chosen) installed ??= await sidecar.voices();
+      if (chosen) installed ??= kokoroVoices();
       const { voice, speed } = voiceForCall(tuned, chosen, installed);
       if (chosen && voice !== chosen)
         log.warn("calls", "chosen voice refused", { chosen, voice, installed: installed !== null });
-      const audio = await sidecar.synthesize(text, voice, speed);
+      const audio = await say(text, voice, speed);
       return audio ? { pcm: audio.pcm, sampleRate: audio.sampleRate } : null;
     },
-    warm: () => void sidecar.warmup(),
+    warm: warmVoice,
+    // As synthesize chooses it: the call's own voice if Edmund picked one.
+    voiceKey: () => {
+      const tuned = voiceSettings.get();
+      const call = manager?.current();
+      const chosen = call ? store.voice(call.id) : null;
+      const { voice, speed } = voiceForCall(tuned, chosen, installed);
+      return `${voice}@${speed}`;
+    },
   };
-  void sidecar.warmup();
+  warmVoice();
   // Resident for as long as calls are on: ~9 MB, and a verdict is ~12 ms.
   // Without the model (make -C native/facetime turn-model) every pause falls
   // back to the fixed silence timer.
@@ -142,9 +188,15 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
       hint: "make -C native/facetime turn-model",
     });
 
-  // Both kinds of call hear with the Ear: Parakeet on each stretch of speech,
-  // resident so the first words of a call never wait for a model to load.
-  const transcriber = new Transcriber({ python: defaultPython() });
+  // Both kinds of call hear with the Ear: Parakeet on each stretch of speech.
+  // Loaded now, so a broken install is known at boot and not on the first
+  // call; then again at each ring (CallManager.prepareToHear), and let go
+  // once no call has needed it for a while. Never during one.
+  const transcriber = new Transcriber({
+    python: defaultPython(),
+    idleUnloadMs: HEARING_IDLE_UNLOAD_MS,
+    inUse: () => manager?.current() != null,
+  });
   if (!transcriber.installed()) {
     log.error("calls", "calls are off: no transcriber python (scripts/install-kokoro.sh)", {
       python: defaultPython(),
@@ -206,16 +258,28 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
       turnThreshold: 0.5,
       turnCompleteGraceMs: 80,
       turnIncompleteWaitMs: 800,
+      // From the transcript's arrival, about 0.4 s after they stopped.
+      turnPunctuatedWaitMs: 250,
+      hesitationHoldMs: 4_000,
       holdReleaseMs: 1_500,
       dialTimeoutMs: 45_000,
       pollMs: 300,
+      openerLine: settings.opener.trim(),
+      // Long enough for a line that is being synthesised to land first; short
+      // enough that "hello?" still comes before they say it twice.
+      openerGraceMs: 1_200,
+      thinkingSounds: settings.thinking_sounds.map((sound) => sound.trim()).filter(Boolean),
+      thinkingAfterMs: settings.thinking_sound_after_ms,
+      quietCheckMs: settings.quiet_check_seconds * 1000,
     },
     provider: providers[0]!,
     inboundProviders: providers.slice(1),
     store,
     speaker,
+    prepareToHear: () => void transcriber.start(),
     conversationFor: (peer) =>
       conversationForPeer(peer, { chatDb: deps.chatDb, contacts: deps.contacts }),
+    ensureConversation: (conversation) => ensureSessionFor(conversation, deps.state),
     policy: new CallPolicy(config, deps.contacts),
     canon: (handle) => deps.contacts.canon(handle),
     routeInbound: deps.deliverToSession,
@@ -223,7 +287,7 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
     expediteWakeUps: deps.expediteWakeUps,
     clearForCall: (sessionKey, label, deadlineMs) => {
       // The ring is the cue to load the voice, while nobody is waiting yet.
-      void sidecar.warmup();
+      warmVoice();
       return clearForCall(
         {
           isBusy: (key) => deps.activeSessions.has(key),
@@ -285,9 +349,11 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
       dir: join(dataDir, "voice-lab"),
       provider: lab,
       settings: voiceSettings,
-      voices: () => sidecar.voices(),
+      // Phonon's catalog first, then Kokoro's voices read from their file:
+      // listing them starts neither model that is not already running.
+      voices: async () => [...((await phonon.voices()) ?? []).map(phononVoice), ...kokoroVoices()],
       synthesize: async (text, voice, speed) => {
-        const audio = await sidecar.synthesize(text, voice, speed);
+        const audio = await say(text, voice, speed);
         return audio ? { pcm: audio.pcm, sampleRate: audio.sampleRate } : null;
       },
     });
@@ -304,7 +370,8 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
     stop: async () => {
       labServer?.stop();
       await running.stop();
-      sidecar.stop();
+      kokoro.stop();
+      phonon.stop();
       transcriber?.stop();
       turnDetector.stop();
       store.close();

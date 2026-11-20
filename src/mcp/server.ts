@@ -24,6 +24,7 @@ import { cronTools } from "./tools/cron.ts";
 import { deepResearchTools } from "./tools/deep-research.ts";
 import { errandTools } from "./tools/errands.ts";
 import { generationTools } from "./tools/generation.ts";
+import { grokBotTools } from "./tools/grokbot.ts";
 import { historyTools } from "./tools/history.ts";
 import { imessageActionTools } from "./tools/imessage-actions.ts";
 import { memoryTools } from "./tools/memory.ts";
@@ -231,6 +232,9 @@ function assembleByTier(ctx: ToolContext): ToolDef[] {
     ...typingTools(ctx),
     ...(subagent || guest ? [] : agentTools(ctx)),
     ...(subagent || guest ? [] : callTools(ctx)),
+    // Hands a task to one of the owner's Grok Bots. Spends their Grok usage, so it
+    // registers for their own DM session only (see grokbot.ts).
+    ...(subagent || guest ? [] : grokBotTools(ctx)),
     ...(subagent || guest ? [] : deepResearchTools(ctx)),
     ...(guest ? [] : annotateTools(ctx)),
     ...generationTools(ctx),

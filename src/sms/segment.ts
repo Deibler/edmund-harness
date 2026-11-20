@@ -107,7 +107,14 @@ export function toGsm7(text: string): string {
  */
 export function chunkForSms(
   text: string,
-  opts: { maxSegments?: number; maxParts?: number } = {},
+  opts: {
+    maxSegments?: number;
+    maxParts?: number;
+    /** An explicit per-chunk ceiling in billable units, overriding
+     *  `maxSegments`. A group text is MMS, priced flat per recipient rather
+     *  than per segment, so the only limit worth splitting at is Twilio's. */
+    budget?: number;
+  } = {},
 ): string[] {
   const maxSegments = Math.max(1, opts.maxSegments ?? 3);
   const maxParts = Math.max(1, opts.maxParts ?? 4);
@@ -119,7 +126,12 @@ export function chunkForSms(
   const single = gsm ? GSM7_SINGLE : UCS2_SINGLE;
   // Budget per chunk: one segment stays under the single-part limit; more
   // than one uses the concatenated size, since a multipart body pays the UDH.
-  const budget = maxSegments === 1 ? single : concat * maxSegments;
+  const budget =
+    opts.budget !== undefined
+      ? Math.max(1, opts.budget)
+      : maxSegments === 1
+        ? single
+        : concat * maxSegments;
 
   if (billableLength(body) <= budget) return [body];
 

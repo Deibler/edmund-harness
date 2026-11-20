@@ -13,7 +13,8 @@ import { openDb } from "../db/open.ts";
  * opens; the daemon writes everything else.
  */
 
-export type IdeationStatus = "building" | "ready" | "failed";
+/** `withdrawn`: was published, then taken down; never served or announced again. */
+export type IdeationStatus = "building" | "ready" | "failed" | "withdrawn";
 
 export type Ideation = {
   /** 32 hex characters. Also the page's public path, so it must be unguessable. */
@@ -290,6 +291,21 @@ export class IdeationStore {
     );
   }
 
+  /**
+   * Take a page down: building or ready → withdrawn. It stops being served at
+   * once (the host checks the status on every request), can no longer be
+   * announced, and leaves the portal. The files stay, so it can be looked at.
+   */
+  withdraw(id: string, reason: string): boolean {
+    return (
+      this.db
+        .query(
+          "UPDATE ideations SET status = 'withdrawn', fail_reason = ? WHERE id = ? AND status IN ('building', 'ready')",
+        )
+        .run(reason.slice(0, 500), id).changes > 0
+    );
+  }
+
   /** True once: the first caller to announce it wins. */
   markAnnounced(id: string, nowMs: number): boolean {
     return (
@@ -327,11 +343,11 @@ export class IdeationStore {
     return r.n;
   }
 
-  /** The newest ideation for this thread that did not fail, or null. */
+  /** The newest ideation for this thread that did not fail and was not withdrawn, or null. */
   lastForThread(sessionKey: string, key: string): Ideation | null {
     const r = this.db
       .query(
-        `SELECT * FROM ideations WHERE session_key = ? AND thread_key = ? AND status != 'failed'
+        `SELECT * FROM ideations WHERE session_key = ? AND thread_key = ? AND status NOT IN ('failed', 'withdrawn')
            ORDER BY created_ms DESC LIMIT 1`,
       )
       .get(sessionKey, key) as Row | null;
@@ -344,6 +360,24 @@ export class IdeationStore {
         "INSERT INTO ideator_runs (session_key, ran_ms, outcome, detail, cost_usd) VALUES (?, ?, ?, ?, ?)",
       )
       .run(run.sessionKey, run.ranMs, run.outcome, run.detail.slice(0, 2000), run.costUsd);
+  }
+
+  /** Pages started for anyone since `sinceMs`, so a lucky day never reads as a broadcast. */
+  allBuildsSince(sinceMs: number): number {
+    const r = this.db
+      .query("SELECT count(*) AS n FROM ideations WHERE created_ms >= ?")
+      .get(sinceMs) as { n: number };
+    return r.n;
+  }
+
+  /** This person's latest ideator pass, and what it came to. */
+  lastRun(sessionKey: string): { ranMs: number; outcome: string } | null {
+    const r = this.db
+      .query(
+        "SELECT ran_ms AS ranMs, outcome FROM ideator_runs WHERE session_key = ? ORDER BY ran_ms DESC LIMIT 1",
+      )
+      .get(sessionKey) as { ranMs: number; outcome: string } | null;
+    return r ?? null;
   }
 
   lastRunMs(sessionKey: string): number | null {

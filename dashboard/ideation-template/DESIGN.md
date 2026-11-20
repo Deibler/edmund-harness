@@ -40,13 +40,81 @@ already asked about.
   when 3D is the point), `motion` (sparingly).
 - No other UI kits (MUI, Bootstrap, Chakra, DaisyUI), no jQuery, no `<script>`
   tags from a CDN.
+- Fonts: the sandbox loads fonts only from inside the file, so bundle them.
+  `bun add @fontsource/<family>` and import the latin subsets you use in
+  `src/main.tsx` (`import "@fontsource/inter/latin-400.css"`). Vite inlines
+  them. At most two families and two weights each; a family costs about 50 KB
+  per weight. Then name the family first in `--font-sans` or `--font-heading`
+  in `src/index.css`.
 - Leaflet's default attribution starts with a small flag icon, which reads as
   an emoji at phone size. Keep the credit and drop the icon:
   `map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>')`.
 
+## The design pass: unslop
+
+Before publishing, take the page through unslop, Damir Sokolovsky's skill for
+turning AI-looking UI into a designed one. It is in the harness at
+`skills/unslop/` (the builder's task gives the full path). Read its `SKILL.md`,
+then `references/signs.md`, `references/tokens.md` and
+`references/visuals.md`.
+
+Its way of working is the standard: write a direction (product, character,
+world, moments, signature), audit the page against `signs.md` line by line,
+fix in its nine passes in order, then run its checklist. Its idea of one
+bright element with quiet chrome around it is this page's centerpiece.
+
+This is a page built from a brief with nobody to ask, so a few of its steps
+change here:
+
+- Skip its "set the direction and stop" wait. Write the five direction lines
+  from the brief and carry on. The brief is the person's answer.
+- Here, its "product" is the page, and its "world" is the person's subject:
+  their sky, their river, their trail.
+- No image generation and no image services. Visuals are built in code (SVG,
+  canvas, the map, a chart) from the page's own data; its code treatments in
+  `references/effects.md` are allowed on the centerpiece only.
+- Do not run its scripts (`snapshot.mjs`, `story.mjs`). The phone-width
+  pictures come from `--check`.
+- Its layout rules for app shells (sidebars, 1440px canvases) and landing
+  heroes do not apply. This page is mobile first at 390px. Take its spacing,
+  color, icons, copy, type, details and motion passes as written, and its
+  mobile rules.
+- Its type families are fine, bundled as described above.
+- Where unslop and this file disagree, this file wins.
+
+## Restraint
+
+A page made for one person does one thing well. It is a gift, not a
+dashboard: the centerpiece from the brief, working, with their data in it, and
+nothing that competes with it.
+
+- Build what the brief asks for and nothing more. No extra sections, however
+  good the idea; the brief's "Leave out" line is a rule.
+- One primary number or answer on screen at a time. Large type for that, body
+  text for the rest.
+- At most one row of presets or chips for any control. If there are more
+  choices than fit one row, use a select.
+- Body text 15 to 17px. Small text is for axis labels and the footnote only.
+- Say what is approximate once, in the footnote. Beside a figure only when that
+  figure would otherwise mislead.
+- Cut until removing one more thing would make it worse.
+
+`--check` prints these numbers for your page. Aim for the target; the check
+refuses a page past the limit.
+
+| measure | target | limit |
+|---|---|---|
+| phone screens (844px each) | 1 to 3 | 4 |
+| headings (h1 to h3) | 4 | 6 |
+| controls (buttons, inputs, links, sliders, tabs, toggles) | 12 | 20 |
+| words | 350 | 600 |
+| disclaimers ("approximate", "not a forecast", "rounded"...) | 1 | 2 |
+| text under 14px | 15% | 25% |
+
 ## Design rules
 
-The page check enforces the first three. The rest are on you.
+The page check enforces the first three, and the limits above. The rest are
+on you.
 
 1. **No left accent borders.** No coloured stripe down the left side of a card,
    callout, quote or list item (`border-left` of 2px or more, `border-l-2`,
@@ -74,8 +142,8 @@ The page check enforces the first three. The rest are on you.
     labels, no exclamation marks.
 12. Mobile first: 390px wide with no sideways scroll, 44px tap targets, 16px
     inputs, usable one-handed. Then check it looks deliberate at 1024px.
-13. Anything approximate or unverified says so where it appears, small and
-    plain.
+13. Anything approximate or unverified is said once, plainly, in the footnote
+    (see Restraint), not beside every figure.
 14. Semantic headings, labels on every control, visible focus, and
     `prefers-reduced-motion` respected.
 15. End with one quiet line: "Made by Edmund for <first name>, <date>."

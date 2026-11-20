@@ -241,6 +241,44 @@ async function deliverSms(
 }
 
 /**
+ * Send one file into the CURRENT chat when it is an SMS conversation. Same
+ * process boundary and credential rules as deliverSms above; the file goes
+ * as MMS through the conversation's Twilio media store.
+ */
+async function deliverSmsMedia(
+  ctx: ToolContext,
+  path: string,
+  caption: string | undefined,
+): Promise<{ ok: true; sentPath: string; converted: boolean } | { ok: false; error: string }> {
+  const conversationId = conversationIdFromKey(ctx.sessionKey);
+  if (!conversationId) return { ok: false, error: `no sms conversation in ${ctx.sessionKey}` };
+  if (!ctx.config.sms.from) return { ok: false, error: "sms.from (our E.164) is unset" };
+  const resolved = await resolveTwilioCreds();
+  if (!resolved) {
+    return {
+      ok: false,
+      error:
+        "twilio credentials are not available in this process — under sandboxed host access they are withheld, so a file can't be sent over SMS from here",
+    };
+  }
+  const sender = createSmsSender({
+    config: ctx.config,
+    creds: resolved.creds,
+    ownNumber: ctx.config.sms.from,
+    dataDir: ctx.dataDir,
+  });
+  try {
+    return await sender.deliverMedia({
+      chatGuid: smsChatGuidFor(conversationId),
+      path,
+      caption: caption ? markdownToPlaintext(sanitizeOutbound(caption)).trim() : undefined,
+    });
+  } finally {
+    sender.store.close();
+  }
+}
+
+/**
  * Post-send bookkeeping for tool-driven sends into the CURRENT chat. The
  * daemon's session store only learned about outbounds at end-of-turn
  * (sendDeliver / the tool-only branch in channels/turn.ts), so a turn that
@@ -642,21 +680,6 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
         "Send ANY file to the current conversation — images, audio, video, PDFs, documents, HTML, archives, whatever. If you've just produced a file the user asked for (pdf about cats, a generated image, a voice memo, a zipped project), CALL THIS TOOL to actually deliver it. Never just tell the user 'here's the pdf at /path/...' — they can't see paths. Path must be absolute. Text replies are auto-sent; use send_attachment ONLY for files.",
       inputSchema: AttachmentInput,
       handler: async (args) => {
-        // The SMS sender is text-only: outbound MMS media would need a
-        // publicly reachable URL per file, which nothing here mints. Refuse
-        // with the reason and the alternative rather than attempting a send
-        // that cannot carry the file.
-        if (isSmsSession(ctx.sessionKey)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "this conversation is SMS and outbound media is not wired up — describe the file in words, or ask them for an iMessage thread if they need the file itself",
-              },
-            ],
-            isError: true,
-          };
-        }
         const resolvedPath = resolveAttachmentPath(args.file_path, ctx.sandboxPath);
         try {
           assertPathSafe(resolvedPath);
@@ -664,6 +687,32 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           return {
             content: [{ type: "text", text: (err as Error).message }],
             isError: true,
+          };
+        }
+        // SMS: the file goes as MMS through the conversation's Twilio media
+        // store (src/sms/sender.ts deliverMedia), after the same path guard
+        // as an iMessage send. MMS-specific preparation (HEIC/WebP → JPEG,
+        // the 5 MB ceiling, which types MMS can carry at all) happens there.
+        if (isSmsSession(ctx.sessionKey)) {
+          const res = await deliverSmsMedia(ctx, resolvedPath, args.caption);
+          if (!res.ok) {
+            console.error(`[send_attachment] ${ctx.sessionKey} SMS FAILED: ${res.error}`);
+            return {
+              content: [{ type: "text", text: `send error: ${res.error}` }],
+              isError: true,
+            };
+          }
+          recordToolSend(ctx, args.caption ?? "");
+          console.log(`[send_attachment] ${ctx.sessionKey} sent over MMS ${res.sentPath}`);
+          return {
+            content: [
+              {
+                type: "text",
+                text: res.converted
+                  ? `sent over MMS (converted for delivery: ${res.sentPath})`
+                  : "sent over MMS",
+              },
+            ],
           };
         }
         // Deliverability guards: shrink oversized images (sips), and re-encode

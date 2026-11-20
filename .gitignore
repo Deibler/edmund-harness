@@ -89,6 +89,11 @@ CLAUDE.local.md
 # filings, roadmaps with real usage numbers, product planning drafts.
 docs/private/
 
+# The mirror editor's standing brief: written for one household, with the
+# address it forecasts for and the people who walk past it. Scheduled jobs
+# read it at this path, so it stays on disk here and out of the tree.
+integrations/mirror/editor/
+
 # ─── Personal skills and caches ───
 # Curator output is synthesized from this deployment's conversation corpus.
 # It remains loadable locally but never belongs in the public repository.

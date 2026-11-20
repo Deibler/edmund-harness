@@ -85,6 +85,15 @@ export function isSmsSession(key: SessionKey | string): boolean {
   return key.startsWith("sms:dm:") || key.startsWith("sms:group:");
 }
 
+/** True for the `grok:dm:<handle>` session key the Grok connector first used.
+ *  Nothing creates one now: connector requests run in the person's ordinary DM
+ *  session (`imessage:dm:`), told apart by the message, not the session (see
+ *  src/grok/session.ts). Kept so stale session rows, transcripts and the
+ *  predicates that still test for it keep resolving. */
+export function isGrokSession(key: SessionKey | string): boolean {
+  return key.startsWith("grok:dm:");
+}
+
 /** True for a smart-mirror session key. The mirror is spoken aloud and drawn
  *  on glass, so it takes its own venue prompt rather than the DM one.
  *  Defined here beside the other session predicates so callers (the runner)
@@ -145,6 +154,9 @@ export function chatIdFromKey(key: SessionKey): string {
   // generic return and hand callers the whole key as if it were a handle.
   if (key.startsWith("sms:dm:")) return key.slice("sms:dm:".length);
   if (key.startsWith("sms:group:")) return key.slice("sms:group:".length);
+  // Legacy `grok:dm:` keys (see isGrokSession): the chat id is the person's
+  // handle, so a stale row still resolves to their iMessage DM.
+  if (key.startsWith("grok:dm:")) return key.slice("grok:dm:".length);
   if (key.startsWith(PREFIX_GROUP)) return key.slice(PREFIX_GROUP.length);
   if (key.startsWith(PREFIX_TRADING_DM)) return key.slice(PREFIX_TRADING_DM.length);
   if (key.startsWith(PREFIX_DM)) return key.slice(PREFIX_DM.length);

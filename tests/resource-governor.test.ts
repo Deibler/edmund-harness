@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { daemonBusy } from "../src/boot/busy.ts";
 import {
   ResourceGovernor,
   type ResourceGovernorDeps,
@@ -7,6 +8,7 @@ import {
   parseProcessTable,
   summarizeManagedProcesses,
 } from "../src/boot/resource-governor.ts";
+import { bindVoice, clearVoiceBindings, unbindVoice } from "../src/calls/binding.ts";
 
 const MIB = 1024 * 1024;
 
@@ -30,6 +32,8 @@ describe("resource governor process accounting", () => {
 
 function harness(args?: {
   busy?: boolean;
+  /** The daemon's own busy check, in place of the fixed `busy`. */
+  isBusy?: () => boolean;
   rssMiB?: number;
   footprintMiB?: number;
   trim?: number;
@@ -56,7 +60,7 @@ function harness(args?: {
       },
     ],
     getWorkerPids: () => [],
-    isBusy: () => args?.busy ?? false,
+    isBusy: args?.isBusy ?? (() => args?.busy ?? false),
     evictIdleWorker: async () => {
       evictions++;
       return idle.shift() ?? null;
@@ -147,7 +151,39 @@ describe("resource governor actions", () => {
     // Nothing idle to evict and a turn in flight: the restart waits.
     expect(h.counts().restarts).toBe(0);
     expect(h.counts().trims).toBe(1);
-    expect(h.status()?.action).toContain("deferred until active turns finish");
+    expect(h.status()?.action).toContain("deferred until active turns and calls finish");
+  });
+
+  // 2026-11-05 to 11-11: five FaceTime calls were hung up mid-conversation by
+  // this restart. Between two of a caller's sentences no worker is mid-turn,
+  // so the worker pool alone read "idle". This drives the daemon's real busy
+  // check with a call bound and nothing else going on.
+  test("never restarts the daemon while a call is live", async () => {
+    const binding = {
+      callId: "call_1",
+      deliver: async () => "spoken" as const,
+      onTurnStarted: () => {},
+      onTextDelta: () => {},
+      onTurnSettled: () => {},
+      envelopeBlock: () => "",
+    };
+    bindVoice("imessage:dm:+15550100", binding);
+    try {
+      const h = harness({ isBusy: daemonBusy, rssMiB: 9 });
+      for (let i = 0; i < 6; i++) {
+        await h.governor.tick();
+        h.advance();
+      }
+      expect(h.counts().restarts).toBe(0);
+      expect(h.status()?.action).toContain("deferred");
+
+      // The call ends: the restart it was holding back goes ahead.
+      unbindVoice("imessage:dm:+15550100", "call_1");
+      await h.governor.tick();
+      expect(h.counts().restarts).toBe(1);
+    } finally {
+      clearVoiceBindings();
+    }
   });
 
   test("rejects an inverted memory budget", () => {
