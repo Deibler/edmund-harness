@@ -95,10 +95,10 @@ dry_run = false               # true = compute the edit and log it, don't write
 # so nothing runs unless [security].model_host_access = "full". See
 # src/ideation/.
 [ideation]
-enabled = true
-people = ["*"]                   # handles, e.g. ["+15550100001"]; ["*"] = every non-guest DM; empty = nobody
+enabled = false
+people = []                   # handles, e.g. ["+15550100001"]; ["*"] = every non-guest DM; empty = nobody
 model = "claude-sonnet-5-5"
-weekly_budget_usd = 100
+weekly_budget_usd = 25
 
 # Keyed guest access. Off = unknown DM senders are silently dropped (the
 # classic behavior). On = an unknown sender who DMs an active campaign key
