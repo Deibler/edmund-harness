@@ -1,5 +1,278 @@
 # Changelog
 
+## 0.4.0
+
+### Minor Changes
+
+- a101728: Answer faster without changing models.
+  
+  - Workers run with `CLAUDE_CODE_TRANSCRIPT_LOCAL_GC`, so a conversation's transcript is cut back to its live part at each compaction. The operator's DM transcript had reached 1.3 GB, of which 4 MB was live. A resume of that file loaded in 1.6–2.2 s; trimmed, in 0.4 s.
+  - Recall no longer waits behind the indexer:
+    - Person, group and self files re-embed only chunks whose text changed, where every append to an archive used to re-embed all of it (300–650 chunks).
+    - Live queries go before queued index work, and index batches are 2 texts so a query never waits long for one in flight.
+    - The embedding model is loaded while a new message's debounce window runs.
+    - One BM25 lookup serves every recall leg.
+    - The coverage document counts that blocked the daemon on every tick are computed every 10 minutes.
+  - Recall per question on the replay eval: 145–171 ms median, against 323–342 ms, with identical results on all 81 records.
+  - The memory governor evicts one least-recently-used idle worker per sample at its soft limit, sparing any used in the last 10 minutes, instead of every warm worker. Those flushes caused 67 of 156 cold starts in the operator's DM from 10-20 to 10-29. Worker pids now show in pool stats.
+  - A session that needed the browser keeps it on its next spawns for a day, so its next link no longer recycles the worker.
+  - Cold spawns log how long the CLI took to load and to the first token, and the transcript size they resumed.
+  - `scripts/recall-eval.ts` reads compaction times from the daemon log (`--compactions-from-log`), and matches needles with a plain loop: Bun 1.3.9 returned a wrong `findIndex` result mid-run.
+- 3906d95: Add the printer integration: Edmund can see and run a Bambu Lab printer over the LAN (status, AMS filament, camera, errors in Bambu's words, timelapses), slice with Bambu Studio's engine and any setting while reading every slicer warning, preview toolpaths with seams, supports and overhangs, wake on progress, finish, errors and filament changes, give each print a live page, and search, download and alter MakerWorld models. A print starts only after the approver's yes, read from Messages, with the approved filament loaded and an independently checked empty plate; cancel and resume need their own yes, and there is no pause.
+- 7dabbb1: Calls are not cut off by the daemon, do not open on silence, and leave less dead air. Measured from all 43 calls and 79 exchanges in `data/calls.db` and the daemon log, 2026-10-29 to 11-12.
+  
+  **Calls that were dropped**
+  
+  - **The memory governor no longer restarts the daemon during a call.** All five calls that ended "Edmund shut down" (5 of the 11 answered since 2026-11-05) were this restart. It deferred to a turn in progress, and between two of a caller's sentences no turn is in progress. A ringing, dialling or connected call now counts as busy (`boot/busy.ts`), and `service.sh stop|restart` refuses while one is up unless `EDMUND_FORCE=1`.
+  - **The transcriber is loaded for calls, not kept all day.** It held 2.0-2.6 GB for a 1.27 GB model, because MLX keeps every freed buffer; capped at 256 MB it holds 1.5-1.7 GB and transcribes as fast (100-223 ms a clip either way). It now loads when a call starts ringing (1.8 s; the shortest ring so far was 3.6 s) and unloads after ten quiet minutes, never during a call. That resident memory is what had the daemon at its limits: 26 of its 31 restarts ever, and about 100 worker evictions a day, came after calls shipped.
+  - **A call can no longer stay "live" with nobody on it:** an answered ring that never connects is given up on, a failure while ending still frees the conversation, and a call left up by a daemon that died is hung up when FaceTime next reports in.
+  
+  **Calls that were silent**
+  
+  - **The main thread no longer stops for a count.** The recall coverage bar counted indexed documents by reading every artifact row, vectors included: a median 15.6 s (1,893 times, about every ten minutes), with nothing else running. On the 2026-11-07 call that was 22 s of Edmund neither hearing nor speaking. The same count over the primary key's index takes 0.2 s and is checked against the per-kind row count each time. A stall over 500 ms is now logged (`[loop] main thread stopped`), with whether a call was up.
+  - **The recall indexer stands down for the length of a call.** Its tick walks every sandbox on the main thread: 1.2-2.1 s once a minute, which the new stall log showed within minutes of going live. It works from watermarks, so it catches up on the tick after the call.
+  - **Someone never texted can be called.** The "it is ringing, write your opening line" wake-up was skipped for a conversation with no session record, so they picked up to 10 s of nothing (2026-11-06, 11-11). The record is made as the call begins.
+  - **"Hello?" when the opening line is not ready.** If nothing has been said 1.2 s after they can hear Edmund, the line says `[facetime] opener` and his own line follows.
+  - **A reply written before the call is a text again.** Asked "call me", Edmund's "Calling you now." was held and spoken as the first thing heard on pickup.
+  
+  **Turn-taking**
+  
+  - **A sound of thinking while a reply is slow** (`thinking_sounds`, after `thinking_sound_after_ms`): only into silence, only for a turn of three words or more, never the same one twice running, and never counted as his reply in the exchange log (`aside_ms` beside an unchanged `gap_ms`).
+  - **"Uh-huh" over Edmund does not stop him**, and "yeah" while he is still speaking is not a turn until he has stopped; it joins what they say next. A single "stop" or "wait" does stop him.
+  - **A long opening sentence starts at its first clause**, and a caller's turn is no longer held 250 ms by the pipeline's voice window after the call's own turn-taking has ended it.
+  - **The call envelope asks for one or two short sentences** with the reason, a short first sentence, and spoken numbers: replies to "a sentence or two" averaged 330 characters on the 2026-11-05 calls.
+  - **Quiet on both sides is noticed** (`quiet_check_seconds`): Edmund is told and decides whether to check in, say where things stand, or end the call.
+  
+  **From the first two live calls (2026-11-12)**
+  
+  No drop, no stall and no restart on either, and the gap to Edmund's first sound was 1.8-3.6 s (12 exchanges, median 2.7 s) against 4.8 s before. They also showed what the tests had not:
+  
+  - **The sound of thinking and the quiet check had never fired.** Both waited for the ear to say the caller had stopped talking, which it never says: a pause and its words are how it says so. The tests now send a stretch of speech exactly as the ear does, and the ear's own test pins that it reports starts only.
+  - **A wake-up on a call is told it is on a call.** The first turn of every call Edmund places is a wake-up, and wake-ups were the one kind of turn without the call's block. Asked to write his opening line while it rang, he called `facetime_call` again and wrote what he was doing, which is what the person heard on picking up. The ringing wake-up now says the call is placed and the reply is the line itself, and `facetime_call` refuses at once while any call is up.
+  - **A report for whoever asked for a call no longer goes to the person called.** The call's block said send_message texts "them (or anyone else)"; it now names who it reaches and points to message_contact. The conversation that asked is given what was said when the call ends, instead of being told only that it ended, and the call's own conversation is told there is nothing to report.
+  - **The transcript is a second opinion on the turn detector.** Scored unfinished but transcribed as a finished sentence (29 of the 35 unfinished verdicts across 91 exchanges), a pause waits 250 ms, not 800.
+  - **"Uh" by itself is not a turn.** It waits up to 4 s for the rest and joins it.
+  - The sound of thinking now waits 2 s by default, not 1.5: at 1.5 it would have preceded nine of ten replies on the first call.
+  
+  **The voice says the words it is given (2026-11-12)**
+  
+  - **Kokoro is fed the phonemes it was trained on.** kokoro-onnx phonemizes with espeak unless handed phonemes, and espeak writes a different alphabet from the misaki one Kokoro v1.0 learned (a diphthong as two vowels, `ɚ` for `əɹ`, its own guesses at names). On 200 sentences Edmund had said on calls, transcribed back by Parakeet, 49 of 2,229 words came back wrong from espeak's phonemes and 31 from misaki's: better on 18 sentences, worse on 3. "Yeah." alone was inaudible; "Yeah, ..." was heard as "Yay", "Ha, ..." as "How". The sidecar now phonemizes with misaki (`src/voice/pronounce.py`) and says which at boot (`kokoro ready phonemes=misaki`); without misaki installed it speaks from espeak as before. `scripts/install-kokoro.sh` adds it without its `[en]` extra, which brings torch for a tagger never loaded. The voice process went from 519 MB to 714 MB.
+  - **A word can be given its pronunciation.** `data/calls/pronounce.json` maps a word to misaki phonemes and is read again whenever it changes. "Hmm" is built in: misaki's lexicon writes it without a vowel and Kokoro made noise of it.
+  
+  **A faster voice, chosen in the voice lab (2026-11-12)**
+  
+  - **Calls can speak with Phonon 31m** (`gradium/phonon-31m-en` through `ptts`, Apache 2.0; `src/voice/phonon-sidecar.py`). A voice setting is now a Kokoro voice or blend as before, or one of Phonon's catalog voices as `phonon:Micah`; the lab lists both and the name says which engine speaks. Measured on the M4 on 200 sentences Edmund had said on calls, in each of three voices: a whole sentence in a median 124 ms (p90 200, worst 340) against Kokoro's 686 ms; 38 to 48 of 2,229 words transcribed back wrong against Kokoro's 31; no sentence repeated or ran on. Four open models were tried: Pocket TTS was as accurate at 80 ms to first sound and 0.8-1.1 GB; ZONOS3-Mini, the only one with emotion controls, took 2.76 GB and repeated itself on 2 of 60 short lines.
+  - **On the CPU**, where a sentence took 109 ms against 267 ms on Metal, and off the GPU a call's hearing runs on.
+  - **Its pads are cut.** Phonon leaves a median 0.14 s of near-silence before a sentence and 0.63 s after; 50 ms and 120 ms are kept. Transcribed back, the trimmed clips had 37 wrong words to the untrimmed 38 and no more first or last words lost.
+  - **Speed is Phonon's own pace control** (`duration_delta = -ln(speed)`, held to the +/-0.5 that was tried: about 0.8x to 1.4x).
+  - **Kokoro is the understudy, not a second resident.** Each engine is its own process. The one whose voice is in use stays loaded; the other loads when asked for (a lab preview, a line Phonon could not say, a `call_voice` choice) and unloads after 15 quiet minutes. With a Phonon voice in use the voice process holds 238 MB where Kokoro held 714 MB. A line Phonon cannot say (process down, voice not cached and no network, the model running on twice) is said by Kokoro in `kokoro_voice`, and logged.
+  - **Speech far too long for its text is thrown away** and tried once more with another seed (Phonon reads a text identically every time otherwise), then handed to Kokoro.
+  
+  Not changed: the model default. With a call-sized cached context, Sonnet's first word took 1.4-2.0 s and Haiku's 0.9 s through the same CLI path (three warm turns each). `[facetime] model` is where to set it.
+- c81b682: Edmund can take and place FaceTime audio calls, off by default (`[facetime]`).
+  
+  - A call is a voice mode of an existing conversation: a contact's call runs in their DM session, a Group FaceTime in that group's session (`chat.group_id` = the conversation's Messages group). What was said by text carries onto the call, and the call stays in the transcript afterwards.
+  - `allow`/`deny` over handles, group GUIDs, `"operator"` and `"contacts"`; empty admits nobody and deny wins. Calling anyone but the session's own person needs the operator tier. A call that connects to anyone other than the person dialled is hung up and alerted.
+  - Hearing is Apple's on-device SpeechAnalyzer on a muted Core Audio tap of the call, so nothing reaches the Mac's speakers; a guard keeps every physical output muted and ends the call if one becomes audible. Edmund's voice is Kokoro (`bm_daniel`, his mirror voice) in its own sidecar, streamed a sentence at a time, and talking over him stops him.
+  - A ringing call while Edmund is mid-turn hands the work to a background agent first; the "call ended" event names it so he takes it back.
+  - Replies are spoken while a call is live and texted otherwise; a reply that could not be spoken falls back to text. Compaction waits until the call ends.
+  - The virtual microphone is a split driver built from pinned BlackHole 0.7.1 source (`native/facetime/driver/build.sh`): a record-only "Edmund Mic" and a play-only "Edmund Feed", fixed at 48 kHz. With stock duplex BlackHole, FaceTime's measured input level fell from -21.7 to -111 dB within ten seconds of a call; on the split pair it returned to -16 dB each time Edmund spoke, 35 s in.
+  - Edmund speaks only once FaceTime's audio process is listening on Edmund Mic and playing to a real speaker, read per process from Core Audio. The microphone opens about 2.4 s after a call reports active; before this, the first second of every greeting was lost. A call whose audio never reaches the caller is hung up with an alert naming the device FaceTime used.
+  - The mirror's speech sidecar and sentence chunking moved to `src/voice/` so both can share them; the mirror behaves as before.
+  - Tools: `facetime_call`, `end_call`, `call_status`.
+- 48b2888: FaceTime calls take turns like a conversation: Edmund answers when you have finished, answers what you said as a whole, and nothing loads while someone is waiting.
+  
+  - **When you have finished.** The listening helper now notices you pause (an energy voice-activity check on 20 ms frames; Apple's SpeechDetector reported nothing when fed the same speech). It hands the last 8 s of your audio to Smart Turn v3.2 (pipecat-ai/smart-turn, BSD-2, 8.7 MB, pinned by sha256, fetched with `make -C native/facetime turn-model`), which runs locally in a resident sidecar and judges from the audio itself whether the pause ends your turn.
+    - **A finished-sounding pause** ends the turn as soon as the transcript is in, and the transcript is asked for at once (`SpeechAnalyzer.finalize(through:)`) instead of after the recogniser's own pause. In a simulation on recorded speech, the final transcript arrived 0.50-0.74 s after the speech ended, against 1.5-2.1 s before, which the old fixed 0.7 s then added to. It is forced only at real turn ends: forced at every pause, it garbled the words on either side ("I'll meet you" came back as "....").
+    - **A pause mid-thought** ("and then...", "um") keeps listening for up to 2 s.
+    - **No verdict** (no model, a sidecar crash, an older helper) falls back to the old timer.
+  - **As a whole.** Answering each pause in turn made calls feel like a queue. If you start talking again before Edmund has said a word of his reply, that reply goes unsaid rather than being cancelled, because an interrupt recycles the worker and costs a cold start. The next turn is told what you never heard and answers everything in one reply. The call envelope also asks for a sentence or two, one question at a time, and for several things said in a row to be answered together.
+  - **Nothing loads mid-call.** On calls Edmund placed, the switch to the call's model happened on his first reply, after they picked up. That left people saying "hello?" into 3.2-6.8 s of silence, plus ~0.5 s to reload the voice. His opening line is now written while it rings, and the voice is warmed when a call starts.
+  - **Measured.** One `[calls] exchange` line per exchange gives each stage in ms after you stopped talking: pause seen, turn verdict, final transcript, handed to the conversation, Edmund's first words, his first sound.
+- 3f7b72e: Make Edmund finish the job and listen.
+  
+  - Background passes get their own effort setting (`[claude] background_effort`) instead of inheriting the turn's, so memory updates stop timing out. Consolidation gets a longer timeout, and archiving waits until a due consolidation succeeds.
+  - An expired Claude login alerts the operator at once and scheduled jobs retry for hours instead of minutes.
+  - Videos are watched locally (contact sheets the model reads, plus a transcript) and voice notes are transcribed with whisper.cpp first; hosted models are a fallback.
+  - Lessons Edmund records about subjects now reach conversations through recall, without the names they came from.
+  - Control words never reach a person; safety check-ins fire on time without the settings footer; proactive fires can be set in wall-clock time.
+  - Blocked pages are retried in headless Chrome, and an unreadable page is reported as unread instead of guessed at.
+  - Corrections replace the facts they correct, and dated commitments get a turn the day before that drafts the deliverable.
+  - Finished sub-agent and background results join a running turn; send_message reports how many messages were just sent.
+  - A canary checks each new Claude CLI version (the CLI is not pinned) and alerts if an update breaks a path Edmund relies on.
+  - `edmund review` writes a weekly sheet of reply times, corrections, leaks and real exchanges to mark pass or fail.
+  - Recurring jobs see how their last sends landed and ask once after three go unanswered.
+  - Each person gets a shelf: permanent links for what Edmund makes them, served behind the named tunnel (`[shelf] origin`).
+  - The system prompt teaches finishing the job: say what was checked, flag the risk, hand over somewhere lasting, sketch past the default, and check renders with `blind_check`.
+  - In groups, an unnamed answer to Edmund's own question wakes him within the hour.
+  - People can connect their own calendar by its secret iCal link.
+- 7dabbb1: Talk to Edmund from Grok, the voice assistant in a Tesla.
+  
+  - A remote MCP server (streamable HTTP, stateless) exposes four tools. `ask_edmund(message)` runs a real turn as the configured person inside their own iMessage DM session (one conversation, one memory) and returns a one-to-three sentence answer written to be read aloud; while it waits it sends MCP progress notifications if the caller sent a progress token. `tell_edmund(message)` queues a turn and returns at once, the answer is texted. `check_edmund()` runs no turn: whether Edmund is working, the answers he texted after a slow line, and a one-line printer status when printing. `report_to_edmund(reply_id, result)` is how a Grok Bot hands a finished task back: unknown or expired ids are refused, a valid one wakes Edmund in the DM.
+  - A connector request is the person asking (Grok bots, even a deliberately dumb one, relay their own words): Edmund acts on it as on a text from them, outward-facing and paid actions included, takes the likeliest reading of a garbled relay or asks back. A Bot's `report_to_edmund` result is the one exception: it is work product, not instructions.
+  - Edmund can hand a task to a Grok Bot: `grokbot_task(task, bot?, wait_for_result?)` POSTs to a webhook configured under `[grok.bots.<name>]` (`webhook_url`, `key`; config.toml only, never logged), records the reply id for 24 h, and is registered only where the owner is: their own DM session and iMessage groups they are in (hidden from other DMs, groups without them, SMS groups, guests and sub-agents). The session it was asked from is stored with the task, and the Bot's report wakes Edmund there: the group chat, or the owner's DM when none is recorded. See "Set up a Grok Bot routine for Edmund" in `docs/grok-channel.md`.
+  - Sends and attachments from that turn land in the person's iMessage DM. Past `answer_timeout_ms` (25 s) the call returns "Edmund's working on it, he'll text you the answer" and the reply is texted when it is ready.
+  - Whether a reply is spoken on the line or texted is decided per turn from that turn's batch: a turn for an ordinary text is untouched, a mixed batch is spoken and texted.
+  - Auth is a long random `[grok].token`, accepted as a bearer header, a `?key=` parameter, or both (`auth_mode`). Failed attempts, request rate, turn rate and message size are all capped.
+  - A quick-tunnel launchd service exposes it: `scripts/launchd/service.sh grok-tunnel install`. See `docs/grok-channel.md`.
+- b6d8a89: Keep what was said in reach after the conversation is compacted.
+  
+  - The harness now reads the compaction boundary Claude Code streams. It records every compaction, the CLI's own mid-turn ones included, and measures context from the calls after it. Before, the turn still reported its pre-compaction size, so the harness compacted the freshly compacted conversation again: 31 of 60 harness compactions in one DM ran on a context already under 190k.
+  - After every compaction, automatic or manual, a SessionStart hook puts the chat's latest messages back, verbatim from chat.db. A summary keeps pointers, not words.
+  - The harness's own `/compact` asks the summary to keep the person's own words, decisions, corrections and the final text of anything sent.
+  - Recall in a DM now starts where the model's verbatim sight ends: the thread re-injected after the last compaction, or a cold start's history. It used to skip a fixed window. the operator's DM compacted about every 1.2 hours, so with the old 48-hour window 140 of the previous two days' 144 messages were in neither the conversation nor recall.
+  - Recall's diversity step compares relevance and similarity on one scale. Before, a fused ranking's relevance was so small that every pick after the first went to the hit least like the others.
+  - Recall lines name speakers the way history does ("You", contact names) and drop the indexer's duplicate date header.
+  - Operating principles are one rule each, at most 240 characters, checked where they are written, with one retry. Passes had been folding new rules into old ones until single principles ran past 1,300 characters.
+  - `scripts/recall-eval.ts` replays hand-labelled questions from a real conversation and reports how many needed messages reach the model. On 41 questions from the operator's DM: 6 before this change, 29 after.
+- 927d2a2: The printer, without giving up Bambu Handy.
+  
+  - **The live page is rebuilt.**
+    - The camera is real video: the printer's own H.264 passed through as HLS at 30 fps, served by a camera host process separate from the daemon.
+    - A stream that goes quiet reconnects by itself, and players keep a few seconds of buffer.
+    - The page is dark and plain, with native full screen.
+    - A Camera/Model switch shows the sliced model on its plate in its filament colors, with what is still to print shown faintly. Drag to turn, pinch to zoom.
+  - **Prints can start through Bambu Connect**, so the printer stays in cloud mode with Bambu Handy working. Bambu Connect is driven through macOS Accessibility, and its send dialog is checked against the plan before Send.
+  - **The approver can confirm the plate by text.** When the plate check is unsure, Edmund sends a photo and asks; a plain "clear" counts.
+  - **Slicing thins meshes far finer than a nozzle can print.** Painted detail is kept, and no surface moves more than 0.05 mm.
+  - **The kitchen host no longer cuts off a mounted page after 10 seconds.**
+- 9085da3: Build a page, unasked, for an interest someone keeps coming back to, and send them the link.
+  
+  - After a conversation has been quiet for 20 minutes, at most once a day per person, an ideator pass (`src/ideation/ideator.ts`, one structured call) reads the last 30 days of the chat, groups the person's questions into interest threads, and proposes up to three pages, each citing the person's own messages.
+  - Code decides, not the model:
+    - A thread counts only when the cited messages exist in chat.db, are theirs, come from this chat, are not reactions, and fall on 3 or more separate days in the window (`src/ideation/recurrence.ts`).
+    - Health, legal, grief, relationship and money threads are never built.
+    - Nothing is built for the same thread twice in 21 days, or for the same person twice in 7.
+    - All ideation spend is capped per rolling 7 days.
+  - The pick is built by a detached sub-agent from `dashboard/ideation-template` (Vite, React, Tailwind and shadcn, built to one self-contained file), held to the template's `DESIGN.md`.
+  - `scripts/ideation-publish.ts` renders the page in headless Chrome at phone width under the production headers. It refuses a page that throws, logs errors, is blocked by the sandbox, is blank, scrolls sideways, uses a left accent border, gradient text or emoji, loads remote scripts, or is over 3 MB. The builder fixes and reruns until the page passes.
+  - A finished build does not take the ordinary "relay the result" wake-up. A page that published becomes one scheduled wake-up at the start of the person's next active hours, and Edmund shares it in his own words, or holds it if the conversation is elsewhere. A build that failed reaches nobody. A link counts as delivered only once it is found in chat.db.
+  - The kitchen host serves ready pages at `/i/<id>/` under an opaque-origin sandbox with no network access. Pages are noindex and no-referrer, read from disk on request, and count opens (link-preview fetches excluded).
+  - The portal has a "Made for you" tab: the person's recurring interests and the pages whose links reached them in the chat. It appears once there is one. "Erase everything" removes pages, runs and interests.
+  - Off by default (`[ideation] enabled = false`, `people = []`). It also stays off unless `[security].model_host_access = "full"`, because the builder needs a shell.
+  - `scripts/ideation-replay.ts <handle> [--as-of YYYY-MM-DD]` runs the ideator as a dry run and prints the threads, the days found in chat.db, what was turned down and why, and the pick. It never builds.
+- 45f1736: Recall searches inside the time a message names.
+  
+  - When a message names a time ("back in June", "early August", "on 8/30", "three weeks ago", "last month"), per-turn recall also searches inside that window. The results show first, under "From <that time>", because the other blocks rank by meaning weighted toward recent and a newer match on the same subject buried the older one. The case that prompted it: "the clip of the meteor fireball from June".
+  - On 24 time-anchored questions from the operator's DM, the needed message reached the model 22 times, against 10 without. The 41-question replay set and the noise on subject-less messages are unchanged.
+  - Only marked months and dates count, so "you may" or "1/4 of the bake" do not. 5 of 1,315 of the operator's messages since June named a time, all genuinely.
+  - The cold-start log field is now `first_output`: the logger masked `first_token` as a secret.
+
+### Patch Changes
+
+- ea86f20: Keep recall's local embedder from eating the Mac's memory. Requests now reach the ONNX model at most eight texts at a time. The model keeps whatever memory a batch needed (about 45 MB per long text), so the indexer's 128-text batches had left the daemon holding 10 GB on a 16 GB Mac, which pushed Messages into swap and left incoming messages waiting up to two minutes for recall. Chunks are sent one at a time, so a live recall query also no longer waits behind a whole backfill.
+- a27e6c1: Calls are heard in the daemon, there is a voice lab for talking to Edmund from a web page, and a rebuilt audio helper keeps its macOS permission.
+  
+  - **Hearing no longer depends on a recognition session that lives for the whole call.** The Ear cuts each turn from the audio's own energy and sends every stretch of speech whole to a resident Parakeet transcriber on MLX. Picked over Whisper on synthetic call clips (M4, 2026-10-30): 1.5% word error rate at 146 ms a clip against base.en's 263 ms, and it wrote nothing on breath, hum or a cough where Whisper wrote "You". A transcriber crash now costs the requests in flight, not the rest of the call, and "heard nothing" is kept apart from "could not tell".
+  - **The voice lab** (`[voice_lab]`, off by default) is a call with Edmund from a page on the local network, under the same manager, conversation, model, voice and turn-taking as FaceTime. Whoever opens it talks to him as the operator, so it needs the key in `data/voice-lab/key`, a private address and same-origin requests. `bun scripts/voice-lab-link.ts` prints the link. Edmund's call voice and speed are tuned there and read at every sentence, on FaceTime too.
+  - **The audio helper is signed with a stable self-signed identity** (`native/facetime/signing-identity.sh`, once per Mac), and the daemon checks the capture permission before every call. An ad-hoc signature tied the grant to one exact build, so every rebuild lost it on 2026-10-29 and 2026-10-30, and a call without it looks heard and is deaf.
+- c60cb69: Keep recall working, and say so when it is not. The local embedder now runs in a process of its own instead of a worker thread. On Bun 1.3.9 a package first loaded by a worker thread could stop resolving once workers were created and terminated: recall then failed with "Cannot find module '@huggingface/transformers'" until the daemon restarted, or the daemon segfaulted. A process that cannot load the model is replaced on the next call, so the failure no longer outlives it. A recall that could not run now logs `recall=ERR` instead of looking like a message with nothing to recall, the operator is alerted when the embedder keeps failing, and a boot that follows a runtime crash says so in the log. Bun 1.4.5 or newer is now required: it does not have the fault (`scripts/bun-worker-churn/check.ts` crashes 1.3.9 and runs clean on 1.4.5), and CI runs on it.
+- 50c12a7: Explain what the assistant is without naming who built it.
+  
+  - People ask the assistant what it is, how it works and why they would use it. It answered with a feature list and "an AI that <operator> built": the output contract scripted that line for "who built you?", and the `{{owner}}` token fills with the operator's full name. In one deployment it routinely named the operator when it described itself, once with the full name in a first message to a stranger.
+  - The contract now treats these as one kind of question and sends the assistant to the notes on what it is in its identity, at text size. The operator's name stays out of the explanation and out of introductions. Asked point-blank who built it, it says one person did, as a personal project, with a first name only for someone who already knows them and never the full name.
+  - `{{owner}}` appears once in the contract, as a fact the assistant knows, and no longer inside words to say.
+  - `persona.example/IDENTITY.md` has a "What I am, when someone asks" section to fill in. What an assistant says about itself is persona, so it lives there and not in code.
+  - Measured on 12 questions about itself at the live model, twice each, 9 in a DM and 3 in a group: the operator was named in 16 of 24 replies before (the full name in 4) and in 0 of 24 after, with a median of 310 characters against 261 in the DM set. Two unrelated control questions were unchanged.
+  - The shared prompt version stamp is bumped, so sessions pick up both contract changes on their next turn.
+- 04a5d2b: On a FaceTime call, a background agent's result reaches Edmund as soon as the agent finishes, with the result already in hand.
+  
+  - Agent completions are debounced 20 s so a burst becomes one reply. That suits texting, but on the first live call it, plus the turn in flight, kept the caller waiting 27 s. While a call is live, the call manager's 300 ms poll now brings that conversation's pending completion wake-ups forward to now (`CronStore.expedite`) and pokes the scheduler. Texting keeps the debounce.
+  - Those wake-ups carry each finished agent's result inline (capped at 4,000 characters). Calling `read_agent_result` was one more model round trip, 7-10 s on that call, before Edmund could say anything. Team completions still use `read_team_results`.
+- f54a90f: A FaceTime call no longer goes deaf when speech recognition fails partway through. The daemon starts a fresh recognition session (up to 3 times a call). If it keeps failing, the call is hung up and the operator is told why, instead of the caller talking to nobody. On 2026-10-29, Apple's recogniser rejected a session ("RecogRejected") two seconds into a call that came three seconds after a rebuilt listener launched, and nothing more was heard for the remaining 28 s. An early finalize on a cold recogniser did not reproduce it, so the cause is unconfirmed; this covers any cause.
+- a838617: FaceTime turn-taking fixes from the first call with Smart Turn live.
+  
+  - **A reply the caller talked past is held, not dropped.** If what they said becomes their turn, it goes unsaid and the next reply answers everything, as before. If it does not (someone in the background, a cough), it is said after 1.5 s of quiet. Dropping it outright left the caller in 18 s of silence: background talk while Hunter was in bed with Kayla cancelled two replies and never became a turn of its own.
+  - **A final transcript with no words (".") no longer starts a turn.** That one made Edmund apologise for a reply the caller never heard.
+  - **The exchange trace starts fresh with each new utterance.** A reply that was never spoken left its timestamps behind and produced `words_ms=-17268`.
+  - **`[facetime] keep_turn_clips` (off by default) keeps the last 30 clips the turn detector scored, as WAVs named with their scores.** Smart Turn scored two complete sentences from that call 0.12 and 0.01, and it cannot be tuned without the audio. These are recordings of callers, so leave it off except while diagnosing.
+- 1157880: FaceTime calls start replying sooner.
+  
+  - A conversation on a live call runs on `[facetime] model` (default `claude-sonnet-5-5`; empty keeps its own model), with the same transcript and memory. Opus took 3.1-7.7 s per spoken reply at `low` effort with 116k of context. In a side-by-side test (same prompt, low effort, 3 runs, including ~2 s of CLI start-up), the first word came at 3.2-6.3 s for Opus, 2.2-3.0 s for Sonnet and 2.5-2.7 s for Haiku. Kokoro's ~0.6 s per sentence was never the constraint. Switching costs no extra cache: the respawn as the call rings already rewrites the prompt cache (9% read), because the tool list leads the prompt.
+  - Call turns skip automatic recall, which each spoken reply waited on (~0.6 s). The model can still search.
+  - The call envelope asks for a few words before any tool call, which are spoken while it runs. One reply was 14 s of silence while it looked up `spawn_agent` and started it.
+- bec56e3: FaceTime replies start sooner. Measured on the 23:24 live call: 14 exchanges with Smart Turn scoring every pause.
+  
+  - **A finished sentence is said once the text pauses for 200 ms on it,** instead of waiting for the next sentence to begin. The last line before a tool call ("On it, texting you now.") had waited for the whole tool: 4.8 s while a text message was written and sent. The instruction to say something before a tool could not work without this.
+  - **The call envelope asks for the spoken answer first,** with bookkeeping such as `remember_about_person` after it. One reply was silent for 3 s while a memory note was saved first.
+  - **An "unfinished" verdict waits 0.8 s, not 2 s, then settles the transcript at once.** On that call Smart Turn scored 13 of the 21 pauses correctly and called 5 complete sentences unfinished (0.03-0.45), against 0.98/0.97 on the first two and 0.73 on `say` speech. Feeding it only the audio since Edmund last spoke scored worse (9/21), so the window is not the cause. Ending a turn early is now cheap, because a reply the caller talks past is held and folded into the next. Ending one late is dead air every time.
+- 2e91526: FaceTime calls: Edmund answers faster, never goes quiet to run commands, and hears every call.
+  
+  - While a call is live his conversation runs at `[facetime] effort` (default `low`) instead of the DM's effort. A spoken reply waits on the model's thinking: at `xhigh` the first live calls took 1.7-7.2 s per reply before the first word. The model stays the same, so the conversation and its prompt cache carry across; the worker is respawned once as the call rings and once after it ends.
+  - On a call, `Bash`, `WebFetch` and `WebSearch` are off for his own turns, so slow work goes to a background agent (`spawn_agent`) while he keeps talking, and its result comes back into the call. On the first live call, asked whether hanging up would cut him off, he ran shell commands for 40 s in silence and hung up without saying goodbye.
+  - `end_call` waits (up to 15 s) for what he has already said to finish playing before it hangs up.
+  - When a call ends, speech still queued is dropped and a reply still streaming is no longer spoken into the dead line; it goes out as a text, as before.
+  - Every call is heard, not only the first after the listening helper starts: stopping recognition left its audio format behind, and the next call skipped starting the recognizer because of it.
+- 77ba2aa: The memory governor now measures each process's physical footprint, the number Activity Monitor shows, instead of RSS. RSS leaves out compressed and swapped memory, so on 2026-10-25 the governor read 3 GB while the daemon held 10 GB and never stepped in. It also counts shared library pages, which made idle workers look several times bigger than they were. The dashboard's Daemon page shows the footprint too.
+- 7dabbb1: Make ideation pages quieter, put them through a design pass, and allow pulling one down.
+  
+  - The first real build read as noisy. Measured at phone width it had:
+    - 7 screens and 10 headings
+    - 52 controls and 959 words
+    - 8 disclaimers
+    - 49% of its text under 14px
+  - Briefs now describe one centerpiece, with a "Leave out:" line, instead of a tool for every question in the thread.
+  - DESIGN.md has a Restraint section with targets and limits. The page check measures headings, controls, words, disclaimers and small text, and refuses a page past a limit. `--check` prints the numbers.
+  - unslop (Damir Sokolovsky, CC BY 4.0) is vendored unchanged at `skills/unslop/` after a full read (`SOURCE.md`). Edmund can use it on any page he designs. The ideation builder takes every page through it before publishing, with DESIGN.md's overrides for unattended builds: no waiting for a reply, no image generation, no scripts, and fonts bundled through `@fontsource`.
+  - `bun scripts/ideation-publish.ts --withdraw <id> [reason]` takes a published page down. Once withdrawn, a page:
+    - returns 404 from the next request
+    - can never be announced
+    - leaves the portal
+    - keeps its files
+  - A withdrawn page frees its thread for a new build, but still counts toward the person's weekly allowance.
+- 71af8f7: Give model memory back when it is not being used. The recall embedder releases its model after a minute idle instead of five (it reloads in about 0.2 s). The mirror's speech models (Kokoro and Whisper, about 880 MB) no longer load at boot: a wake starts them while the person is talking, and they unload after 15 quiet minutes.
+- 1324997: Run the daemon on the performance cores again, and keep warm workers through relays.
+  
+  - The launchd template said `ProcessType Background`. The installed plist had been set to `Interactive` by hand in July, but a reinstall on 2026-10-25 rendered it again from the template, and since then the daemon and everything it spawns (model workers, MCP servers, Messages) ran on the efficiency cores with throttled I/O. With only the priority changed, a worker resuming the operator's 1.3 GB conversation reached the CLI's `init` event in 5.6–6.1 s throttled against 2.0–2.4 s normally (n=5 each), and a new conversation in 3.1–3.5 s against 1.5–1.7 s. Live cold loads had reached 9.6–14.8 s. The template now says `Interactive`, a test pins it, and the daemon logs `[boot] qos` when it finds itself throttled anyway.
+  - A relay's depth (the loop guard in `bridge/relay.ts`) rode in the worker's spawn environment, so it was part of the worker's rebind key. Every relay into a session recycled its warm worker, and the session's next ordinary message recycled it back: two cold spawns per relay, 243 of the 1,919 recycles logged since May. `runModel` now records each turn's depth in the state store and `message_contact` / `ask_contact` read it when called, so the depth no longer touches the worker.
+- 50c12a7: Keep a print's watches to that print, and stop a starting print from being ended by the last one's finish.
+  
+  - Every start sets a state watch and an error watch for its print. Only progress and layer watches were retired when a print ended, so one more pair stayed active after each print and all of them fired for every later print. A watch tied to a print now speaks only for that print, its own end included, and a new print retires the watches bound to earlier ones. A watch set by hand with no print still covers every print.
+  - While a start is underway the printer can report the previous print's FINISH once more, and that report ended the new job before it had begun. A job can now end only after its start saw it begin, and a start clears any end recorded before it.
+- 80cc5c6: Everyone involved in a print sees the slice and the link. Before anyone is asked to agree to a print, the requester, the approver and whoever swaps a spool or clears the plate get the sliced view, and once it starts each gets the live page link in their own chat. `skills/printing/scripts/sliced_view.ts` saves that view as one image to send: the toolpaths in the real filament colours beside the first layer.
+- 387ac23: A site that asks for fewer requests is given them, and `edmund logs` stops reporting trouble that is being handled. A trigger check answered with HTTP 429 used to be asked again three seconds later and then counted as a failed check, which doubled the trigger's interval: three checks of one shop, run back to back, pushed two restock watches from every four hours to every eight over a six-second limit. Now a 429 is not retried, the host is left alone for as long as its `Retry-After` says (two minutes when it does not say), nothing is counted against the trigger, and for the next hour that host's triggers are checked one a tick instead of all at once. A trigger turned away three times running is still a failure. In the default log view, a failed trigger check is hidden until the fifth in a row (when the operator is alerted), and so is a memory restart that is only being held until a turn ends, which is now a warning rather than an error. Recall being broken is no longer hidden with recall's progress lines.
+- da39b9f: `scripts/launchd/service.sh install` no longer leaves an agent unloaded. `launchctl bootout` returns before the job has finished unloading, and the bootstrap right after it failed with "Bootstrap failed: 5: Input/output error". Under `set -e` the script then stopped with the old job gone and the new one never loaded, which took the daemon down on 2026-10-29 until it was bootstrapped by hand. Every install now waits for the unload first; against real launchd the old sequence fails with error 5 and the new one loads the job.
+- 50c12a7: Keep replies short enough to read on a phone, in DMs and groups.
+  
+  - Replies had grown by about a quarter in the three busiest chats between September and November (median 261–342 characters to 320–435), and it happened inside the same chats rather than from new ones: the median rose in 10 of the 12 chats active in both periods. Length was flat across session sizes, so it was the standing prompt and not long sessions.
+  - The old size cap was in lines (4, hard cap 6) with "unless they asked for depth". Three 300-character paragraphs pass a line cap, "explain X" reads as asking for depth, and the contract's one example praised keeping "the same density of useful info". The format rules were being followed; nothing said to say less.
+  - The output contract now has an on-the-go rule: one to three sentences and roughly 300 characters by default, the answer first, and the how, the background and the steps taken left out until someone asks. A long message is still the model's call when it truly believes the message needs it: the list or steps were asked for, or a missing detail would cost money, safety or a wrong move. The size limits count sentences and characters, and a worked example shows a correct, well-written report cut to two sentences.
+  - Measured on fixed probes at the live model, twice each. DM probes that should be short: median 593 characters to 390 (8 probes), with the two that should be long unchanged (1551 to 1665). Group probes: 543 to 331 (6 probes); an explicitly requested list stayed a full list and the safety answer kept its length and content.
+  - A reminder line in each turn's envelope was tried and left out: it shortened the short probes as much, and also cut the ones that should be long nearly in half (1551 to 890).
+  - A first wording that only asked for short replies "unless warranted" moved nothing (660 to 639).
+  - The weekly eval's length axis scores against the same exception.
+- 7dabbb1: Send and see photos over SMS, stop showing group texts their whole backlog, and send a group reply as one text.
+  
+  - **Edmund can send files over SMS.**
+    - `send_attachment` in a text conversation uploads the file to Twilio's media store and posts it as MMS.
+    - Photos are converted to JPEG when the phone might not open them (HEIC, WebP, TIFF), and photos and videos are shrunk to fit MMS's 5 MB limit.
+    - Files MMS can't carry (Office docs, zips, web pages) are refused with what to do instead: publish the file and text the link.
+    - Nothing needs a public URL; DMs go through the person's own conversation.
+  - **Photos over SMS were all dropped: 9 of 9 from September to November.**
+    - Twilio delivers each photo as its own message with an empty body.
+    - The handler checked `NumMedia`, which Twilio's group-text webhook never sends, and returned on the empty body.
+    - Photos are now looked up through the official `twilio` SDK, downloaded from Twilio's media service, and handed to the turn as ordinary attachments.
+    - A photo that fails to download is named to the model so it can ask for a resend.
+  - **Group texts now get the same history as iMessage groups:** the active thread, broken at 30 minutes and capped at 30 lines.
+    - Before, every turn carried the last 75 messages: about 3,000 tokens, against about 400 for an iMessage group.
+    - In one weekly-update group that was two months of Edmund's own "Anytime, <name>. If you only catch one…" replies, which he kept repeating.
+    - A cold start is told that earlier threads exist and how to read them back, because recall doesn't index SMS.
+  - The message being answered no longer also appears in its own history.
+  - **The SMS channel line now says there are no tapbacks.** Where a tapback would have answered (a thanks, an ok), the guidance is `KEEP_QUIET`, and never to restate what was already sent. 8 of 10 answered acks had restated the previous message.
+  - The SMS history block no longer offers reactions or reply-threading, which SMS can't do.
+  - **A group reply is sent as one message,** split only at Twilio's 1,600-character limit.
+    - Group texts are MMS, billed flat per recipient whatever the length, so each extra part was another full charge to everyone.
+    - That was 28% of measured group text spend.
+    - The live group cost estimate now uses the measured per-recipient MMS rate instead of SMS segments.
+- 7d4d53a: Sandboxes and conversation transcripts can live on another disk. Keep `sandbox/` and `persona/sessions/` as symlinks to it: the session links now also cover the symlink-resolved path Claude Code uses to name transcript folders, so conversations keep resuming, and the daemon refuses to start when the disk is not mounted.
+- 0192f06: A daemon that dies no longer leaves its turns running to be answered twice.
+  
+  Turn workers run in their own process group so the daemon can stop a worker's whole tree, which also let them outlive it. After a crash they finished their turns and sent them, while the next daemon replayed the same messages to new workers. One daemon that died 44 times in 26 minutes sent a person 17 messages for 2 requests.
+  
+  - Each turn worker is written down in `data/turn-workers/` with the daemon that owns it. A watchdog started by the daemon stops them when the daemon is gone, and the next daemon stops any that are left before it serves a send or replays a message. Sub-agents and background jobs are untouched: they are meant to survive a restart.
+  - The mirror outbox no longer fills for good while the screen is away. State updates never expired, so after nine days offline they reached the 2,000-row cap and every mirror write failed. The expiry sweep failed with them, on a bare timer, and that error is what ended the daemon. The oldest updates now give way, since the snapshot a reconnect begins with replaces them, and a sweep that fails is skipped.
+  - A printer report that arrives after shutdown has closed the printer's store is dropped. It used to end the shutdown early with an error, before the workers were stopped.
+
 ## 0.3.11
 
 ### Patch Changes
