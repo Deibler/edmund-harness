@@ -77,8 +77,8 @@ export type ConnectorOptions = {
 };
 
 const RATE_LIMITED = "Edmund is getting a lot of requests right now. Try again in a minute.";
-export const TELL_REPLY = "Got it, Edmund's on it.";
-export const REPORT_REPLY = "Thanks, delivered.";
+const TELL_REPLY = "Got it, Edmund's on it.";
+const REPORT_REPLY = "Thanks, delivered.";
 
 const text = (body: string, isError = false) => ({
   content: [{ type: "text" as const, text: body }],

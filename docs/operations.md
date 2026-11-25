@@ -13,7 +13,6 @@ paths, and the `edmund` command wraps it.
 |---|---|---|
 | `com.edmund-harness` | the daemon, through `run-daemon.sh` which sources `.env` | `data/daemon.log` |
 | `com.edmund-harness.dashboard` | operator dashboard and portal | `data/dashboard.log` |
-| `com.edmund-harness.trading` | trading integration dashboard | `data/trading.launchd.out.log` |
 | `com.edmund-harness.fishing` | a separate data platform | `data/fishing.launchd.out.log` |
 
 Two things about the daemon plist. It launches `bun` through a bash wrapper

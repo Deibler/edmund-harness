@@ -11,8 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { midTurnNote, showToRunningTurn, takeSeenMidTurn } from "../src/claude/mid-turn.ts";
 import { Worker } from "../src/claude/worker.ts";
-import { isResultWakeUp, resultNote } from "../src/cron/fire.ts";
 import type { InboundMessage } from "../src/imessage/types.ts";
+import { isResultWakeUp, resultNote } from "../src/scheduler/fire.ts";
 
 const bin = mkdtempSync(join(tmpdir(), "fake-claude-midturn-"));
 writeFileSync(
@@ -195,7 +195,7 @@ describe("a finished result is shown to a running turn first", () => {
   });
 
   test("a result that joins is not fired again; one that cannot, fires as before", async () => {
-    const src = readFileSync(join(import.meta.dir, "..", "src/cron/fire.ts"), "utf8");
+    const src = readFileSync(join(import.meta.dir, "..", "src/scheduler/fire.ts"), "utf8");
     const joinAt = src.indexOf("if (isResultWakeUp(job.systemEvent))");
     const lockAt = src.indexOf(
       "await locks.withLock(job.sessionKey, async () => {\n    await runAndDeliver(",

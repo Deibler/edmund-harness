@@ -828,7 +828,7 @@ export function printerTools(ctx: ToolContext): ToolDef[] {
         const sent = await sendMessage({ to, isGroup, text: body, chatGuid, attachments });
         if (!sent.ok) return text(`Could not send the ask: ${sent.error}`, true);
         const ownChat = ctx.chatGuids.includes(chatGuid);
-        if (ownChat) recordToolSend(ctx, body, chatGuid);
+        if (ownChat) recordToolSend(ctx);
         const approval = withStore((s) => {
           const a = s.createApproval({
             jobId: job?.id ?? null,

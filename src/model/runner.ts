@@ -3,14 +3,13 @@ import { shouldCompact } from "../claude/auto-compact.ts";
 import { type RunInput, type RunResult, evictWarmWorker, runClaude } from "../claude/runner.ts";
 import { runCodex } from "../codex/runner.ts";
 import type { Config } from "../config/config.ts";
-import { endScreenHold, screenLockPath } from "../mcp/computer-use/lock.ts";
-import { noteTurnStart } from "../mcp/computer-use/turn.ts";
-import { orchestratorForSession } from "../orchestrators/registry.ts";
-import { classifyError } from "../recovery/classify.ts";
 import type { SessionKey } from "../sessions/key.ts";
+import { endScreenHold, screenLockPath } from "../sessions/screen-lock.ts";
 import type { StateStore } from "../sessions/store.ts";
+import { noteTurnStart } from "../sessions/turn-origin.ts";
 import { log } from "../util/log.ts";
 import { type ModelBackend, backendForModel, transitionModelSession } from "./backend.ts";
+import { classifyError } from "./failure-class.ts";
 import { modelProfileForSession } from "./profile.ts";
 
 export type ModelRunResult = RunResult & { backend: ModelBackend };
@@ -63,7 +62,7 @@ export function reanchorCodexIfNeeded(
 
 /**
  * A turn that used the screen gives it up when it ends, and its computer-use
- * server quits the apps it opened (mcp/computer-use/lock.ts). Every turn,
+ * server quits the apps it opened (sessions/screen-lock.ts). Every turn,
  * whatever started it and whichever backend ran it, ends in runModel.
  */
 export function releaseScreen(config: Config, sessionKey: string): void {
@@ -86,7 +85,7 @@ export function releaseScreen(config: Config, sessionKey: string): void {
 
 /**
  * A turn is starting: record what started it for the computer-use safety
- * check (mcp/computer-use/turn.ts), which cannot otherwise tell a message that
+ * check (sessions/turn-origin.ts), which cannot otherwise tell a message that
  * arrived during a scheduled turn from one that started a turn of its own.
  */
 export function noteScreenTurn(config: Config, sessionKey: string, cronJob: string | null): void {
@@ -136,10 +135,7 @@ export async function dropRefusedThread(
 
 /** The model a session runs on, and which CLI that model belongs to. */
 function sessionModel(sessionKey: SessionKey, config: Config) {
-  const orchestrator = orchestratorForSession(sessionKey, config);
-  const override =
-    orchestrator && !orchestrator.builtin && orchestrator.model ? orchestrator.model : null;
-  const profile = modelProfileForSession(sessionKey, config, override);
+  const profile = modelProfileForSession(sessionKey, config);
   return { profile, backend: backendForModel(profile.model) };
 }
 
@@ -195,7 +191,7 @@ export async function runModel(
   }
 
   noteScreenTurn(config, rawInput.sessionKey, rawInput.cronJob ?? null);
-  // The relay tools read this when the model calls them (bridge/relay.ts).
+  // The relay tools read this when the model calls them (relay/relay.ts).
   // Turns of one session run under its lock, so this is the running turn's.
   store.setTurnDepth(rawInput.sessionKey, rawInput.inboundDepth ?? 0);
   const startedAtMs = Date.now();

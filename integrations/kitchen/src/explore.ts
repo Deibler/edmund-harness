@@ -16,7 +16,7 @@ import { avoidedBy } from "./foods.ts";
 import { type Effort, type Method, loadRecipes } from "./recipes.ts";
 import { live, slug } from "./store.ts";
 
-export type ExploreDish = {
+type ExploreDish = {
   id: string;
   name: string;
   desc: string;

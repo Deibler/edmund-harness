@@ -25,7 +25,7 @@ import type { Account, Registry } from "./types.ts";
 export const PORTS = { first: 4801, last: 4899 } as const;
 
 /** A check older than this says nothing about now: the host itself may be down. */
-export const STATUS_FRESH_MS = 5 * 60_000;
+const STATUS_FRESH_MS = 5 * 60_000;
 
 export type Hosted = { id: string; artifact: string; key: string; port: number };
 
@@ -100,7 +100,7 @@ function ensureManifest(artifact: string, id: string, url: string): void {
 
 /* ── what the host found ─────────────────────────────────────────────────── */
 
-export type HouseholdStatus = {
+type HouseholdStatus = {
   port: number;
   /** The share server's pid, when it is running. */
   pid: number | null;
@@ -117,7 +117,7 @@ export type HostStatus = {
   households: Record<string, HouseholdStatus>;
 };
 
-export function statusPath(): string {
+function statusPath(): string {
   return join(baseDir(), "host.json");
 }
 

@@ -105,7 +105,7 @@ const EXT_BY_TYPE: Record<string, string> = {
 };
 
 /** File extension for a media item: the content type first, then the filename. */
-export function extensionFor(m: SmsMedia): string {
+function extensionFor(m: SmsMedia): string {
   const byType = EXT_BY_TYPE[m.contentType.toLowerCase().split(";")[0]!.trim()];
   if (byType) return byType;
   const fromName = m.filename ? extname(m.filename).toLowerCase() : "";
@@ -221,7 +221,7 @@ const MMS_TYPE_BY_EXT: Record<string, string> = {
 const CONVERT_TO_JPEG = new Set([".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp"]);
 /** Twilio's MMS ceiling is 5 MB for the message and its media together; a
  *  caption is a few hundred bytes, so the file keeps a margin under it. */
-export const MMS_MAX_FILE_BYTES = 4_500_000;
+const MMS_MAX_FILE_BYTES = 4_500_000;
 const VIDEO_EXTS = new Set([".mp4", ".m4v", ".mov", ".3gp", ".webm", ".mkv", ".avi"]);
 
 export type PreparedMms =

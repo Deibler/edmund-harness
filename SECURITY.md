@@ -42,5 +42,4 @@ project; there is no security team and no bounty.
 - Keep the DM allowlist non empty.
 - Run it on a Mac that does nothing else.
 - Set an operator handle so alerts reach you.
-- Leave the trading integration off unless you have read its risk module.
 - Back up `persona/` and `data/` somewhere the Mac is not.

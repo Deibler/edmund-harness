@@ -116,7 +116,6 @@ export const SECTIONS: Section[] = [
       { key: "session_idle_hours", label: "Session idle hours", kind: "number" },
       { key: "transcribe_inbound_audio", label: "Transcribe inbound audio", kind: "bool" },
       { key: "auto_typing", label: "Auto typing indicator", kind: "bool" },
-      { key: "auto_typing_seconds", label: "Auto-typing duration (s)", kind: "number" },
       {
         key: "thread_break_minutes",
         label: "Thread-break minutes",
@@ -412,7 +411,7 @@ export const SECTIONS: Section[] = [
         key: "external_url",
         label: "External URL",
         kind: "text",
-        help: "Public base URL for annotation links (e.g. https://dash.example.com).",
+        help: "Public base URL for links sent to people (e.g. https://dash.example.com).",
       },
     ],
   },
@@ -421,18 +420,8 @@ export const SECTIONS: Section[] = [
   {
     key: "tools",
     label: "Tools",
-    description: "Image/TTS/STT defaults.",
-    fields: [
-      {
-        key: "image_provider",
-        label: "Image provider",
-        kind: "enum",
-        options: ["openai", "gemini"],
-      },
-      { key: "image_model", label: "Image model", kind: "text" },
-      { key: "tts_voice", label: "TTS voice", kind: "text" },
-      { key: "stt_model", label: "STT model", kind: "text" },
-    ],
+    description: "Speech-to-text defaults.",
+    fields: [{ key: "stt_model", label: "STT model", kind: "text" }],
   },
   {
     key: "openrouter",

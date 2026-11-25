@@ -15,10 +15,10 @@
  */
 
 import { CONTROL_SENTINELS } from "../channels/sanitize-outbound.ts";
+import type { VoiceOutcome } from "../sessions/call-binding.ts";
 import { genId } from "../util/ids.ts";
 import { log } from "../util/log.ts";
 import { speakable, speechChunks, takeSentences } from "../voice/text.ts";
-import type { VoiceOutcome } from "./binding.ts";
 import type { CallProvider, Speaker } from "./types.ts";
 
 const THREAD_MARKER = /^\s*\[(?:thread(?:ed)?|reply)\]\s*/i;

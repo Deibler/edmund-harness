@@ -26,12 +26,7 @@ import type { CreditEventKind, CreditStore, GenerationKind, Wallet } from "./sto
 
 export type MediaKind = "image" | "video" | "audio" | "other";
 
-export type ActivityKind =
-  | "generation"
-  | "payment"
-  | "starter"
-  | "operator-credit"
-  | CreditEventKind;
+type ActivityKind = "generation" | "payment" | "starter" | "operator-credit" | CreditEventKind;
 
 export type ActivityRow = {
   atMs: number;

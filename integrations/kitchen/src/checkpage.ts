@@ -12,7 +12,6 @@ import type { Assets } from "./assets.ts";
 import { DECK_SIZE, checkOrder } from "./reconcile.ts";
 import { amount, daysLeft } from "./store.ts";
 import type { Item } from "./types.ts";
-import { escapeHtml } from "./util.ts";
 
 export type CheckPageCtx = {
   title: string;

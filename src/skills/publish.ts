@@ -25,7 +25,7 @@
  *     text they were told about, not to whatever it becomes later.
  */
 
-import { PERSONA_DIR } from "../claude/persona.ts";
+import { PERSONA_DIR } from "../model/persona.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { chatIdFromKey, isGroupSession } from "../sessions/key.ts";
 import { revokeConsentFor } from "./consent.ts";

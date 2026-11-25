@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { personFilePath } from "../claude/persona.ts";
+import { personFilePath } from "../model/persona.ts";
 import { log } from "../util/log.ts";
 import { easternDate } from "../util/clock.ts";
 import { archivedObservationCount, archivedObservationsSince } from "./archive.ts";
@@ -38,7 +38,7 @@ export const CONSOLIDATE_AFTER_NEW_BULLETS = 12;
 
 /** Cap on the archived observations shown with the file (about 4k tokens).
  *  The size gate can move new observations out before a pass runs. */
-export const ARCHIVED_CONTEXT_BYTES = 16 * 1024;
+const ARCHIVED_CONTEXT_BYTES = 16 * 1024;
 
 /** Shared by both prompts: the file is not the whole record any more. */
 const ARCHIVE_RULE = `The file is not the whole record. Older observations are moved out of it into
@@ -249,7 +249,7 @@ export function parseConsolidation(raw: string): { principles: Principle[]; revi
 
 /** Build the user prompt: the file, the principles standing today, and the
  *  observations archived since the last pass. */
-export function buildConsolidationPrompt(
+function buildConsolidationPrompt(
   handle: string,
   body: string,
   archived: string[],
@@ -275,7 +275,7 @@ export function buildConsolidationPrompt(
 }
 
 /** What a retry is told when its first answer broke the length rules. */
-export function lengthRetryNote(broken: string[]): string {
+function lengthRetryNote(broken: string[]): string {
   return [
     "YOUR LAST ANSWER BROKE THE LENGTH RULES:",
     ...broken.map((b) => `- ${b}`),

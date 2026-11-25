@@ -1,8 +1,6 @@
 import { resolve } from "node:path";
 import { Hono } from "hono";
-import { RateLimiter } from "../../../src/annotate/rate-limit.ts";
 import { AnnouncementStore } from "../../../src/announce/store.ts";
-import { loadPersona } from "../../../src/claude/persona.ts";
 import type { Config } from "../../../src/config/config.ts";
 import type { CreditStore } from "../../../src/credits/store.ts";
 import type { CronStore } from "../../../src/cron/store.ts";
@@ -15,6 +13,7 @@ import {
 } from "../../../src/ghost/prefs.ts";
 import { portalIdeas } from "../../../src/ideation/portal.ts";
 import { getGroupParticipants } from "../../../src/imessage/participants.ts";
+import { loadPersona } from "../../../src/model/persona.ts";
 import { sandboxDir } from "../../../src/persona/sandbox.ts";
 import { privacyConfirmed } from "../../../src/portal/privacy-confirm.ts";
 import { portalUrl, verifyPortalParts } from "../../../src/portal/token.ts";
@@ -23,6 +22,7 @@ import type { SessionKey } from "../../../src/sessions/key.ts";
 import { chatIdFromKey, isGroupSession } from "../../../src/sessions/key.ts";
 import { chatGuidsForSession } from "../../../src/sessions/session-scope.ts";
 import type { StateStore } from "../../../src/sessions/store.ts";
+import { RateLimiter } from "../../../src/web/rate-limit.ts";
 import { sessionLabel } from "../services/labels.ts";
 import { listMediaForSession } from "../services/mediaIndex.ts";
 import { createTopUp, portalActivityFor, portalCreditsFor } from "../services/portalCredits.ts";

@@ -1,6 +1,6 @@
-import { isCallUtterance } from "../calls/binding.ts";
 import { isGrokAnyInbound } from "../grok/session.ts";
 import type { InboundMessage } from "../imessage/types.ts";
+import { isCallUtterance } from "../sessions/call-binding.ts";
 import { isMirrorSession } from "../sessions/key.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import type { SessionLocks } from "../sessions/locks.ts";

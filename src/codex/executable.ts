@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { findBins } from "../claude/mcp-config.ts";
+import { findBins } from "../model/mcp-config.ts";
 
 export const MIN_CODEX_CLI_VERSION = "0.147.0";
 

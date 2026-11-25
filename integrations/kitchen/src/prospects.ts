@@ -34,7 +34,7 @@ export const SAME_TURN_MS = 10 * 60_000;
 /** How long an offer may go unanswered before it is made once more. */
 export const AGAIN_AFTER_MS = 7 * 86_400_000;
 /** Unanswered this many times is a no. */
-export const MAX_OFFERS = 2;
+const MAX_OFFERS = 2;
 const KEEP_ASKS = 20;
 
 export type Decision =

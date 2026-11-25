@@ -1,9 +1,9 @@
-import { voiceBindingFor } from "../calls/binding.ts";
 import type { Config } from "../config/config.ts";
 import { chunkForIMessage } from "../imessage/chunk.ts";
 import { ChatDb } from "../imessage/db.ts";
 import { hasMapsLink, looksLikeStreetAddress } from "../imessage/maps-link.ts";
-import { type SendArgs, sendMessage } from "../imessage/send.ts";
+import { sendMessage } from "../imessage/send.ts";
+import { voiceBindingFor } from "../sessions/call-binding.ts";
 import { ContactBook } from "../sessions/contacts.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
 import { type SessionKey, dmKeyFor } from "../sessions/key.ts";

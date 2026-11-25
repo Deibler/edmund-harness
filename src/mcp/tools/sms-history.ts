@@ -1,4 +1,4 @@
-import { formatHistoryLines } from "../../channels/history-format.ts";
+import { formatHistoryLines } from "../../imessage/history-format.ts";
 import { findTopicShifts } from "../../imessage/segment.ts";
 import type { ContactBook } from "../../sessions/contacts.ts";
 import { conversationIdFromKey, isSmsSession } from "../../sms/session.ts";

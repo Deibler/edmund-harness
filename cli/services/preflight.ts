@@ -13,7 +13,6 @@ import { classifyHolders, ensurePortFree, findPortPids } from "./ports.ts";
 
 /** Matches any process running our port-bound service entry points. */
 const DASHBOARD_SIGNATURE = /dashboard[/\\]server[/\\]main\.ts/;
-const TRADING_SIGNATURE = /integrations[/\\]trading[/\\]dashboard[/\\]main\.ts/;
 const FISHING_SIGNATURE = /fishctl serve/;
 
 /** Port a port-bound service listens on (the fishing port is parsed from its URL). */
@@ -22,13 +21,11 @@ export function servicePort(svc: Svc, cfg: ReturnType<typeof loadConfig>): numbe
   // Integration sections are opaque to core, so read them through settings.ts —
   // it supplies an "integration absent" default instead of throwing when the
   // package (and its config table) has been removed from this checkout.
-  if (svc === "trading") return intSettings.trading(cfg).dashboard_port;
   if (svc === "fishing") return Number(new URL(intSettings.fishing(cfg).api_url).port) || 8087;
   return null;
 }
 
 export function serviceSignature(svc: Svc): RegExp {
-  if (svc === "trading") return TRADING_SIGNATURE;
   if (svc === "fishing") return FISHING_SIGNATURE;
   return DASHBOARD_SIGNATURE;
 }

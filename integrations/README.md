@@ -13,7 +13,7 @@ This is enforced, not aspirational: `bun run typecheck` passes with any subset
 of these directories deleted, including all of them. Core resolves everything
 through `src/integrations/` using computed paths, so the compiler never treats
 a package as a build dependency. The few places core genuinely needs something
-from an integration (the trading router gate, the mirror envelope block) go
+from an integration (the mirror envelope block) go
 through `optional.ts` + `contracts.ts` and fall back to the no-integration
 behavior when the package is absent.
 
@@ -39,21 +39,21 @@ integrations/
 They change for different reasons — capabilities vs. deployment — which is why
 they are separate.
 
-**Config sections belong to their package.** `[trading]`, `[mirror]`,
+**Config sections belong to their package.** `[mirror]`, `[printer]`,
 `[radaromega]`, `[fishing]`, and `[cloudflare]` still live in `config.toml`
 (one file the operator edits), but core keeps them **opaque**: it never
 validates or types them. The schema lives in `integrations/<name>/config.ts`,
 and the integration reads its own settings through a memoized accessor:
 
 ```ts
-import { tradingConfig } from "../config.ts";
-const cfg = tradingConfig(config);   // validated + typed
-cfg.max_position_pct
+import { mirrorConfig } from "../config.ts";
+const cfg = mirrorConfig(config);   // validated + typed
+cfg.default_ttl_seconds
 ```
 
 That is what keeps the core schema free of integration fields — delete a
 package and no core type changes. Where core genuinely needs a value from one
-(the MCP loadout needs the Robinhood URL; the skill filter needs to know if
+(the model resolver needs the mirror's model; the skill filter needs to know if
 RadarOmega is on), it reads it as plain data through `src/integrations/
 settings.ts`, which declares only the handful of fields core touches and
 supplies "integration absent" defaults. No import, no coupling.
@@ -73,13 +73,13 @@ Declared, not coded. `resolveAccess()` evaluates the manifest against the live
 session; deny beats allow:
 
 1. `dedicated_session_only` — only the integration's own namespace. This is how
-   Robinhood tools stay inside `trading:` sessions and the glass tools inside
-   `mirror:`, instead of an `if` at every call site.
+   the glass tools stay inside `mirror:` sessions, instead of an `if` at every
+   call site.
 2. `deny_sessions` — explicit denial.
 3. `sessions` — namespace allowlist (`"*"` = any).
 4. `handles` — sender allowlist, when non-empty.
 
-Namespaces: `main`, `orch`, `trading`, `mirror`, `agent`.
+Namespaces: `main`, `mirror`, `agent`.
 
 ## Adding an integration
 
@@ -146,7 +146,6 @@ structurally unable to reach into the pipeline.
 
 | Integration | Namespace | Runtime | Notes |
 |---|---|---|---|
-| `trading` | `trading:` | price-trigger watcher | Real money. Dedicated-session only. |
 | `mirror` | `mirror:` | bridge + voice orchestrator | Channel; needs `ctx.channel`. |
 | `radaromega` | — | freshness watchdog | Tools come from the vendored stdio MCP server. |
 | `fishing` | — | — | Direct query/viz tools; endpoint guidance in `skills/fishing`. |

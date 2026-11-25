@@ -1,7 +1,7 @@
 import { AgentStore } from "./store.ts";
 
 /** How often a sub-agent's heartbeat is stamped while one of its tool calls runs. */
-export const TOOL_CALL_HEARTBEAT_MS = 60_000;
+const TOOL_CALL_HEARTBEAT_MS = 60_000;
 
 /**
  * Keep a sub-agent alive in the reaper's eyes while one of its tool calls

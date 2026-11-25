@@ -18,7 +18,6 @@ every design choice on this page.
 | Operating principles | A section inside each person or group file | Rides with the file | The consolidator only |
 | Domain notes | `persona/domains/<slug>.md` | Only through recall | The model through `remember_about_subject` |
 | Archives | `persona/people/archive/`, `persona/groups/archive/`, `persona/archive/SOUL.md` | Only through recall | The archiver |
-| Orchestrator overrides | `persona/orchestrators/<name>/` | Turns for that orchestrator | You |
 | Session transcripts | `persona/sessions/` | Resumed by the provider, not injected | Claude Code or Codex |
 
 The whole directory is plain markdown. You can open any file, read what the

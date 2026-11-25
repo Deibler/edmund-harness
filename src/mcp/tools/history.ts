@@ -1,15 +1,10 @@
 import { z } from "zod";
-import { formatHistoryLines } from "../../channels/history-format.ts";
-import { runCatchUp } from "../../claude/catch-up.ts";
+import { runCatchUp } from "../../channels/catch-up.ts";
+import { formatHistoryLines } from "../../imessage/history-format.ts";
 import { countBefore, getRecentMessages, resolveBeforeRowId } from "../../imessage/history.ts";
 import { getMessage, listAttachments, searchMessages } from "../../imessage/search.ts";
 import { findTopicShifts } from "../../imessage/segment.ts";
 import { persistEpisodicSummary } from "../../memory/summary-writer.ts";
-import {
-  type VisibilityLine,
-  makeHistoryFilter,
-  viewerForSession,
-} from "../../orchestrators/visibility.ts";
 import { StateStore } from "../../sessions/store.ts";
 import type { ToolContext } from "../context.ts";
 import {
@@ -101,7 +96,7 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
           untilMs: args.until,
           limit: args.limit,
         });
-        const hits = outcome.hits.filter(visibilityFilter(ctx));
+        const hits = outcome.hits;
         // Honest empty result: say how far back the scan actually looked,
         // so "no matches" can't silently mean "didn't look".
         const depth = outcome.exhausted
@@ -130,9 +125,6 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
         if (sms) return textResult(smsGetMessage(sms, ctx.contacts, args.msg_guid));
         const m = getMessage(ctx.chatDb, args.msg_guid);
         if (!m) return textResult(`not found: ${args.msg_guid}`);
-        // Hidden-by-visibility reads identically to absent — don't leak that
-        // another orchestrator's message exists at this guid.
-        if (!visibilityFilter(ctx)(m)) return textResult(`not found: ${args.msg_guid}`);
         const who = m.fromMe ? "You" : (ctx.contacts.label(m.fromHandle) ?? m.fromHandle);
         const attachments = m.attachments
           .map((a) => `  ${a.path}${a.mime ? ` (${a.mime})` : ""}`)
@@ -175,13 +167,11 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
           ? guidToTimestamp(ctx, args.before_msg_guid)
           : args.before_time;
         const effectiveMs = beforeMs ?? Date.now();
-        const all = ctx.chatGuids
-          .flatMap((g) => {
-            const anchor = resolveBeforeRowId(ctx.chatDb, g, effectiveMs);
-            if (anchor <= 0) return [];
-            return getRecentMessages(ctx.chatDb, g, anchor, args.limit);
-          })
-          .filter(visibilityFilter(ctx));
+        const all = ctx.chatGuids.flatMap((g) => {
+          const anchor = resolveBeforeRowId(ctx.chatDb, g, effectiveMs);
+          if (anchor <= 0) return [];
+          return getRecentMessages(ctx.chatDb, g, anchor, args.limit);
+        });
         // Re-sort merged result chronologically and tail-cap to limit.
         all.sort((a, b) => a.timestampMs - b.timestampMs);
         const lines = all.slice(-args.limit);
@@ -233,7 +223,6 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
           chatGuids: ctx.chatGuids,
           sinceMs,
           maxMessages: args.max_messages,
-          lineFilter: visibilityFilter(ctx),
           spend: { dataDir: ctx.dataDir, sessionKey: ctx.sessionKey },
         });
         if (!res.ok) return errResult(res.error);
@@ -261,7 +250,6 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
       inputSchema: ListAttachmentsInput,
       handler: (args) => {
         if (smsHistoryFor(ctx)) return textResult(SMS_NO_ATTACHMENTS);
-        const visible = visibilityFilter(ctx);
         const hits = listAttachments(ctx.chatDb, {
           chatGuids: ctx.chatGuids,
           senderHandle: args.sender,
@@ -269,9 +257,7 @@ export function historyTools(ctx: ToolContext): ToolDef[] {
           untilMs: args.until,
           mimePrefix: args.mime_prefix,
           limit: args.limit,
-          // AttachmentHit carries no text, so ownership resolves via the
-          // rowId routing record only; unrouted rows stay visible.
-        }).filter((h) => visible({ rowId: h.rowId, fromMe: h.fromMe, text: "" }));
+        });
         if (hits.length === 0) return textResult("no attachments");
         const lines = hits.map((h) => {
           const who = h.fromMe ? "You" : (ctx.contacts.label(h.fromHandle) ?? h.fromHandle);
@@ -297,23 +283,6 @@ function guidToTimestamp(ctx: ToolContext, msgGuid: string): number | undefined 
 
 function errResult(msg: string) {
   return { content: [{ type: "text" as const, text: `error: ${msg}` }], isError: true };
-}
-
-/**
- * Per-call orchestrator-visibility gate for the history tools. Constant
- * true when no [[orchestrators]] are configured. Opens its own read handle
- * on state.db (same on-demand pattern as defaultCatchUpSince) to resolve
- * inbound routing records and outbound sent-attributions.
- */
-function visibilityFilter(ctx: ToolContext): (line: VisibilityLine) => boolean {
-  if (ctx.config.orchestrators.length === 0) return () => true;
-  let store: StateStore | null = null;
-  try {
-    store = new StateStore(ctx.dataDir);
-  } catch {
-    store = null; // text-fallback matching still applies
-  }
-  return makeHistoryFilter(viewerForSession(ctx.sessionKey), ctx.chatGuids, ctx.config, store);
 }
 
 /**

@@ -90,7 +90,7 @@ Turn workers are spawned detached so the daemon can stop a worker's whole
 tree, and a detached worker survives the daemon. It then finishes its turn and
 sends it while the next daemon replays the same messages: on 2026-11-24 a
 daemon that died 44 times in 26 minutes sent one person 17 messages for 2
-requests. `src/recovery/turn-workers.ts` writes each worker down with its
+requests. `src/model/turn-workers.ts` writes each worker down with its
 daemon; a watchdog stops them when the daemon is gone and boot stops any that
 are left. A new place that spawns a model process to run a turn calls
 `trackTurnWorker`, and a test fails if it does not. Sub-agents and background
@@ -150,6 +150,23 @@ that relied on "empty allowlist admits everyone" now needs
 `security.open_dm_allowlist: true`. The live config opts into the permissive
 values explicitly; do not change those defaults to match it.
 
+## Sandbox scripts import this checkout's source by path
+The assistant writes scripts in its sandboxes, and some import harness source
+by absolute path. Measured 2026-11-25 by searching every sandbox: 50 scripts
+importing 54 names from 38 modules. Nothing in the repository can see them.
+Knip reported `listPath` as unused while a sandbox script imported it, and
+`integrations/kitchen/src/notesync.ts` was deleted with two scripts still
+importing it. `tests/sandbox-api.test.ts` pins every module and name they
+use, and is what tells knip those exports are used. Before moving a file or
+dropping an export, check that list. Run the search again before changing it.
+
+## A file that finds things from its own location breaks when it moves
+About 25 files build a path from `import.meta.url`: the repo root, a sibling
+worker, a script under `scripts/`. The compiler does not read path strings,
+so a move to another depth compiles and then starts nothing. The two scripts
+the daemon starts this way are checked in `tests/architecture.test.ts`; any
+other needs reading by hand when its file moves.
+
 ## stdout is sacred in MCP servers
 `src/mcp/server.ts` speaks JSON-RPC over stdout. A stray `console.log` corrupts
 the stream. `protectStdout()` redirects the console to stderr; don't remove it.
@@ -179,6 +196,15 @@ ln -sfn ~/imcore-bridge/dist node_modules/imcore-bridge/dist   # only for client
 `bun install` overwrites both, so redo them after one. Ship bridge changes by
 cutting a bridge release and bumping the URL here; a local symlink is not a
 state anything else can see.
+
+**Modules are layered, and a test holds the layering.** A folder under `src/`
+imports at runtime only from itself or from a lower layer
+(`tests/architecture.test.ts`, list in `docs/architecture.md`). `model/`,
+`claude/` and `codex/` are one module: the contract and dispatcher, and the
+two backends. `cron/` is the job store everything writes to; `scheduler/`
+runs a job when it fires. Until 2026-11-25, 20 of the 48 modules formed one
+dependency knot while the files held only two import cycles: the files were
+sound and 26 of them were in the wrong folder.
 
 **Prompt composition, roughly per turn:**
 - system prompt in the low tens of thousands of tokens (it was almost double

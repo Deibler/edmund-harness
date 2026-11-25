@@ -126,7 +126,7 @@ that fetches Vercel's guidelines at runtime).
 
 The rest are tied to particular hardware, services or places: a smart mirror,
 a sky camera, a fishing data platform, a radar application, a household
-kitchen ledger, a hiking brief generator and a trading loop. They ship as
+kitchen ledger and a hiking brief generator. They ship as
 examples of what a skill can carry. Expect to delete or rewrite them for your
 own setup, and expect the ones that name a location to need a new one.
 

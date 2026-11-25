@@ -8,7 +8,7 @@ import {
   parseProcessTable,
   summarizeManagedProcesses,
 } from "../src/boot/resource-governor.ts";
-import { bindVoice, clearVoiceBindings, unbindVoice } from "../src/calls/binding.ts";
+import { bindVoice, clearVoiceBindings, unbindVoice } from "../src/sessions/call-binding.ts";
 
 const MIB = 1024 * 1024;
 

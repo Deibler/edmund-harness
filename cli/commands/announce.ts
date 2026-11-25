@@ -14,9 +14,9 @@
 import { activeDays, tenureDays } from "../../src/announce/eligibility.ts";
 import { PORTAL_TABS, normalizeLink } from "../../src/announce/links.ts";
 import { AnnouncementStore } from "../../src/announce/store.ts";
-import { PERSONA_DIR } from "../../src/claude/persona.ts";
 import { loadConfig } from "../../src/config/config.ts";
 import { ChatDb } from "../../src/imessage/db.ts";
+import { PERSONA_DIR } from "../../src/model/persona.ts";
 import { AddressBook } from "../../src/sessions/address-book.ts";
 import { ContactBook } from "../../src/sessions/contacts.ts";
 import { chatIdFromKey, isDmSession, normalizeHandle } from "../../src/sessions/key.ts";

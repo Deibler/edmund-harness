@@ -9,12 +9,12 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
-import { loadPersona } from "../../../src/claude/persona.ts";
 import type { Config } from "../../../src/config/config.ts";
 import type { CronStore } from "../../../src/cron/store.ts";
 import type { GhostPrefsStore } from "../../../src/ghost/prefs.ts";
 import { eraseIdeations } from "../../../src/ideation/portal.ts";
 import { ChatDb } from "../../../src/imessage/db.ts";
+import { loadPersona } from "../../../src/model/persona.ts";
 import { DEPENDENCY_DIRS, sandboxDir } from "../../../src/persona/sandbox.ts";
 import type { ContactBook } from "../../../src/sessions/contacts.ts";
 import type { SessionKey } from "../../../src/sessions/key.ts";

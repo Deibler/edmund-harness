@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { Hono } from "hono";
 import type { Config } from "../../../src/config/config.ts";
 import { VectorStore } from "../../../src/memory/vector-store.ts";

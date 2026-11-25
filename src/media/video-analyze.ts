@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import type { Config } from "../config/config.ts";
-import * as gemini from "../tools/gemini-http.ts";
 import * as openrouter from "../tools/openrouter-http.ts";
 
 /**
@@ -48,14 +47,7 @@ export async function analyzeVideoFile(args: AnalyzeArgs, config: Config): Promi
       prompt: args.prompt ?? DEFAULT_PROMPT,
     });
   }
-  if (config.keys.gemini) {
-    return gemini.analyzeVideo({
-      filePath: args.filePath,
-      prompt: args.prompt,
-      model: args.model,
-    });
-  }
-  throw new Error("no video analysis backend (need keys.openrouter or keys.gemini)");
+  throw new Error("no video analysis backend (need keys.openrouter)");
 }
 
 /**

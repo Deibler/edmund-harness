@@ -44,12 +44,12 @@ export const HOLD_MS = 14 * DAY;
 /** Pages started per rolling day, across everyone. */
 export const MAX_BUILDS_PER_DAY = 2;
 /** After a pass that found nothing, the next look waits this many days times jitter [1, 3). */
-export const NOTHING_GAP_DAYS = 2;
+const NOTHING_GAP_DAYS = 2;
 /** After any other pass (a gate turned it back, or it failed), the next look waits this long. */
 export const RUN_INTERVAL_MS = 20 * HOUR;
 
 export type Gate = { ok: true } | { ok: false; why: string };
-export type Landing = "engaged" | "ignored" | "pending";
+type Landing = "engaged" | "ignored" | "pending";
 /** Did they write in this chat between the two times? (chat.db) */
 export type RepliedBetween = (fromMs: number, toMs: number) => boolean;
 
@@ -74,7 +74,7 @@ export function isHeld(i: Ideation, nowMs: number): boolean {
  * How a page landed, or null when it never reached them and was not let go
  * (building, failed, taken down before it was given, a dry run, still held).
  */
-export function landing(i: Ideation, nowMs: number, replied: RepliedBetween): Landing | null {
+function landing(i: Ideation, nowMs: number, replied: RepliedBetween): Landing | null {
   if (i.deliveredMs !== null) {
     if (replied(i.deliveredMs, i.deliveredMs + REPLY_WINDOW_MS)) return "engaged";
     return nowMs - i.deliveredMs < REPLY_WINDOW_MS ? "pending" : "ignored";

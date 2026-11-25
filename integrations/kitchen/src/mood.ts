@@ -244,12 +244,12 @@ export const VIBES: Vibe[] = [
   { id: "gameday", label: "Game day", blurb: "Food you eat standing up with the TV on." },
 ];
 
-export const vibeById = (id: string | null | undefined): Vibe | null =>
+const vibeById = (id: string | null | undefined): Vibe | null =>
   VIBES.find((v) => v.id === id) ?? null;
 
 /* ── the mood ────────────────────────────────────────────────────────────── */
 
-export type Signal = { id: string; label: string };
+type Signal = { id: string; label: string };
 
 export type Mood = {
   /** ISO day this was computed for. */

@@ -30,7 +30,7 @@ export type Category = (typeof CATEGORIES)[number];
 export const LEVELS = ["full", "low", "out"] as const;
 export type Level = (typeof LEVELS)[number];
 
-export type EventOp =
+type EventOp =
   | "add"
   | "use"
   | "set"
@@ -47,7 +47,7 @@ export type EventOp =
    */
   | "trip";
 
-export type ItemFields = {
+type ItemFields = {
   name?: string;
   cat?: Category;
   loc?: Location;

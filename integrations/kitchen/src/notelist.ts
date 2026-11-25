@@ -67,7 +67,7 @@ export const noteTitle = (account: string): string => {
 };
 
 /** One line per item, as a shopper would read it. */
-export function lineText(l: {
+function lineText(l: {
   name: string;
   amount: string | null;
   reason: string;

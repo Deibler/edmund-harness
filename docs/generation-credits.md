@@ -20,7 +20,7 @@ ceiling and keeps the ledger — nothing here estimates a cost.
 | a DM (iMessage or SMS, same handle → same wallet) | their own wallet |
 | the operator (`alerts.operator_handle`)     | global key, unless flipped to "own wallet" on the Credits page to test |
 | a DM switched to "global key" on the dashboard | global key    |
-| groups, mirror, orchestrators, trading      | global key       |
+| groups, mirror                              | global key       |
 | a spawned agent                             | whatever its parent pays with |
 
 Only `generate_image` / `generate_video` / `generate_audio` are charged.

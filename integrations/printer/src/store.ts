@@ -61,7 +61,7 @@ export type Job = {
  * plate is clear.
  */
 export type ApprovalAction = "start" | "cancel" | "resume" | "plate";
-export type ApprovalStatus = "pending" | "approved" | "declined" | "used" | "expired";
+type ApprovalStatus = "pending" | "approved" | "declined" | "used" | "expired";
 
 export type Approval = {
   id: number;

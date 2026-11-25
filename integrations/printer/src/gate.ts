@@ -83,11 +83,11 @@ export type GateInput = {
 
 const PLATE_LOOK_MAX_AGE_MS = 5 * 60_000;
 /** How long the approver's "the plate is clear" stands; someone could put something on it after. */
-export const PLATE_CONFIRM_MAX_AGE_MS = 15 * 60_000;
+const PLATE_CONFIRM_MAX_AGE_MS = 15 * 60_000;
 const STATE_MAX_AGE_MS = 90_000;
 
 /** HMS severities that mean the printer should not be asked to print. */
-export function blockingHms(hms: HmsEntry[]): HmsEntry[] {
+function blockingHms(hms: HmsEntry[]): HmsEntry[] {
   return hms.filter((h) => {
     const sev = h.code >>> 16;
     return sev === 1 || sev === 2;
@@ -95,7 +95,7 @@ export function blockingHms(hms: HmsEntry[]): HmsEntry[] {
 }
 
 /** For each need, the tray the approved plan sends it to: an existing match, or the slot a swap fills. */
-export function approvedSlots(plan: Plan): Map<number, number> {
+function approvedSlots(plan: Plan): Map<number, number> {
   const m = new Map<number, number>();
   for (const a of plan.assignments) m.set(a.need.index, a.tray.trayId);
   for (const s of plan.swaps) m.set(s.need.index, s.slot.trayId);

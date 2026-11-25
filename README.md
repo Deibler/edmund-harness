@@ -260,7 +260,6 @@ default. [docs/sms-channel.md](docs/sms-channel.md)
   get a structurally reduced tool set: no memory, no history, no filesystem,
   no scheduling, no integrations. The reduction is in what is registered, not
   in a prompt instruction.
-- The trading integration moves real money and is off by default.
 - Recall is scoped to the conversation, and crossing it is an operator only
   capability. A contact cannot make the assistant search another person's
   messages.

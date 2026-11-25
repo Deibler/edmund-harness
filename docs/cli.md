@@ -17,7 +17,6 @@ on all of them.
 |---|---|---|
 | `--harness` | the daemon | none |
 | `--dashboard` | operator dashboard and user portal | 4747, 4749 |
-| `--trading` | trading integration dashboard | 4848 |
 | `--fishing` | fishing data platform (a separate repository) | 8087 |
 
 | Command | What it does |
@@ -35,7 +34,7 @@ login rather than at boot, and it runs as you.
 
 ```
 edmund logs [--follow] [--all] [--debug|--info|--warn|--error] [--session X] [--scope Y] [--grep RE] [-n 200]
-edmund logs --dashboard | --trading | --fishing
+edmund logs --dashboard | --fishing
 ```
 
 Tails `data/daemon.log` as a story of what the model is doing and for whom:
@@ -170,7 +169,6 @@ next proactive message, or the next `get_portal_link`, carries the new link.
 | `edmund config show [section]` | Print the loaded config with secrets masked to their last four characters |
 | `edmund config path` | Where the config file is |
 | `edmund config tidy` | Lay `config.toml` out by how often each part changes (backup kept; refuses if a value would change) |
-| `edmund recovery logs [--follow] [--err]` | Tail the log of the optional watchdog daemon, if you run one |
 | `edmund install` | Symlink `bin/edmund` into `/opt/homebrew/bin` or `/usr/local/bin` |
 | `edmund help` | Top level help |
 

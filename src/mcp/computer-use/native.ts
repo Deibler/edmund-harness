@@ -90,7 +90,7 @@ export type InspectedWindow = {
 /** An app's windows, front first. */
 export type Inspection = { running: boolean; windows: InspectedWindow[] };
 
-export type Permissions = { screenRecording: boolean; accessibility: boolean; locked: boolean };
+type Permissions = { screenRecording: boolean; accessibility: boolean; locked: boolean };
 
 export type Capture = { data: string; width: number; height: number };
 
@@ -318,7 +318,7 @@ export class NativeHelper implements Native {
  * go to a temporary name and are renamed into place, so two sessions starting
  * at once cannot run a half-written binary.
  */
-export function helperBinary(): string {
+function helperBinary(): string {
   const source = readFileSync(SOURCE);
   const hash = createHash("sha256").update(source).digest("hex").slice(0, 12);
   const dir = join(homedir(), "Library", "Caches", "edmund-harness", "computer-use");

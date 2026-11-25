@@ -186,7 +186,7 @@ describe("turns that resume a conversation", () => {
     };
     walk(src);
     expect(offenders).toEqual([]);
-    for (const f of ["channels/turn.ts", "cron/fire.ts", "proactive/fire.ts"]) {
+    for (const f of ["channels/turn.ts", "scheduler/fire.ts", "ghost/fire.ts"]) {
       expect(readFileSync(join(src, f), "utf8")).toContain("...resumedRunSpend(result)");
     }
   });

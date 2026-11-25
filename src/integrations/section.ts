@@ -1,7 +1,7 @@
 /**
  * `defineSection` — the one place an integration's `config.toml` table is read.
  *
- * Core keeps every integration section (`[trading]`, `[mirror]`, …) as an
+ * Core keeps every integration section (`[mirror]`, `[printer]`, …) as an
  * opaque value: the schema belongs to the package, not to `src/config/config.ts`,
  * which is what lets a package be deleted without touching a core type. Each
  * package therefore needs its own "parse my table" accessor — and all five were
@@ -22,7 +22,7 @@ import { log } from "../util/log.ts";
 /**
  * Build a memoized accessor for one integration's config table.
  *
- * @param key    the `config.toml` table name, e.g. "trading" for `[trading]`
+ * @param key    the `config.toml` table name, e.g. "mirror" for `[mirror]`
  * @param schema the package's zod schema; must tolerate `undefined` (give the
  *               top-level object a `.default({})`) so a missing table yields
  *               defaults instead of throwing

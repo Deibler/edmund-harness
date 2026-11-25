@@ -23,7 +23,7 @@ example's history), each section with a one-line note:
    `[group_addressing]`, `[people_maintainer]`, guest access and campaigns,
    `[computer_use]`, `[imessage_actions]`, `[mcp_servers]`.
 2. **Features and services**: integrations, the printer, kitchen, shelf,
-   mirror, SMS, trading, the dashboard, generation providers and credits.
+   mirror, SMS, the dashboard, generation providers and credits.
 3. **People and access**: owner, own handles, names, contacts, alerts,
    `[security]`, allowlists, outbound.
 4. **Secrets**: `[keys]`.
@@ -70,7 +70,7 @@ visible in the file rather than implied by an empty list.
 
 Groups are always the contact tier under `contact`, because the sender of a
 group message is not known inside tool processes. The operator's own
-surfaces (mirror, trading, sub-agents) are always the operator tier.
+surfaces (mirror, sub-agents) are always the operator tier.
 
 ### `[identity]`
 
@@ -88,19 +88,6 @@ surfaces (mirror, trading, sub-agents) are always the operator tier.
 
 Repeatable. `name` (optional) and `handles` (at least one). Merges a person's
 phone and email into a single session.
-
-### `[[orchestrators]]`
-
-Repeatable. Extra named personas with their own session namespace and persona
-overrides under `persona/orchestrators/<key>/`.
-
-| Key | Meaning |
-|---|---|
-| `key` | Slug up to 32 chars, not one of the reserved names |
-| `name` | Display name |
-| `invocations` | Names that address it; globally unique |
-| `role` | `secondary` (default) or `primary`; at most one primary |
-| `model` | Override, or empty to inherit `[claude].model` |
 
 ### `[guest_access]` and `[[guest_campaigns]]`
 
@@ -134,7 +121,7 @@ per server: `[mcp_servers.<name>]`.
 | `tiers` | `["operator"]` | Which sessions get it. Add `"contact"` to reach allowlisted people who are not the operator |
 
 Guests never get these servers. A name the harness uses itself
-(`edmund-harness`, `radaromega`, `computer`, `chrome-devtools`, `robinhood`,
+(`edmund-harness`, `radaromega`, `computer`, `chrome-devtools`,
 `ghost`, and Claude Code's reserved `computer-use`) is refused with a warning.
 Tokens belong in `config.toml`, never the example file. The generated
 `data/mcp*.json` files that carry them are written with mode 0600. Changes
@@ -222,7 +209,6 @@ Codex only overrides. Each falls back to `[claude]` except
 | `session_idle_hours` | `72` | Idle longer than this is a cold start |
 | `transcribe_inbound_audio` | `true` | Speech to text on voice memos |
 | `auto_typing` | `true` | Typing indicator while the model works |
-| `auto_typing_seconds` | `30` | Refresh interval, 5 to 120 |
 | `thread_break_minutes` | `30` | Gap that segments history |
 | `topic_shift_minutes` | `5` | Gap that marks a topic shift |
 | `history_max_per_segment` | `30` | Rows per segment |
@@ -466,9 +452,6 @@ Off by default. See [generation-credits.md](generation-credits.md).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `image_provider` | `openai` | `openai` or `gemini` for the legacy image path |
-| `image_model` | `gpt-image-1` | |
-| `tts_voice` | `nova` | |
 | `stt_model` | `whisper-1` | |
 
 ## Channels and surfaces
@@ -502,7 +485,7 @@ See [sms-channel.md](sms-channel.md).
 | `pin_hash` | `""` | Empty refuses every login; set it with `edmund dashboard --pin` |
 | `session_days` | `30` | Cookie lifetime |
 | `external_url` | `""` | Public base for portal links; overrides the tunnel file and LAN address |
-| `public_port` | `4749` | Loopback listener that serves only portal, payment and annotation routes |
+| `public_port` | `4749` | Loopback listener that serves only portal and payment routes |
 
 ### `[instant_share]`
 
@@ -538,7 +521,6 @@ See [sms-channel.md](sms-channel.md).
 | `[radaromega]` | radaromega | `enabled` (example `false`), `package_path`, `cdp_port` 9222, `refresh_hours` 6 |
 | `[fishing]` | fishing | `enabled` false, `api_url` |
 | `[mirror]` | mirror | `enabled` false, host, port 8789, `token` required when enabled, speech settings, `session_key` |
-| `[trading]` | trading | `enabled` false, `handles` empty means nobody, risk limits, broker endpoint, `allow_model_supplied_risk_inputs` false. Real money |
 | `[kitchen]` | kitchen | `enabled` true, `dir`, `price_max_age_days` 21. The shipped default `dir` is an absolute path from the author's machine; set your own |
 | `[printer]` | printer | `enabled` false, `host`, `access_code` (LAN password, never in tracked files), `serial`, `approvers` (default: operator handles), `plate`, `timelapse`, `slicer_path`, `page_origin` (default `[shelf]` origin), `approval_ttl_hours` 12, `auto_progress` [25, 50, 75]. See integrations/printer/README.md |
 

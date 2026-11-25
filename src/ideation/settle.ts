@@ -54,13 +54,13 @@ const HOME_TZ = "America/New_York";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 /** About this share of pages is sent soon after it is finished, not held. */
-export const SOON_SHARE = 1 / 3;
+const SOON_SHARE = 1 / 3;
 /** "Soon": a random moment this long after the page is ready. */
 export const SOON_WINDOW_MS: readonly [number, number] = [5 * MINUTE, 90 * MINUTE];
 /** A held page that hasn't come up is sent at a random moment in this range. */
 export const FALLBACK_WINDOW_MS: readonly [number, number] = [20 * HOUR, 72 * HOUR];
 /** They wrote this recently: the conversation is still going, so hold it for that. */
-export const TALKING_MS = 15 * MINUTE;
+const TALKING_MS = 15 * MINUTE;
 
 export type DeliveryPlan = { kind: "soon" | "held"; atMs: number };
 type Hours = Pick<BrownNosePrefs, "activeHours" | "timezone">;
@@ -72,7 +72,7 @@ type Hours = Pick<BrownNosePrefs, "activeHours" | "timezone">;
  * the range. Only when they cover a sliver of it does it fall back to listing
  * candidates 5 minutes apart, shifted by one random offset.
  */
-export function randomActiveMoment(
+function randomActiveMoment(
   hours: Hours,
   fromMs: number,
   toMs: number,
@@ -339,7 +339,7 @@ export function pageStillToGive(
 }
 
 /** Their last message in this chat, from the daemon's session table (read only). */
-export function lastInboundMs(dataDir: string, sessionKey: string): number | null {
+function lastInboundMs(dataDir: string, sessionKey: string): number | null {
   const path = join(dataDir, "state.db");
   if (!existsSync(path)) return null;
   let db: Database | null = null;

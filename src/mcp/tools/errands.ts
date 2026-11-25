@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { relativeAgo, relay } from "../../bridge/relay.ts";
 import { ErrandStore, errandAnsweredEvent, errandFollowupEvent } from "../../concierge/errands.ts";
+import { relativeAgo, relay } from "../../relay/relay.ts";
 import { chatIdFromKey, isGroupSession } from "../../sessions/key.ts";
 import { StateStore } from "../../sessions/store.ts";
 import { genId } from "../../util/ids.ts";

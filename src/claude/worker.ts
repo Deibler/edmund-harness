@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { trackTurnWorker } from "../recovery/turn-workers.ts";
-import { DEBUG, humanCost, humanCount, humanMs, log, shortSession, snippet } from "../util/log.ts";
+import { trackTurnWorker } from "../model/turn-workers.ts";
+import { DEBUG, humanCost, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import {
   COMPACT_INSTRUCTIONS,
   type CompactionEvent,

@@ -69,16 +69,10 @@ imagent drops still returns cleanly, so "accepted" is not the outcome.
 | `transcribe_audio` | Speech to text for a voice memo (local whisper.cpp first) |
 | `analyze_video` | Watch a video: frames on contact sheets the model sees, plus a transcript |
 | `blind_check` | A cold description of a render from a model not told what it should be, with counts of every repeated part |
-| `request_image_annotation` | Hand the person a link where they can mark up an image |
 
 Every generation goes through the credits layer. If the person's wallet
 cannot cover it, the tool refuses with a message the model relays along with a
 link to top up. See [generation-credits.md](generation-credits.md).
-
-## Their own data
-
-`connect_calendar`, `calendar_upcoming`, `disconnect_calendar`: a person's own
-calendar by the secret iCal link they share, read live, scoped to that chat.
 
 ## Web
 

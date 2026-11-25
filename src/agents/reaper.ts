@@ -18,7 +18,7 @@ export const AGENT_LIMITS: AgentLimits = {
 };
 
 /** What the parent is told about why its agent was stopped. */
-export function stuckReason(agent: Agent, limits: AgentLimits, now = Date.now()): string {
+function stuckReason(agent: Agent, limits: AgentLimits, now = Date.now()): string {
   if (agent.status === "pending") return "never started (the runner did not come up)";
   if (agent.spawnedAt < now - limits.maxRunMs) {
     return `stopped at the ${Math.round(limits.maxRunMs / 60_000)}-minute limit for a sub-agent`;

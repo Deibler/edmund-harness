@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PERSONA_DIR } from "../claude/persona.ts";
+import { PERSONA_DIR } from "../model/persona.ts";
 import { atomicWriteFileSync } from "../util/atomic-write.ts";
 import { easternDate } from "../util/clock.ts";
 
@@ -27,7 +27,7 @@ import { easternDate } from "../util/clock.ts";
  * piece of advice landed or was quietly discarded.
  */
 
-export const DOMAINS_DIR = join(PERSONA_DIR, "domains");
+const DOMAINS_DIR = join(PERSONA_DIR, "domains");
 
 /** Kebab-case slug for a subject: "endurance-training", "short-form-content". */
 export function domainSlug(name: string): string {
@@ -38,21 +38,8 @@ export function domainSlug(name: string): string {
     .slice(0, 60);
 }
 
-export function domainPath(slug: string): string {
+function domainPath(slug: string): string {
   return join(DOMAINS_DIR, `${slug}.md`);
-}
-
-export function listDomains(): string[] {
-  if (!existsSync(DOMAINS_DIR)) return [];
-  return readdirSync(DOMAINS_DIR)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => f.replace(/\.md$/, ""))
-    .sort();
-}
-
-export function readDomain(slug: string): string {
-  const p = domainPath(slug);
-  return existsSync(p) ? readFileSync(p, "utf8") : "";
 }
 
 export type DomainNote = {

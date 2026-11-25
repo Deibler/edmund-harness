@@ -93,14 +93,7 @@ async function startLocal(svc: Svc): Promise<void> {
       ? spawn("/bin/bash", [`${REPO}/scripts/launchd/run-fishing.sh`], { stdio: "inherit" })
       : spawn(
           "/opt/homebrew/bin/bun",
-          [
-            "run",
-            svc === "harness"
-              ? "src/main.ts"
-              : svc === "trading"
-                ? "integrations/trading/dashboard/main.ts"
-                : "dashboard/server/main.ts",
-          ],
+          ["run", svc === "harness" ? "src/main.ts" : "dashboard/server/main.ts"],
           { cwd: REPO, stdio: "inherit" },
         );
   await new Promise<void>((resolve) => {

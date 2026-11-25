@@ -8,7 +8,6 @@ import { getGroupParticipants } from "../imessage/participants.ts";
 import { lookupReplyContext } from "../imessage/reply-lookup.ts";
 import type { InboundMessage, UnnamedWake } from "../imessage/types.ts";
 import { type JevQuestion, askJev } from "../jev/client.ts";
-import { allInvocationNames } from "../orchestrators/registry.ts";
 import { log } from "../util/log.ts";
 import { gateInbound, isAssistantMentioned } from "./allowlist.ts";
 
@@ -136,11 +135,7 @@ export function nameLikeWord(text: string, names: string[]): string | null {
 }
 
 /** Unix ms of the assistant's last message in this chat before `beforeRowId`, or null. */
-export function lastAssistantMs(
-  chatDb: ChatDb,
-  chatGuid: string,
-  beforeRowId: number,
-): number | null {
+function lastAssistantMs(chatDb: ChatDb, chatGuid: string, beforeRowId: number): number | null {
   const row = chatDb
     .query<{ date_ns: number | null }>(
       `SELECT MAX(m.date) AS date_ns
@@ -154,7 +149,7 @@ export function lastAssistantMs(
 }
 
 /** How long after he asked a question an un-named message may be the answer. */
-export const QUESTION_WINDOW_MS = 60 * 60_000;
+const QUESTION_WINDOW_MS = 60 * 60_000;
 /** Messages by others after his question beyond which the thread has moved on. */
 const QUESTION_MAX_OTHERS = 3;
 
@@ -165,7 +160,7 @@ const QUESTION_MAX_OTHERS = 3;
  * missed when they came more than ten minutes later, or when "wants a reply"
  * scored just under the bar, though they were said to him.
  */
-export function openAssistantQuestion(
+function openAssistantQuestion(
   chatDb: ChatDb,
   chatGuid: string,
   beforeRowId: number,
@@ -255,7 +250,7 @@ export function lastEngagedRow(
   beforeRowId: number,
   config: Config,
 ): number {
-  const names = allInvocationNames(config);
+  const names = config.identity.names;
   const rows = chatDb
     .query<{
       row_id: number;

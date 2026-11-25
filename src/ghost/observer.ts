@@ -1,10 +1,9 @@
 import type { Config } from "../config/config.ts";
 import type { CronStore } from "../cron/store.ts";
 import type { ChatDb } from "../imessage/db.ts";
-import { enqueueBrownNoseFire } from "../proactive/queue.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import type { SessionKey } from "../sessions/key.ts";
-import { isGroupSession } from "../sessions/key.ts";
+import { isGroupSession, isRetiredSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { getSpendLedger, localDay } from "../spend/ledger.ts";
 import { log } from "../util/log.ts";
@@ -22,6 +21,7 @@ import {
   DEFAULT_ACTIVE_HOURS_GROUP,
   type GhostPrefsStore,
 } from "./prefs.ts";
+import { enqueueBrownNoseFire } from "./queue.ts";
 import {
   type GhostDecision,
   type GhostSmsHistory,
@@ -102,7 +102,7 @@ export class GhostObserver {
       prefs: GhostPrefsStore;
       crons: CronStore;
       state: StateStore;
-      /** Extra per-session exclusion (beyond the trading:/orch: namespaces).
+      /** Extra per-session exclusion (beyond the retired namespaces).
        *  Wired by main.ts to keep guest/vouched DM handles out of proactive
        *  outreach entirely — they are never ghost targets, never enrolled. */
       isExcludedSession?: (sessionKey: SessionKey) => boolean;
@@ -254,11 +254,9 @@ export class GhostObserver {
   /** Used by both periodic and reactive triggers. Records the
    *  reason+timestamp so the picker can de-duplicate. */
   private async runReactiveTick(sessionKey: SessionKey, reason: TickReason): Promise<void> {
-    // Never ghost-ticked: trading is a bot channel, and named-orchestrator
-    // sessions belong to OTHER personas — the ghost composes outreach as
-    // the main persona and must not read (or act on) their private threads.
+    // Never ticked: a session left by a removed feature (isRetiredSession).
     // Guest/vouched DMs (isExcludedSession) are never outreach targets.
-    if (sessionKey.startsWith("trading:") || sessionKey.startsWith("orch:")) return;
+    if (isRetiredSession(sessionKey)) return;
     if (this.deps.isExcludedSession?.(sessionKey)) return;
     // Reactive (post-reply) ticks bypass the picker, so re-apply its
     // spacing floor here — without it, a chatty exchange stacked 4 model
@@ -326,7 +324,7 @@ export class GhostObserver {
    * the same defaults boot enrollment uses.
    */
   private ensureEnrolled(sessionKey: SessionKey) {
-    if (sessionKey.startsWith("trading:") || sessionKey.startsWith("orch:")) return null;
+    if (isRetiredSession(sessionKey)) return null;
     if (this.deps.isExcludedSession?.(sessionKey)) return null;
     const existing = this.deps.prefs.get(sessionKey);
     if (existing) return existing;
@@ -402,7 +400,7 @@ export class GhostObserver {
   }
 
   /** When the ghost says act:true, enqueue a brown-nose cron row. The
-   *  scheduler picks it up at fireAtMs and routes through proactive/fire.ts. */
+   *  scheduler picks it up at fireAtMs and routes through ghost/fire.ts. */
   private maybeEnqueue(sessionKey: SessionKey, decision: GhostDecision): void {
     if (!decision.act) return;
     const res = enqueueBrownNoseFire({

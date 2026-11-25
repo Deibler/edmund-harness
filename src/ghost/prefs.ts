@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openDb } from "../db/open.ts";
-import type { SessionKey } from "../sessions/key.ts";
+import { type SessionKey, isRetiredSession } from "../sessions/key.ts";
 
 /**
  * Persistent store for brown-nose mode state. Two tables, both in
@@ -268,24 +268,15 @@ export class GhostPrefsStore {
         .query("INSERT INTO bn_meta(key, value) VALUES ('group_hours_backfill_v1', ?)")
         .run(String(res.changes ?? 0));
     }
-    // Trading sessions have their own scheduled cadence (hourly cron +
-    // price triggers) — the proactive ghost watching them just burns
-    // ticks deciding whether to brown-nose a bot channel. Disable any
-    // enrolled trading rows; the observer also refuses to (re)enroll them.
+    // A row enrolled for a session of a removed feature (a trading persona,
+    // a named orchestrator) stays disabled. The observer refuses to enroll
+    // one again; this covers what an older version already wrote.
     this.db
       .query(
         `UPDATE brown_nose_prefs SET enabled = 0, disabled_reason = ?
-         WHERE session_key LIKE 'trading:%' AND enabled = 1`,
+         WHERE (session_key LIKE 'trading:%' OR session_key LIKE 'orch:%') AND enabled = 1`,
       )
-      .run("trading session — has its own scheduled cadence, ghost excluded");
-    // Same for named-orchestrator sessions: the ghost speaks as the main
-    // persona and must never act on (or read) another orchestrator's thread.
-    this.db
-      .query(
-        `UPDATE brown_nose_prefs SET enabled = 0, disabled_reason = ?
-         WHERE session_key LIKE 'orch:%' AND enabled = 1`,
-      )
-      .run("named-orchestrator session — ghost is main-persona only");
+      .run("session of a removed feature");
   }
 
   /**
@@ -625,10 +616,8 @@ export function autoEnrollSessions(
 ): number {
   let added = 0;
   for (const s of sessions) {
-    // Trading sessions are bot channels with their own scheduled cadence —
-    // never enroll them for proactive outreach. Orchestrator sessions
-    // belong to other personas — the main-persona ghost stays out.
-    if (s.sessionKey.startsWith("trading:") || s.sessionKey.startsWith("orch:")) continue;
+    // Never enroll a session left by a removed feature.
+    if (isRetiredSession(s.sessionKey)) continue;
     if (store.get(s.sessionKey)) continue;
     const isGroup = s.isGroup;
     store.upsert(s.sessionKey, {

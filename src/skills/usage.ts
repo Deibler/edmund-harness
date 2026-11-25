@@ -37,7 +37,7 @@ export type UsageSummary = {
   last_ms: number;
 };
 
-export function usageLogPath(dataDir: string): string {
+function usageLogPath(dataDir: string): string {
   return join(dataDir, "skill-usage.jsonl");
 }
 

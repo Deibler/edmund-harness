@@ -12,7 +12,6 @@ import {
   EFFORT_LABEL,
   METHOD_LABEL,
   type Recipe,
-  cookable,
   effortOf,
   feedsAllWeek,
   inSeason,

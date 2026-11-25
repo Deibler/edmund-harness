@@ -1,19 +1,19 @@
 import type { AgentStore } from "../agents/store.ts";
 import type { OperatorAlert } from "../alerts/operator-alert.ts";
 import type { BgJobStore } from "../background/store.ts";
+import { HEALERS } from "../claude/healers.ts";
 import type { Config } from "../config/config.ts";
 import { cancelInboundRetries, isInboundRetryEvent } from "../cron/retry-marker.ts";
 import type { CronStore } from "../cron/store.ts";
 import type { RecentThread } from "../cron/wake-thread.ts";
 import type { ChatDb } from "../imessage/db.ts";
+import type { FailureClass } from "../model/failure-class.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
-import { type SessionKey, isGroupSession, isTradingSession } from "../sessions/key.ts";
+import { type SessionKey, isGroupSession, isRetiredSession } from "../sessions/key.ts";
 import type { SessionLocks } from "../sessions/locks.ts";
 import { type SessionRecord, StateStore } from "../sessions/store.ts";
 import { log } from "../util/log.ts";
-import type { FailureClass } from "./classify.ts";
-import { HEALERS } from "./healers.ts";
 import { loadUnansweredInbound, runRecoveryTurn } from "./turn.ts";
 
 /**
@@ -38,10 +38,10 @@ import { loadUnansweredInbound, runRecoveryTurn } from "./turn.ts";
  */
 
 /**
- * Does `sessionKey` own this inbound row? The edmund DM and the trading (Wolf)
- * DM share one physical iMessage thread, so `loadUnansweredInbound` (chat-
- * scoped) can return the other persona's messages. We gate on the recorded
- * live routing decision:
+ * Does `sessionKey` own this inbound row? More than one session can sit on
+ * one physical iMessage thread, so `loadUnansweredInbound` (chat-scoped) can
+ * return another session's messages. We gate on the recorded live routing
+ * decision:
  *   - recorded owner present → only that session may recover the row.
  *   - no record, group session → nobody owes it. Every accepted group row is
  *     recorded (live path, catch-up, and the address check through the live
@@ -49,15 +49,15 @@ import { loadUnansweredInbound, runRecoveryTurn } from "./turn.ts";
  *     the addressing gate dropped. Counting it ran recovery turns over
  *     chatter and sent "hit a snag" into a group nobody had asked anything
  *     (2026-10-23).
- *   - no record, DM → belongs to the normal (edmund) path, never to a trading
- *     session. This guarantees a Wolf message is never recovered into edmund,
- *     and edmund's messages are never recovered into Wolf.
+ *   - no record, DM → belongs to the DM's own session, and never to a session
+ *     left by a removed feature (isRetiredSession), whose key can name the
+ *     same person.
  */
 export function ownsRow(state: StateStore, sessionKey: SessionKey, rowId: number): boolean {
   const owner = state.getRoutedSession(rowId);
   if (owner !== null) return owner === sessionKey;
   if (isGroupSession(sessionKey)) return false;
-  return !isTradingSession(sessionKey);
+  return !isRetiredSession(sessionKey);
 }
 
 export const IMMINENT_CRON_MS = 60 * 1000;

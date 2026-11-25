@@ -65,7 +65,7 @@ export type FetchResult = {
  * requests hit a blocked site, and at least one answer ($449 headlights
  * "plug right in") was built from the listing title instead.
  */
-export class UnreadablePageError extends Error {}
+class UnreadablePageError extends Error {}
 
 /** Statuses a site uses to turn away a non-browser client. */
 const BLOCK_STATUSES = new Set([401, 403, 406, 429, 451, 503]);
@@ -138,12 +138,6 @@ export async function renderInBrowser(
     rmSync(profile, { recursive: true, force: true });
   }
 }
-
-type FetchError = {
-  url: string;
-  error: string;
-  blocked?: boolean;
-};
 
 export async function webFetch(
   urlStr: string,

@@ -11,16 +11,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { logPath } from "./accounts.ts";
-import {
-  CATEGORIES,
-  type Category,
-  type Item,
-  type KitchenEvent,
-  LOCATIONS,
-  type Level,
-  type Location,
-  type Plan,
-} from "./types.ts";
+import type { Item, KitchenEvent, Level, Plan } from "./types.ts";
 
 export function nowIso(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "+00:00");
@@ -299,11 +290,6 @@ export function amount(item: Item): string {
   const n = String(q);
   return u === "ct" ? n : `${n} ${u}`;
 }
-
-export const isCategory = (s: string): s is Category =>
-  (CATEGORIES as readonly string[]).includes(s);
-export const isLocation = (s: string): s is Location =>
-  (LOCATIONS as readonly string[]).includes(s);
 
 export function newPlanId(): string {
   return shortId(6);

@@ -24,8 +24,6 @@ import type { Watch } from "./store.ts";
  * as several changes while the RFID and colour are read.
  */
 
-export type Firing = { watch: Watch; reason: string };
-
 export type EvalContext = {
   /** Identity of the print underway now, "" when none. */
   printKey: string;
@@ -92,11 +90,7 @@ export function describeTrays(st: PrinterState, ids?: number[]): string {
 }
 
 /** HMS entries and print errors in `cur` that were not in `prev`. */
-export function newErrors(
-  prev: PrinterState | null,
-  cur: PrinterState,
-  db: ErrorDb,
-): DecodedError[] {
+function newErrors(prev: PrinterState | null, cur: PrinterState, db: ErrorDb): DecodedError[] {
   const key = (h: { attr: number; code: number }) => `${h.attr}:${h.code}`;
   const had = new Set((prev?.hms ?? []).map(key));
   const out = cur.hms.filter((h) => !had.has(key(h))).map((h) => decodeHms(h, db));

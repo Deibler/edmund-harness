@@ -16,14 +16,14 @@ import type { BillingMode } from "./store.ts";
  *                                  flipped themselves to `wallet` to test
  *   a DM whose wallet is `house` → house (the per-person override)
  *   agent:<id>                   → whatever its parent resolves to
- *   groups, mirror, orchestrators, trading, cron, anything else → house
+ *   groups, mirror, cron, anything else → house
  */
 
 export type BillingTarget =
   | { kind: "house"; reason: HouseReason }
   | { kind: "wallet"; sessionKey: string; handle: string };
 
-export type HouseReason =
+type HouseReason =
   | "operator"
   | "override"
   | "group-or-system"

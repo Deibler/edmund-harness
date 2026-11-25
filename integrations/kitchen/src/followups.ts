@@ -25,23 +25,23 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
 /** How long after a meal is sent before asking whether it was made. */
-export const ASK_AFTER_HOURS = 18;
+const ASK_AFTER_HOURS = 18;
 /** A plan older than this is not followed up; the moment has passed. */
-export const ASK_WITHIN_DAYS = 4;
+const ASK_WITHIN_DAYS = 4;
 /** Local hours in which a follow-up may be sent. */
-export const ASK_HOURS = { from: 11, to: 20 } as const;
+const ASK_HOURS = { from: 11, to: 20 } as const;
 /** A suspicion never asked about is assumed after this long. */
-export const UNASKED_DAYS = 4;
+const UNASKED_DAYS = 4;
 /** A suspicion asked about and not answered is assumed after this long. */
-export const UNANSWERED_DAYS = 2;
+const UNANSWERED_DAYS = 2;
 /** An item reviewed this recently is not put in front of the model again. */
-export const REVIEW_EVERY_DAYS = 3;
+const REVIEW_EVERY_DAYS = 3;
 /** A run-out offered in a follow-up is not offered again for this long. */
-export const OFFER_EVERY_DAYS = 14;
+const OFFER_EVERY_DAYS = 14;
 
 export type Verdict = "gone" | "low";
 
-export type Suspect = {
+type Suspect = {
   name: string;
   verdict: Verdict;
   /** One clause, in words a person would accept: "bought 3 weeks ago, used in 2 meals". */
@@ -63,7 +63,7 @@ export type FollowupState = {
 
 const empty = (): FollowupState => ({ suspects: {}, plansAsked: {}, reviewed: {}, offered: {} });
 
-export function followupPath(account: string): string {
+function followupPath(account: string): string {
   return join(accountDir(), account, "followups.json");
 }
 

@@ -2,10 +2,9 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { directClaudeEnv } from "../claude/direct-env.ts";
 import { CronStore } from "../cron/store.ts";
 import { settleIdeationBuild } from "../ideation/settle.ts";
-import { isTradingSession } from "../sessions/key.ts";
+import { directClaudeEnv } from "../model/direct-env.ts";
 import { genId } from "../util/ids.ts";
 import { consumeFollowOnMarker, teamSharedDirFor } from "./follow-on.ts";
 import {
@@ -111,10 +110,6 @@ function launchAgent(
   if (teamSharedDir) env.AGENT_TEAM_SHARED = teamSharedDir;
   if (agent.role) env.AGENT_ROLE = agent.role;
   if (agent.teamId) env.AGENT_TEAM_ID = agent.teamId;
-  // Trading sub-agents get the trading MCP loadout (Robinhood read tools for
-  // research) and a research-only preamble — they never place orders.
-  const trading = isTradingSession(agent.parentSessionKey);
-  if (trading) env.EDMUND_TRADING = "1";
 
   const child = spawn("bun", [RUNNER_SCRIPT], {
     env,
@@ -369,4 +364,4 @@ export function configuredAgentModel(
   return env.EDMUND_AGENT_MODEL ?? DEFAULT_AGENT_MODEL;
 }
 
-export const DEFAULT_AGENT_MODEL = "claude-sonnet-5";
+const DEFAULT_AGENT_MODEL = "claude-sonnet-5";

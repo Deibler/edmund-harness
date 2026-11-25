@@ -1,12 +1,10 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { anyVoiceLive } from "../calls/binding.ts";
 import {
   POST_COMPACT_THREAD_CHARS,
   type ThreadDeps,
   recentThreadWindow,
 } from "../channels/history.ts";
-import { GROUPS_DIR, PEOPLE_DIR, PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { unavailableIntegrationSkills } from "../integrations/host.ts";
@@ -14,8 +12,9 @@ import { autoRecall } from "../memory/auto-recall.ts";
 import { type EmbedProvider, makeProvider } from "../memory/embed-provider.ts";
 import { Indexer } from "../memory/indexer.ts";
 import { VectorStore } from "../memory/vector-store.ts";
-import { textVisibleTo, viewerForSession } from "../orchestrators/visibility.ts";
+import { GROUPS_DIR, PEOPLE_DIR, PERSONA_DIR } from "../model/persona.ts";
 import { sandboxDir } from "../persona/sandbox.ts";
+import { anyVoiceLive } from "../sessions/call-binding.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
@@ -283,7 +282,7 @@ export function wireRecall(args: {
               sessionKey,
               chatGuid,
               lastCompactAtMs,
-              { config, chatDb, contacts, state },
+              { config, chatDb, contacts },
               shownSinceMs,
             )
           : shownSinceMs;
@@ -342,20 +341,6 @@ export function wireRecall(args: {
               surfaced.refs.delete(ref);
             }
           }
-        }
-        // Per-orchestrator visibility: recall snippets are bare text (no
-        // rowId), so apply the conservative text-level check — a snippet
-        // naming a secondary never reaches another orchestrator's envelope.
-        if (config.orchestrators.length > 0) {
-          const viewer = sessionKey ? viewerForSession(sessionKey) : "main";
-          const visible = (line: string) => textVisibleTo(line, viewer, config);
-          return {
-            ...result,
-            senderInChatLines: result.senderInChatLines.filter(visible),
-            recentLines: result.recentLines.filter(visible),
-            deepLines: result.deepLines.filter(visible),
-            timeScopedLines: result.timeScopedLines.filter(visible),
-          };
         }
         return result;
       }

@@ -15,9 +15,8 @@ import { cn } from "@/lib/cn";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-// Creating and editing orchestrators happens on nested pages
-// ( /orchestrator/new, /orchestrator/:key ) — no dialogs. Shared persona
-// editing is the only full-width in-page view swap here.
+// The persona is edited on a nested page ( /orchestrator/main ) — no dialogs.
+// Persona file editing is the only full-width in-page view swap here.
 
 type MainView = { kind: "list" } | { kind: "persona"; name: string };
 
@@ -51,17 +50,11 @@ export function OrchestratorPage() {
             <section className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-fg">Orchestrators</h2>
+                  <h2 className="text-sm font-semibold text-fg">Persona</h2>
                   <p className="text-xs text-muted mt-0.5 max-w-2xl">
-                    Named personas. The <span className="text-fg">primary</span> answers every
-                    message that doesn't name someone else; a{" "}
-                    <span className="text-fg">secondary</span> responds only when called by one of
-                    its names — and the primary never sees those exchanges.
+                    The names it answers to, its model and its persona files.
                   </p>
                 </div>
-                <Button size="sm" variant="primary" onClick={() => navigate("/orchestrator/new")}>
-                  New orchestrator
-                </Button>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 {orchestrators.map((o) => (
@@ -121,25 +114,11 @@ function OrchestratorCard({
   orch: NamedOrchestrator;
   onConfigure: () => void;
 }) {
-  const custom = orch.persona.filter((p) => p.source === "custom").length;
   const missing = orch.persona.filter((p) => p.source === "missing").length;
 
   return (
-    <Card className={cn(orch.role === "primary" && "border-accent/40")}>
-      <CardHeader
-        title={orch.name}
-        subtitle={
-          orch.role === "primary"
-            ? "Primary — answers un-named DMs and group messages"
-            : "Secondary — responds only when called by name"
-        }
-        right={
-          <div className="flex items-center gap-1.5">
-            {orch.builtin ? <Badge tone="neutral">built-in</Badge> : null}
-            <Badge tone={orch.role === "primary" ? "accent" : "neutral"}>{orch.role}</Badge>
-          </div>
-        }
-      />
+    <Card className="border-accent/40">
+      <CardHeader title={orch.name} subtitle="Answers DMs, and group messages that name it" />
       <CardBody className="space-y-3">
         <div>
           <div className="text-xs font-medium text-fg mb-1.5">Answers to</div>
@@ -159,7 +138,6 @@ function OrchestratorCard({
           <div className="flex items-center gap-2">
             <span className="w-16 shrink-0">Model</span>
             <span className="font-mono text-fg truncate">{orch.effectiveModel}</span>
-            {orch.inheritsOperator ? <Badge tone="neutral">inherits main</Badge> : null}
           </div>
         </div>
 
@@ -170,7 +148,6 @@ function OrchestratorCard({
               title={`${p.file}: ${p.source}`}
               className={cn(
                 "px-2 py-0.5 rounded-md border text-[11px] font-mono",
-                p.source === "custom" && "border-accent/40 text-accent",
                 p.source === "shared" && "border-border/60 text-muted",
                 p.source === "missing" && "border-danger/40 text-danger",
               )}
@@ -179,8 +156,7 @@ function OrchestratorCard({
             </span>
           ))}
           <span className="text-[11px] text-muted ml-1">
-            {custom ? `${custom} custom` : "all shared"}
-            {missing ? ` / ${missing} missing` : ""}
+            {missing ? `${missing} missing` : "all present"}
           </span>
         </div>
 
@@ -194,7 +170,7 @@ function OrchestratorCard({
   );
 }
 
-// ─── Subsystem cards (ghost, maintainer, trading, agents) ────────────────────
+// ─── Subsystem cards (ghost, maintainer, agents) ─────────────────────────────
 
 function SubsystemCard(props: {
   sub: OrchSubsystem;
@@ -255,7 +231,7 @@ function ModelEditor({ sub }: { sub: OrchSubsystem }) {
         <Input
           list={listId}
           value={value}
-          placeholder={sub.key === "trading" ? "(empty = inherit operator model)" : "claude-…"}
+          placeholder="claude-…"
           onChange={(e) => setValue(e.target.value)}
           className="font-mono text-xs"
         />

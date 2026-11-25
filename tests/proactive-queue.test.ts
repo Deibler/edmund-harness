@@ -10,7 +10,7 @@ import {
   BROWN_NOSE_PREFIX,
   decodeBrownNoseSystemEvent,
   isBrownNoseEvent,
-} from "../src/proactive/queue.ts";
+} from "../src/ghost/queue.ts";
 
 describe("BROWN_NOSE payload encoding", () => {
   test("isBrownNoseEvent detects the prefix", () => {

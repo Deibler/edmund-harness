@@ -54,11 +54,6 @@ export async function ensureTwilioWebhooks(params: {
   return false;
 }
 
-/** Exposed for tests; resets the applied-URL memo. */
-export function resetWebhookMemo(): void {
-  lastApplied = null;
-}
-
 async function setGlobalWebhook(creds: TwilioCreds, url: string): Promise<boolean> {
   const form = new URLSearchParams();
   form.set("PostWebhookUrl", url);

@@ -24,7 +24,7 @@ const HEADERS = {
 };
 
 /** The P2S's model code in MakerWorld's compatibility lists. */
-export const P2S_MODEL = "N7";
+const P2S_MODEL = "N7";
 
 export type Cloud = {
   account: string;
@@ -124,7 +124,7 @@ export async function boundPrinterName(dataDir: string, serial: string): Promise
 }
 
 /** A usable token, refreshed when it is within a month of expiring. */
-export async function token(dataDir: string): Promise<string> {
+async function token(dataDir: string): Promise<string> {
   const c = readCloud(dataDir);
   if (!c)
     throw new Error(
@@ -201,7 +201,7 @@ export async function search(
   };
 }
 
-export type ProfileSummary = {
+type ProfileSummary = {
   id: number;
   title: string;
   printer: string;

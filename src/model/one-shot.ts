@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { directClaudeEnv } from "../claude/direct-env.ts";
 import { type OneShotResult, runClaudeOneShot } from "../claude/one-shot.ts";
 import { buildCodexExecArgs, codexExecutable, parseCodexJsonLine } from "../codex/runner.ts";
 import { log } from "../util/log.ts";
 import { backendForModel } from "./backend.ts";
+import { directClaudeEnv } from "./direct-env.ts";
 import type { ModelEffort } from "./profile.ts";
 
 export type ModelOneShotInput = {

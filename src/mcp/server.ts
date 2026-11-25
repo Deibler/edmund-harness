@@ -10,14 +10,12 @@ import { initRegistryFromConfig } from "../integrations/registry.ts";
 import { isSubagentSession } from "../sessions/key.ts";
 import { installLogSinkFromEnv } from "../util/log-sink.ts";
 import { humanMs, log, snippet } from "../util/log.ts";
+import { protectStdout } from "../util/stdio-safety.ts";
 import { type ToolContext, loadToolContext } from "./context.ts";
-import { protectStdout } from "./stdio-safety.ts";
 import { agentTools } from "./tools/agents.ts";
-import { annotateTools } from "./tools/annotate.ts";
 import { backgroundTools } from "./tools/background.ts";
 import { blindCheckTools } from "./tools/blind-check.ts";
 import { brownNoseTools } from "./tools/brown-nose.ts";
-import { calendarTools } from "./tools/calendar.ts";
 import { callTools } from "./tools/calls.ts";
 import { contactsTools } from "./tools/contacts.ts";
 import { cronTools } from "./tools/cron.ts";
@@ -84,8 +82,8 @@ async function main() {
   // Integration tools. Each installed package declares its tool factories in
   // `manifest.yaml`; the registry imports only the ones enabled for this
   // deployment and access-filters them against THIS session. That is what
-  // keeps Robinhood tools inside `trading:` sessions and the ~13 glass tools
-  // inside `mirror:` — the gate is declarative, not a per-tool `if`.
+  // keeps the ~13 glass tools inside `mirror:` sessions — the gate is
+  // declarative, not a per-tool `if`.
   //
   // An integration that is not installed contributes nothing and costs nothing:
   // no import is attempted, so deleting a package is a supported configuration.
@@ -173,7 +171,7 @@ async function main() {
  *  - guest tiers keep only the conversational surface: this-chat messaging
  *    and typing, media understanding/generation, voice, web, and background
  *    jobs. Everything that reads the operator's world (history, semantic
- *    recall, person files, memory, contacts, annotations, brown-nose),
+ *    recall, person files, memory, contacts, brown-nose),
  *    schedules future work (cron, triggers, missions, errands), spawns
  *    agents, or executes skills is not registered at all.
  */
@@ -222,7 +220,6 @@ function assembleByTier(ctx: ToolContext): ToolDef[] {
     ...messageTools(ctx),
     ...(guest ? [] : shelfTools(ctx)),
     ...(guest ? [] : blindCheckTools(ctx)),
-    ...(guest ? [] : calendarTools(ctx)),
     // send_message/send_attachment/react above are this-chat scoped and stay.
     // The cross-chat and shared-surface actions (create_chat, group
     // management, edit/unsend) go with the rest of the imessage actions.
@@ -236,7 +233,6 @@ function assembleByTier(ctx: ToolContext): ToolDef[] {
     // registers for their own DM session only (see grokbot.ts).
     ...(subagent || guest ? [] : grokBotTools(ctx)),
     ...(subagent || guest ? [] : deepResearchTools(ctx)),
-    ...(guest ? [] : annotateTools(ctx)),
     ...generationTools(ctx),
     ...webTools(ctx),
     ...(guest ? [] : memoryTools(ctx)),

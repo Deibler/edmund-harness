@@ -17,7 +17,7 @@ import { join } from "node:path";
  * stills everything else uses.
  */
 
-export const FFMPEG = process.env.EDMUND_FFMPEG || "/opt/homebrew/bin/ffmpeg";
+const FFMPEG = process.env.EDMUND_FFMPEG || "/opt/homebrew/bin/ffmpeg";
 
 export function rtspUrl(host: string, accessCode: string): string {
   return `rtsps://bblp:${encodeURIComponent(accessCode)}@${host}:322/streaming/live/1`;
@@ -45,7 +45,7 @@ export function cutJpegs(buf: Buffer): { frames: Buffer[]; rest: Buffer } {
  * player that is still watching. One-second segments left phones a second of
  * buffer, and any hiccup in the tunnel stalled them.
  */
-export function hlsArgs(dir: string): string[] {
+function hlsArgs(dir: string): string[] {
   return [
     "-map",
     "0:v",

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { type FailureClass, classifyError, describeErrorClass } from "../src/recovery/classify.ts";
+import {
+  type FailureClass,
+  classifyError,
+  describeErrorClass,
+} from "../src/model/failure-class.ts";
 
 /**
  * Table-driven: every error string we've seen in production logs maps

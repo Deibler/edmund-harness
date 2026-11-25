@@ -22,16 +22,6 @@ import type {
 // 90s SDK-level timeout — generous for slow SPA renders, but caps hangs.
 const CF_TIMEOUT_MS = 90_000;
 
-type CfToolName =
-  | "cf_screenshot"
-  | "cf_pdf"
-  | "cf_markdown"
-  | "cf_content"
-  | "cf_snapshot"
-  | "cf_links"
-  | "cf_scrape"
-  | "cf_json";
-
 export type CfExecResult = {
   /** Path(s) written to the sandbox. Primary path goes in summary too. */
   resultPath: string;
@@ -335,37 +325,3 @@ export async function execCfJson(
 }
 
 // ─── dispatcher ───────────────────────────────────────────────────────────────
-
-async function execCfTool(
-  toolName: CfToolName,
-  args: Record<string, unknown>,
-  sandboxPath: string,
-  client: Cloudflare,
-  accountId: string,
-): Promise<CfExecResult> {
-  switch (toolName) {
-    case "cf_screenshot":
-      return execCfScreenshot(args, sandboxPath, client, accountId);
-    case "cf_pdf":
-      return execCfPdf(args, sandboxPath, client, accountId);
-    case "cf_markdown":
-      return execCfMarkdown(args, sandboxPath, client, accountId);
-    case "cf_content":
-      return execCfContent(args, sandboxPath, client, accountId);
-    case "cf_snapshot":
-      return execCfSnapshot(args, sandboxPath, client, accountId);
-    case "cf_links":
-      return execCfLinks(args, sandboxPath, client, accountId);
-    case "cf_scrape":
-      return execCfScrape(args, sandboxPath, client, accountId);
-    case "cf_json":
-      return execCfJson(args, sandboxPath, client, accountId);
-  }
-}
-
-function cfErrMsg(err: unknown): string {
-  if (err instanceof Cloudflare.APIError) {
-    return `Cloudflare API error ${err.status}: ${err.message}`;
-  }
-  return err instanceof Error ? err.message : String(err);
-}

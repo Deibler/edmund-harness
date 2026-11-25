@@ -46,7 +46,7 @@ const CAPTURE_GRANT =
  * FaceTime is sandboxed: the injected code can only reach a socket inside its
  * own container (the same rule imcore-bridge found for Messages).
  */
-export function controlSocketPath(): string {
+function controlSocketPath(): string {
   return join(
     homedir(),
     "Library",
@@ -105,7 +105,7 @@ const STATES: Record<number, CallState> = {
 };
 
 /** A call as the dylib describes it, or null for one that is not a FaceTime call. */
-export function toProviderCall(raw: JsonMessage): ProviderCall | null {
+function toProviderCall(raw: JsonMessage): ProviderCall | null {
   if (raw.faceTime !== true || typeof raw.id !== "string") return null;
   const state = STATES[Number(raw.status)];
   if (!state) return null;

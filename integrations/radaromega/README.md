@@ -87,7 +87,7 @@ package_path = "./vendor/radaromega-mcp"
 cdp_port = 9222
 ```
 
-Wiring: `src/claude/mcp-config.ts` adds the `radaromega` server to the worker
+Wiring: `src/model/mcp-config.ts` adds the `radaromega` server to the worker
 MCP loadout; `skills/radaromega/SKILL.md` carries the model-facing playbook
 (including alert watches via `start_mission`); rebuild the vendor package
 after editing its src with `cd vendor/radaromega-mcp && ./node_modules/.bin/tsc`.

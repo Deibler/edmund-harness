@@ -10,7 +10,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker, isUnsolicitedResult, stampTurnUuid } from "../src/claude/worker.ts";
-import { classifyError } from "../src/recovery/classify.ts";
+import { classifyError } from "../src/model/failure-class.ts";
 
 const bin = mkdtempSync(join(tmpdir(), "fake-claude-"));
 writeFileSync(

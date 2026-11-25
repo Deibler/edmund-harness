@@ -63,7 +63,7 @@ export class CronStore {
       // Column already exists.
     }
     // When each scheduled fire ran, so the next fire can look up in chat.db
-    // what it sent and whether anyone answered (see cron/reception.ts).
+    // what it sent and whether anyone answered (see scheduler/reception.ts).
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS job_fires (
         job_id TEXT NOT NULL,

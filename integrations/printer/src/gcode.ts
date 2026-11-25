@@ -36,10 +36,10 @@ export const FEATURES = [
 export type Feature = (typeof FEATURES)[number];
 
 const FEATURE_INDEX = new Map<string, number>(FEATURES.map((f, i) => [f.toLowerCase(), i]));
-export const OUTER_WALL = 0;
+const OUTER_WALL = 0;
 const OTHER = FEATURES.indexOf("Other");
 
-export function featureIndex(name: string): number {
+function featureIndex(name: string): number {
   return FEATURE_INDEX.get(name.trim().toLowerCase()) ?? OTHER;
 }
 

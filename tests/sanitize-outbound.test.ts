@@ -182,7 +182,7 @@ describe("no control word ever reaches a person", () => {
     const files = [
       "src/channels/turn.ts",
       "src/channels/envelope.ts",
-      "src/claude/system-prompt.ts",
+      "src/model/system-prompt.ts",
     ];
     const words = new Set<string>();
     for (const f of files) {

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { personFilePath } from "../claude/persona.ts";
+import { personFilePath } from "../model/persona.ts";
 import { easternDate } from "../util/clock.ts";
 
 /**

@@ -31,6 +31,7 @@
  * (endHold), and then quits the apps it launched in that time.
  */
 
+import type { ScreenLock } from "../../sessions/screen-lock.ts";
 import type { ToolResult } from "../tools/types.ts";
 import { clip, deletedText, describeElement, quoted, removesSelection } from "./describe.ts";
 import { type Frame, frameFor, inFrame, toImage, toScreen, zoomRegion } from "./geometry.ts";
@@ -45,7 +46,6 @@ import {
   movesCaret,
   parseChord,
 } from "./keys.ts";
-import type { ScreenLock } from "./lock.ts";
 import type {
   Button,
   Capture,
@@ -107,7 +107,7 @@ type Step = { text: string; image?: Content; frame?: Frame };
 type Point = { x: number; y: number };
 
 /** A refusal the model can act on. Anything else that throws is a failure. */
-export class Refusal extends Error {}
+class Refusal extends Error {}
 
 const FINDER = "com.apple.finder";
 const DOCK = "com.apple.dock";

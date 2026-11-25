@@ -10,14 +10,14 @@ import type { PlateLook } from "./gate.ts";
  * only CLEAR lets a print start.
  */
 
-export const PLATE_PROMPT = `You are checking a photo from a 3D printer's built-in camera before a print starts.
+const PLATE_PROMPT = `You are checking a photo from a 3D printer's built-in camera before a print starts.
 Look only at the build plate (the flat bed, usually textured gold or black).
 Answer CLEAR only if the plate is completely empty: no printed parts, no strings or blobs of plastic, no purge, no tools, scrapers, paper or other objects anywhere on it.
 Answer OCCUPIED if anything at all is on the plate.
 Answer UNSURE if the plate is not fully visible, the image is dark or blurred, or you cannot tell.
 Reply with exactly one word on the first line (CLEAR, OCCUPIED or UNSURE), then one short sentence on the second line saying what you see on the plate.`;
 
-export function parsePlateVerdict(text: string): { verdict: PlateLook["verdict"]; note: string } {
+function parsePlateVerdict(text: string): { verdict: PlateLook["verdict"]; note: string } {
   const lines = text
     .trim()
     .split("\n")

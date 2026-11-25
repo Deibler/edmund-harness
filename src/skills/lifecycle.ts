@@ -31,10 +31,10 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
+import { PERSONA_DIR } from "../model/persona.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { log } from "../util/log.ts";
 import { updateAuthoredSkill } from "./author.ts";
@@ -172,7 +172,7 @@ export function skillDescription(skillsRoot: string, name: string, record?: Inst
     : "";
 }
 
-export const REVIEW_PROMPT = `You are reviewing a skill that an automated curator wrote for a personal
+const REVIEW_PROMPT = `You are reviewing a skill that an automated curator wrote for a personal
 assistant. The curator believed several unrelated people kept asking for the
 same job, and wrote this skill so the assistant would handle it better.
 

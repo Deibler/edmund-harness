@@ -1,6 +1,5 @@
 import { AgentsPage } from "@/pages/AgentsPage";
 import { AlertsPage } from "@/pages/AlertsPage";
-import { AnnotationsPage } from "@/pages/AnnotationsPage";
 import { BgJobsPage } from "@/pages/BgJobsPage";
 import { BrownNoseDetailPage } from "@/pages/BrownNoseDetailPage";
 import { BrownNosePage } from "@/pages/BrownNosePage";
@@ -44,7 +43,6 @@ export const router = createBrowserRouter([
       { path: "brownnose/:key", element: <BrownNoseDetailPage /> },
       { path: "agents", element: <AgentsPage /> },
       { path: "bgjobs", element: <BgJobsPage /> },
-      { path: "annotations", element: <AnnotationsPage /> },
       { path: "skills", element: <SkillsPage /> },
       { path: "recall", element: <RecallPage /> },
       { path: "alerts", element: <AlertsPage /> },
@@ -56,7 +54,6 @@ export const router = createBrowserRouter([
       { path: "media", element: <MediaPage /> },
       { path: "models", element: <ModelsPage /> },
       { path: "orchestrator", element: <OrchestratorPage /> },
-      { path: "orchestrator/new", element: <OrchestratorEditorPage /> },
       { path: "orchestrator/:key", element: <OrchestratorEditorPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "settings/:section", element: <SettingsPage /> },

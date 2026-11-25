@@ -8,7 +8,7 @@ import { formatMinutes, statusLine } from "./watches.ts";
 
 /** The words a person (or the model) reads about the printer. */
 
-export function trayLine(t: Tray): string {
+function trayLine(t: Tray): string {
   if (!t.loaded) return `${t.label}: empty`;
   const extra = [
     t.rfid ? "Bambu spool (RFID)" : "set by hand",

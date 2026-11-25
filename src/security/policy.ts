@@ -84,9 +84,10 @@ export function parseSessionTier(raw: string | undefined): SessionTier {
  * decision is made; toolEnv() calls it for every worker the daemon spawns,
  * so cron fires, proactive turns, recovery turns and live turns all agree.
  *
- * DMs (iMessage, SMS, or through a named orchestrator) are judged by the
- * handle. Groups follow contact_tier. The operator's own surfaces (mirror,
- * trading, sub-agents, anything else) are the operator.
+ * DMs (iMessage or SMS) are judged by the handle. Groups follow
+ * contact_tier. The operator's own surfaces (mirror, sub-agents, anything
+ * else) are the operator. The `orch:` forms below are keys a removed feature
+ * left in state.db; they are read the way they always were.
  */
 export function tierForSessionKey(
   config: Config,

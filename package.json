@@ -51,10 +51,7 @@
     "portal:dev": "cd dashboard/user-web && bun run dev",
     "portal:build": "cd dashboard/user-web && bun run build",
     "dashboard:prod": "bun run dashboard:build && bun run dashboard/server/main.ts",
-    "dashboard:set-pin": "bun run dashboard/server/scripts/setPin.ts",
-    "trading:verify": "bun run integrations/trading/scripts/verify-broker.ts",
-    "trading:server": "bun --watch run integrations/trading/dashboard/main.ts",
-    "trading:dev": "concurrently -n tsrv -c green \"bun run trading:server\""
+    "dashboard:set-pin": "bun run dashboard/server/scripts/setPin.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

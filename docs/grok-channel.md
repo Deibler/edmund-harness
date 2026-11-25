@@ -48,7 +48,7 @@ person file, one model. `isGrokSession` and the `grok:dm:` branch of
 `chatIdFromKey` remain so stale session rows and old transcripts still resolve.
 
 What marks a request is the message, not the session (as with a FaceTime
-utterance, `calls/binding.ts`):
+utterance, `sessions/call-binding.ts`):
 
 - `service: "Grok"` (`isGrokInbound`, an `ask` someone waits for), `"GrokTell"` (a
   `tell`) or `"GrokReport"` (a Bot's report); the last two are `isGrokAsyncInbound`

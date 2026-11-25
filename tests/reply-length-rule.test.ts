@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { OUTPUT_RULES, buildSystemPrompt } from "../src/claude/system-prompt.ts";
+import { OUTPUT_RULES, buildSystemPrompt } from "../src/model/system-prompt.ts";
 
 const prompt = (over: Record<string, unknown> = {}) =>
   buildSystemPrompt({

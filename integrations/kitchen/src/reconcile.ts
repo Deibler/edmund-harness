@@ -24,7 +24,7 @@ export type Verdict =
   | { kind: "gone" }
   | { kind: "amount"; qty: number; unit?: string | null };
 
-export type Answer = {
+type Answer = {
   item: string;
   verdict: Verdict;
   at: string;
@@ -161,9 +161,9 @@ function observedLife(account: string): Map<string, number> {
  */
 const JUST_CHECKED_DAYS = 6;
 
-export type Scored = { item: Item; score: number; hazard: number; sinceLooked: number | null };
+type Scored = { item: Item; score: number; hazard: number; sinceLooked: number | null };
 
-export function scoreShelf(account: string, items: Item[], now = Date.now()): Scored[] {
+function scoreShelf(account: string, items: Item[], now = Date.now()): Scored[] {
   const DAY = 86_400_000;
   const looked = lastLooked(account);
   const observed = observedLife(account);

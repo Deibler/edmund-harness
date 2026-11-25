@@ -4,8 +4,8 @@ description: >-
   Rules and lessons for working on edmund-harness, the personal iMessage AI
   assistant daemon at ~/edmund-harness. Use whenever editing the session
   pipeline, Claude runner, memory/recall, ghost/brown-nose, recovery healers,
-  MCP tools, trading subsystem, RadarOmega integration, mirror bridge, cron
-  scheduler, orchestrator routing, or iMessage send/watcher. Prefer this skill
+  MCP tools, RadarOmega integration, mirror bridge, cron scheduler, or
+  iMessage send/watcher. Prefer this skill
   over ad-hoc reverse engineering of the debounce/coalesce pipeline, the
   worker pool, the failure-classification healer chain, and the embedding
   pipeline — those subsystems punish guessing.
@@ -19,7 +19,7 @@ messages through a gating → debounce → session-pipeline → Claude Code work
 pool, and delivers replies via AppleScript or an IMCore dylib bridge. The
 daemon also runs a cron scheduler, a semantic-memory embedding pipeline, a
 proactive-outreach ghost, a multi-healer recovery loop, and optional subsystems
-for autonomous trading, weather radar, a smart mirror, and fishing data.
+for weather radar, a smart mirror, and fishing data.
 Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 (headless CLI) for inference — no API keys for the chat brain.
 
@@ -58,11 +58,8 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   senders, group messages that don't @mention the bot, and edmund-911 hand-off
   triggers. Post-Whisper re-gate for voice notes without Apple transcripts.
   Also checks `src/imessage/sanitize.ts` for leaked scaffolding.
-- **Routing** (`src/main.ts` → `src/orchestrators/registry.ts`): each inbound
-  message routes to an orchestrator (main persona, named secondary like Desmond,
-  or trading sub-persona) based on invocation-name matching. Trading sessions
-  use the `trading:dm:` namespace; named orchestrators use `orch:<key>:`.
-  The primary handles everything un-named.
+- **Routing** (`src/main.ts`): each inbound message is keyed by
+  `sessionKeyFor` (`src/sessions/key.ts`). There is one persona.
 - **Debounce** (`src/channels/pipeline.ts`): per-session debounce with
   message-type-aware windows — plain text, captioned attachment, bare
   attachment (longer to wait for the caption), and voice-session (much
@@ -71,7 +68,7 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   is running (coalesce_pending), the pipeline re-runs up to 3 iterations,
   showing the model its draft + the new message(s) and asking it to fold
   everything into one reply or respond `KEEP_DRAFT`.
-- **Durable ack** (`src/sessions/store.ts` + `src/bridge/session-queue.ts`):
+- **Durable ack** (`src/sessions/store.ts` + `src/channels/session-queue.ts`):
   inbound rows are persisted to `inbound_ack` BEFORE the cursor advances.
   Boot replay recovers rows that were ack'd but never answered (the
   "2026-07-19 10:21 incident" — daemon killed inside the debounce window).
@@ -84,16 +81,16 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   `max_workers` (default 6) persistent `claude` subprocesses. Each worker
   stays bound to its session via `--resume <uuid>`; idle eviction after
   `idle_evict_ms` (30 min). Spawn-per-turn fallback when pool is disabled.
-- **MCP loadout** (`src/claude/mcp-config.ts`): three MCP config variants —
+- **MCP loadout** (`src/model/mcp-config.ts`): MCP config variants by tier —
   `default` (edmund-harness server + optional RadarOmega), `withBrowser`
-  (+ chrome-devtools-mcp), `trading` (+ Robinhood HTTP MCP). Selected per
+  (+ chrome-devtools-mcp), and the contact and guest loadouts. Selected per
   turn via rebindKey; warm-reuse across same-loadout turns.
 - **Auto-compact** (`src/claude/auto-compact.ts` + `/compact` injection):
   when the resumed session's prefix crosses `threshold_tokens` (0.75× context
   window), inject Claude Code's built-in `/compact` into the warm worker.
   DEFERRED — runs AFTER the reply is on the wire, not before delivery.
   Adapts threshold to the live model via the OpenRouter proxy.
-- **System prompt** (`src/claude/system-prompt.ts`): assembled from persona
+- **System prompt** (`src/model/system-prompt.ts`): assembled from persona
   files (IDENTITY.md, SOUL.md, HOME.md, AGENTS.md, VENUE_DM.md/VENUE_GROUP.md/
   VENUE_MIRROR.md) + per-contact persona + group persona + sandbox path +
   owner name. Token `{{root}}` resolves to the harness checkout path.
@@ -102,9 +99,10 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 - **StateStore** (`src/sessions/store.ts`): SQLite (WAL, busy_timeout) holding
   sessions, cursors, message_routing, outbox, inbound_ack, errors,
   sent_attribution, compact_at. One DB per data_dir.
-- **SessionKey** (`src/sessions/key.ts`): typed string — `imessage:<chatId>`
-  for legacy/main, `orch:<key>:<chatId>` for named orchestrators,
-  `trading:dm:<handle>` for trading. Never construct SessionKeys by hand;
+- **SessionKey** (`src/sessions/key.ts`): typed string — `imessage:dm:<handle>`,
+  `imessage:group:<guid>`, and the `sms:`, `mirror:` and `agent:` forms. Keys
+  starting `trading:` or `orch:` are left by removed features and are never
+  acted on (`isRetiredSession`). Never construct SessionKeys by hand;
   use the factory functions.
 - **SessionLocks** (`src/sessions/locks.ts`): per-key mutex with configurable
   timeout. Shared between pipeline turns and cron fires so scheduled events
@@ -154,10 +152,10 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 - **Think** (`src/ghost/think.ts`): runs a cheap Claude Haiku model
   (`ghost_model`, default claude-sonnet-5) with conversation context. Decides
   act:true/false + reason + optional snooze. Never sends; only proposes.
-  The decision flows through cron → proactive/fire.ts for the actual model turn.
+  The decision flows through cron → ghost/fire.ts for the actual model turn.
 - **Intensity** (`src/ghost/intensity.ts`): 1-10 scale maps to sweep cadence +
   weekly caps. Operator change synced via `syncWeeklyCapsToIntensity()`.
-- **Semaphore** (`src/proactive/semaphore.ts`): global in-memory concurrency
+- **Semaphore** (`src/ghost/semaphore.ts`): global in-memory concurrency
   cap (max_concurrent_fires, default 5) + stagger floor (min_seconds_between_fires,
   default 90s). tryAcquire returns {acquired: false, reason} when capped.
 - **Outcomes** (`src/ghost/outcomes.ts`): 10-min sweep scans chat.db for
@@ -165,10 +163,10 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   engaged/ignored on past fires. Drives engagement decay.
 
 ### Recovery & healing
-- **Classification** (`src/recovery/classify.ts`): error string → FailureClass
+- **Classification** (`src/model/failure-class.ts`): error string → FailureClass
   (request_too_large, image_dim_exceeded, stale_session_id, session_in_use,
   transient_api, send_failed, unknown). Table-driven; first pattern match wins.
-- **Healers** (`src/recovery/healers.ts`): one healer per class. Structural
+- **Healers** (`src/claude/healers.ts`): one healer per class. Structural
   fixes applied BEFORE model re-invocation. `healSendFailed`: runs `imsg launch`
   to re-inject the IMCore bridge dylib, probes with `imsg account`, prunes
   duplicate Messages instances, invalidates the rich-bridge cache.
@@ -185,10 +183,10 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 - **CronStore** (`src/cron/store.ts`): SQLite-backed persistent job store.
   Jobs have sessionKey, systemEvent (injected into the model's envelope as if
   the user sent it), schedule (once/recurring), and retry state.
-- **Scheduler** (`src/cron/scheduler.ts`): runs in the daemon. Fires due jobs
-  through `fireJob` (`src/cron/fire.ts`), which routes to `handleBatch` for
-  system events (treated as inbound from the system), `src/proactive/fire.ts`
-  for brown-nose events, or `src/trading/trigger-watcher.ts` for trading events.
+- **Scheduler** (`src/scheduler/scheduler.ts`): runs in the daemon. Fires due jobs
+  through `fireJob` (`src/scheduler/fire.ts`), which routes to `handleBatch` for
+  system events (treated as inbound from the system), or `src/ghost/fire.ts`
+  for brown-nose events.
 - **External poke** (`main.ts`): 2s heartbeat calls `scheduler.poke()` so cron
   rows inserted by MCP subprocesses or agent completions fire promptly.
 - **Inbound retry** (`src/cron/retry-marker.ts`): marks cron rows as
@@ -227,28 +225,6 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   with attachment copy + link prefetch.
 - **Participants** (`src/imessage/participants.ts`): resolves group chat
   participant handles from chat.db joins for the participant roster block.
-
-### Trading subsystem (Quant)
-- **Routing** (`src/trading/route.ts`): `tradingGate` — eligible handle
-  (from `[trading].handles`) that says "trader"/"quant"/trigger name →
-  sticky routing into `trading:dm:<handle>`. "trader off" switches back.
-  Enforced BEFORE allowlist.dm.
-- **Risk engine** (`src/trading/risk.ts`): pure function, unit-tested.
-  Max % equity per position (`max_position_pct`, default 40%), per-order USD
-  cap (`max_order_usd`, default $40), orders-per-run cap (6), cash floor ($5).
-  Deterministic — the model proposes, code rejects.
-- **Execution** (`src/trading/execute.ts`): single `executeOrder` path with
-  UUID idempotency key (`ref_id`). Journals everything.
-- **Broker** (`src/trading/broker.ts` + `brokers/http.ts`): two modes —
-  `http_code` (daemon connects to Robinhood MCP directly as MCP client, needs
-  bearer token) or `in_session` (model drives Robinhood tools, code risk-gates).
-  The probe auto-selects.
-- **Triggers** (`src/trading/trigger-store.ts` + `trigger-watcher.ts`): polls
-  armed price triggers via the code-level broker. On threshold cross, injects
-  a one-shot cron systemEvent into the trading session (~2s latency via
-  externalPoke).
-- **Dashboard** (`dashboard/trading-server/`): Hono server on port 4848,
-  PIN-gated, shows positions, orders, journal, policy editor.
 
 ### RadarOmega integration
 - **Vendored MCP server** (`vendor/radaromega-mcp/`): Node.js MCP server
@@ -294,10 +270,10 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   (semantic_search, save_memory, list_memories), cron (schedule_task,
   list_tasks), persona (update_persona_file, list_persona_files), fishing
   (fishing_query, fishing_viz), missions (start_mission, list_missions, cancel_mission),
-  web, voice, video, image generation, typing, trading (gated), triggers,
+  web, voice, video, image generation, typing, triggers,
   skills marketplace, agents/teams, background jobs, mirror, brown-nose,
   cloudflare browser.
-- **Tool env** (`src/claude/mcp-config.ts` toolEnv): exports API keys
+- **Tool env** (`src/model/mcp-config.ts` toolEnv): exports API keys
   (OpenAI, Gemini, ElevenLabs) into the MCP subprocess environment.
 
 ### Persona system
@@ -305,12 +281,10 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   speaks), HOME.md (context about the operator and the home), AGENTS.md (sub-agent guidance),
   VENUE_DM.md/VENUE_GROUP.md/VENUE_MIRROR.md (channel-specific behaviour),
   GHOST.md (ghost persona). Per-contact files in `persona/people/<handle>.md`.
-  Per-group files in `persona/groups/<slug>.md`. Trading persona in
-  `persona/trading/`.
+  Per-group files in `persona/groups/<slug>.md`.
 - **Maintainer** (`src/persona/maintainer-observer.ts`): after every outbound,
   defers 60-120s then runs a background Claude pass that reads recent chat
-  history and updates persona files. Skipped for orchestrator sessions
-  (privacy: secondaries' private threads must not leak into main persona).
+  history and updates persona files. Skipped for guest tiers.
 - **Sandbox** (`src/persona/sandbox.ts`): per-session scratch directory under
   `sandbox/<session_dir>/`. Model has full read/write. Reaper
   (`src/persona/sandbox-reaper.ts`) cleans machine-generated assets older
@@ -403,9 +377,8 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   fingerprint, proxy env, and timeout/wedge protection.
 
 ### Session & state
-- **Don't construct SessionKeys by hand.** Use `sessionKeyFor()`,
-  `tradingKeyFor()`, `orchKeyFor()`, `sessionKeyForOrchestrator()` from
-  `src/sessions/key.ts`. Hand-rolled keys create orphan sessions that
+- **Don't construct SessionKeys by hand.** Use `sessionKeyFor()` and
+  `dmKeyFor()` from `src/sessions/key.ts`. Hand-rolled keys create orphan sessions that
   routing and recovery can't find.
 - **Don't hold a session lock across I/O you don't control.** The lock budget
   is 2× the Claude timeout (for turn + compact). Adding a third sequential
@@ -428,11 +401,6 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 - **Don't depend on undocumented chat.db schema.** The watcher queries are
   reverse-engineered from the system Messages database. Test against the
   live DB after any macOS update; Apple changes the schema silently.
-- **Don't treat the Robinhood MCP as always available.** The broker
-  auto-detects http_code vs in_session mode. Don't assume code-level auth
-  is present.
-
-### Performance
 - **Don't rank by "biggest/newest/highest wins."** The recall system uses
   MMR (Maximal Marginal Relevance) to diversify results — pure cosine
   ranking would return near-duplicates. Recency boost is bounded
@@ -468,8 +436,8 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 | Session pipeline | `src/channels/pipeline.ts`, `src/channels/turn.ts`, `src/channels/deliver.ts` |
 | Envelope assembly | `src/channels/envelope.ts`, `src/channels/history.ts` |
 | Claude runner + pool | `src/claude/runner.ts`, `src/claude/pool.ts`, `src/claude/worker.ts` |
-| MCP config (per-turn) | `src/claude/mcp-config.ts` |
-| System prompt assembly | `src/claude/system-prompt.ts`, `src/claude/persona.ts` |
+| MCP config (per-turn) | `src/model/mcp-config.ts` |
+| System prompt assembly | `src/model/system-prompt.ts`, `src/model/persona.ts` |
 | Auto-compact | `src/claude/auto-compact.ts`, `src/claude/session-compact.ts` |
 | iMessage watcher | `src/imessage/watcher.ts` |
 | iMessage send | `src/imessage/send.ts`, `src/imessage/bridge-singleton.ts` |
@@ -477,12 +445,10 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 | Session state | `src/sessions/store.ts`, `src/sessions/key.ts`, `src/sessions/locks.ts` |
 | Semantic recall pipeline | `src/memory/indexer.ts`, `src/memory/vector-store.ts`, `src/memory/auto-recall.ts`, `src/memory/embed-provider.ts` |
 | Recall wiring (boot) | `src/boot/wire-recall.ts` |
-| Recovery + healers | `src/boot/wire-recovery.ts`, `src/recovery/classify.ts`, `src/recovery/healers.ts` |
+| Recovery + healers | `src/boot/wire-recovery.ts`, `src/model/failure-class.ts`, `src/claude/healers.ts` |
 | Ghost / brown-nose | `src/ghost/observer.ts`, `src/ghost/think.ts`, `src/ghost/picker.ts`, `src/ghost/prefs.ts` |
-| Proactive semaphore | `src/proactive/semaphore.ts`, `src/proactive/fire.ts` |
-| Cron scheduler | `src/cron/scheduler.ts`, `src/cron/store.ts`, `src/cron/fire.ts` |
-| Orchestrator routing | `src/orchestrators/registry.ts`, `src/orchestrators/visibility.ts` |
-| Trading subsystem | `src/trading/route.ts`, `src/trading/risk.ts`, `src/trading/execute.ts`, `src/trading/broker.ts` |
+| Proactive semaphore | `src/ghost/semaphore.ts`, `src/ghost/fire.ts` |
+| Cron scheduler | `src/scheduler/scheduler.ts`, `src/cron/store.ts`, `src/scheduler/fire.ts` |
 | RadarOmega integration | `vendor/radaromega-mcp/`, `src/radaromega/refresher.ts` |
 | Smart mirror | `src/mirror/bridge.ts`, `src/mirror/orchestrator.ts`, `src/mirror/voice.ts` |
 | Data triggers | `src/triggers/store.ts`, `src/triggers/watcher.ts`, `src/triggers/evaluate.ts` |
@@ -497,9 +463,9 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 | TypeScript check | `bun run typecheck` (tsc --noEmit) |
 | Dependencies | `package.json` (Bun, @huggingface/transformers, @modelcontextprotocol/sdk, hono, zod, smol-toml) |
 | Database layer | `src/db/open.ts` (SQLite via bun:sqlite, WAL + busy_timeout) |
-| Dashboard | `dashboard/server/main.ts` (Hono, port 4747), `dashboard/trading-server/main.ts` (port 4848) |
+| Dashboard | `dashboard/server/main.ts` (Hono, port 4747) |
 | Skills (model-facing) | `skills/*/SKILL.md` |
-| Persona (model-facing) | `persona/`, `persona/people/*.md`, `persona/groups/*.md`, `persona/trading/` |
+| Persona (model-facing) | `persona/`, `persona/people/*.md`, `persona/groups/*.md` |
 | OpenRouter proxy | `scripts/anthropic-proxy.ts` (port 3999) |
 | Cloudflare tunnel | `scripts/dashboard-tunnel.sh` |
 | Boot catch-up | `src/boot/catchup.ts` |

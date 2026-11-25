@@ -73,7 +73,7 @@ describe("group consolidation cannot launder drift into doctrine", () => {
 
 describe("tapback attribution", () => {
   test("history names whose message a reaction targeted", () => {
-    const src = readFileSync(join(import.meta.dir, "..", "src/channels/history-format.ts"), "utf8");
+    const src = readFileSync(join(import.meta.dir, "..", "src/imessage/history-format.ts"), "utf8");
     // The spiral began because a reaction to ANOTHER member's message quoted a
     // line starting "Edmund, …" and was read as aimed at him.
     expect(src).toContain("reacting to YOUR message");

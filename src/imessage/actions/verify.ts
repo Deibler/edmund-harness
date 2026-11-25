@@ -70,10 +70,6 @@ export function configureSendVerification(config: VerifyConfig | null): void {
   cfg = config;
 }
 
-export function misdeliveryHandler(): VerifyConfig["onMisdelivery"] {
-  return cfg?.onMisdelivery;
-}
-
 export function unrecoveredHandler(): VerifyConfig["onUnrecovered"] {
   return cfg?.onUnrecovered;
 }

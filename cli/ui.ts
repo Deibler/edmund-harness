@@ -44,10 +44,6 @@ const icons = {
   bullet: color.gray("•"),
 };
 
-function title(s: string): void {
-  print(color.bold(s));
-}
-
 export function section(s: string): void {
   print("");
   print(color.bold(color.white(s)));

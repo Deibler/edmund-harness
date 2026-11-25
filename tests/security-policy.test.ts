@@ -5,12 +5,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { directClaudeEnv } from "../src/claude/direct-env.ts";
 import { type Config, ConfigSchema } from "../src/config/config.ts";
 import { gateInbound } from "../src/gating/allowlist.ts";
 import { resolveDmTier } from "../src/guests/access.ts";
 import { GuestStore } from "../src/guests/store.ts";
 import type { InboundMessage } from "../src/imessage/types.ts";
+import { directClaudeEnv } from "../src/model/direct-env.ts";
 import {
   disallowedBuiltinTools,
   envAllowedWhenSandboxed,

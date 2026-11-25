@@ -19,10 +19,10 @@ import { dispositionOf, onRunOut, readBook, skipped, unskip } from "./restock.ts
 import { fold, openPlans, readLog, slug } from "./store.ts";
 import type { Category, Item } from "./types.ts";
 
-export { ASSUMED_SRC, purchaseHistory, tripKey } from "./history.ts";
+export { purchaseHistory, tripKey } from "./history.ts";
 
 /** Why a line is on the list. The page renders these as its section headings. */
-export type Reason = "asked" | "staple" | "meal" | "assumed";
+type Reason = "asked" | "staple" | "meal" | "assumed";
 
 export type Line = {
   /** Stable handle for ticking, editing and removal. */
@@ -55,7 +55,7 @@ export type Suggestion = {
   bought?: number | null;
 };
 
-export type Group = {
+type Group = {
   id: Reason;
   title: string;
   note: string;
@@ -74,7 +74,7 @@ export type Shopping = {
 const DAY = 86400000;
 
 /** How long a run-out nobody confirmed is shown at all, on the list or in the tray. */
-export const ASSUMED_SHOWN_DAYS = 10;
+const ASSUMED_SHOWN_DAYS = 10;
 
 /** How many "buy this and dinners open up" ideas the tray will ever show. */
 const UNLOCK_CAP = 6;
@@ -84,7 +84,7 @@ export const isBuyable = (id: string, name = ""): boolean =>
   !id.startsWith("leftover-") && !/\bleftovers?\b/i.test(name);
 
 /** A run-out older than this is history, not something to offer buying again. */
-export const OFFER_WITHIN_DAYS = 21;
+const OFFER_WITHIN_DAYS = 21;
 
 function daysSince(iso: string | undefined): number | null {
   if (!iso) return null;

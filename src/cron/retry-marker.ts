@@ -9,8 +9,6 @@ import type { CronStore } from "./store.ts";
  * cancel a legitimate scheduled-event retry just because a chat turn
  * succeeded.
  */
-const INBOUND_RETRY_BODY = "A prior turn from";
-
 const INBOUND_RETRY_RE = /^\[Retry \d+\/\d+\] A prior turn from /;
 
 export function isInboundRetryEvent(systemEvent: string): boolean {

@@ -19,8 +19,8 @@ import { ideationHeaders } from "./serve.ts";
  *  - a left accent border, gradient text, or an emoji (DESIGN.md rules 1-3)
  */
 
-export const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-export const MAX_PAGE_BYTES = 3 * 1024 * 1024;
+const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const MAX_PAGE_BYTES = 3 * 1024 * 1024;
 const MIN_TEXT_CHARS = 200;
 const VIEW = { width: 390, height: 844 };
 /** Screens of a long page pictured for review; the rest are summarised in one line. */

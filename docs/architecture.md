@@ -133,8 +133,8 @@ for a second gate after transcription.
 
 `sessionKeyFor` (`src/sessions/key.ts`) maps a thread to a key such as
 `imessage:dm:<handle>` or `imessage:group:<chat guid>`. Other namespaces are
-`sms:`, `trading:`, `mirror:`, `agent:` and `orch:<name>:` for named
-orchestrators. Handles are normalised: IMCore tags them with `e:` for email or
+`sms:`, `mirror:` and `agent:`. Rows keyed `trading:` or `orch:` are left by
+removed features and are never acted on. Handles are normalised: IMCore tags them with `e:` for email or
 `p:` for phone, and that prefix once made the bot answer its own messages.
 
 ### Park or enqueue
@@ -223,15 +223,17 @@ compaction threshold, a compaction is deferred until after delivery.
 | `src/main.ts`, `src/boot/` | Boot order, recall wiring, catch-up, resource governor |
 | `src/imessage/` | chat.db reader, watcher, decode, bridge host and control socket, send, verify, reactions |
 | `src/gating/` | Allowlist, mention detection, guest admission |
-| `src/sessions/` | Session keys, `state.db`, locks, contacts |
-| `src/channels/` | Pipeline, turn, envelope, history, deliver, coalesce, barge-in |
-| `src/claude/`, `src/codex/`, `src/model/` | Provider runners, worker pool, system prompt, persona loader |
+| `src/sessions/` | Session keys, `state.db`, locks, contacts, which conversations are on a call |
+| `src/channels/` | Pipeline, turn, envelope, history, deliver, coalesce, barge-in, the queue of messages parked behind a turn |
+| `src/model/`, `src/claude/`, `src/codex/` | One module in three folders. `model/` holds the contract, the dispatcher and what both backends share: system prompt, persona loader, MCP config, the worker ledger, failure classes. `claude/` and `codex/` are the backends, each with its runner and its own healers |
 | `src/mcp/` | The MCP server and every tool the model can call |
 | `src/memory/` | Vector store, indexer, auto-recall, embedding providers |
 | `src/persona/` | Person files, maintainer, consolidator, archiver, self memory |
-| `src/ghost/`, `src/proactive/` | Proactive outreach: observer, budgets, fires |
-| `src/cron/`, `src/triggers/`, `src/refresh/` | Scheduled, data-driven and deterministic wakeups |
-| `src/recovery/` | Failure classification, healers, sweeper, outbox drainer |
+| `src/ghost/` | Proactive outreach: observer, budgets, the queue and the firing path |
+| `src/cron/`, `src/scheduler/` | `cron/` is the job store every subsystem writes to. `scheduler/` runs a job when it fires |
+| `src/triggers/`, `src/refresh/` | Data-driven and deterministic wakeups |
+| `src/relay/` | Messages one session sends into another |
+| `src/recovery/` | Sweeper, recovery turns, fallback, outbox drainer |
 | `src/spend/`, `src/credits/` | Spend ledger, per-person generation credits |
 | `src/sms/` | Twilio channel on the shared pipeline |
 | `src/guests/` | Campaign keys, vouching, caps |
@@ -243,6 +245,52 @@ compaction threshold, a compaction is deferred until after delivery.
 | `cli/` | The `edmund` command |
 | `dashboard/` | Operator dashboard and per-person portal |
 | `integrations/`, `skills/`, `persona.example/` | Optional packages, the skill catalog, the persona template |
+
+## Layers
+
+The modules under `src/` sit in layers, and a file imports at runtime only
+from its own module or from a lower layer. `tests/architecture.test.ts` holds
+the list and fails on an import that runs the other way, on a new folder
+nobody placed, and on a new import cycle between files.
+
+| Layer | Modules |
+|---|---|
+| Entry surfaces | `boot`, `mcp`, `scheduler`, and `main.ts` above them all |
+| Features that use other features | `background`, `ideation` |
+| Features on the pipeline | `calls`, `credits`, `evals`, `ghost`, `recovery` |
+| The turn pipeline | `agents`, `channels`, `relay` |
+| What a turn recalls | `memory` |
+| What a turn reads and schedules | `cron`, `persona`, `research`, `skills` |
+| The model runtime | `model` (with `claude`, `codex`), `alerts`, `gating` |
+| Transports and registries | `imessage`, `sms`, `grok`, `integrations`, `guests`, `security`, `announce`, `triggers` |
+| State and local services | `sessions`, `spend`, `media`, `voice`, `web`, `refresh`, `concierge`, `shelf` |
+| Foundation | `util`, `db`, `config`, `tools`, `jev`, `portal` |
+
+`import type` is not counted, because it is erased before anything runs.
+One import runs against the layering and is listed in the test with the
+reason it stays.
+
+A file that needs something from a higher layer is saying one of three
+things: what it needs belongs lower, the file itself belongs higher, or the
+higher layer should hand the thing in, the way `main.ts` hands each subsystem
+its stores. Before this was enforced, 20 of the 48 modules depended on each
+other in one knot. The files held only two import cycles between them; it
+was where they had been put that tied the knot.
+
+## Paths that are not yours to move
+
+Two kinds of path are used by things the compiler cannot see.
+
+**Entry points.** launchd agents, generated MCP configs, skills and the CLI
+start `src/main.ts`, `src/mcp/server.ts`, the scripts under `scripts/` and a
+few others by path. The architecture test lists them and checks they exist.
+
+**What sandbox scripts import.** The assistant writes scripts in its
+sandboxes, and some import harness source by absolute path. Nothing in the
+repository can see those imports, so the compiler, the linter and knip all
+report such an export as unused. `tests/sandbox-api.test.ts` lists every
+module and name those scripts import, measured by searching the sandboxes.
+To move one, leave a re-export at the old path or update the scripts first.
 
 ## How the processes talk
 
@@ -272,7 +320,7 @@ Everything the runtime writes lives in three ignored directories.
 | `cron.db` | Scheduled and one-shot jobs |
 | `spend.db` | One row per model invocation, daily rollups, eval scores |
 | `recall.sqlite` | Embeddings and the full text index |
-| `agents.db`, `bg_jobs.db`, `triggers.db`, `refresh.db`, `alerts.db`, `announcements.db`, `annotations.db`, `errands.db`, `model_stats.db` | One subsystem each |
+| `agents.db`, `bg_jobs.db`, `triggers.db`, `refresh.db`, `alerts.db`, `announcements.db`, `errands.db`, `model_stats.db` | One subsystem each |
 | `mcp*.json` | Generated MCP configs per session profile |
 | `pending/<hash>.jsonl` | Messages parked behind an in-flight turn |
 | `*.kick`, `pool-stats.json`, `resource-status.json` | Dashboard IPC |

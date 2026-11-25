@@ -15,7 +15,7 @@ const runMcpStdioSmoke = process.env.RUN_MCP_STDIO_SMOKE === "1";
  */
 describe("protectStdout", () => {
   test("redirects console.log/info/debug/warn to stderr", async () => {
-    const { protectStdout } = await import("../src/mcp/stdio-safety.ts");
+    const { protectStdout } = await import("../src/util/stdio-safety.ts");
 
     const original = {
       log: console.log,
@@ -64,7 +64,7 @@ describe("protectStdout", () => {
   });
 
   test("does not throw on circular objects", async () => {
-    const { protectStdout } = await import("../src/mcp/stdio-safety.ts");
+    const { protectStdout } = await import("../src/util/stdio-safety.ts");
     const original = {
       log: console.log,
       info: console.info,

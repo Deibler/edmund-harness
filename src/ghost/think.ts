@@ -1,17 +1,17 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatHistoryLines } from "../channels/history-format.ts";
 import type { OneShotResult } from "../claude/one-shot.ts";
-import { loadPersona } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
 import type { ChatDb } from "../imessage/db.ts";
+import { formatHistoryLines } from "../imessage/history-format.ts";
 import type { HistoryLine } from "../imessage/history.ts";
 import { getRecentMessages } from "../imessage/history.ts";
 import { recentReactionsToMe } from "../imessage/reactions.ts";
 import { listAttachments } from "../imessage/search.ts";
 import { segmentByGaps } from "../imessage/segment.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
+import { loadPersona } from "../model/persona.ts";
 import { ensureSandbox, sandboxDir } from "../persona/sandbox.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { type SessionKey, chatIdFromKey, isGroupSession, isSmsSession } from "../sessions/key.ts";
@@ -28,7 +28,6 @@ import {
   decayMultiplier,
   focusSuggestionStatus,
   isContact,
-  preflightGate,
 } from "./budget.ts";
 import { excerptNotes, excerptPersonFile } from "./excerpt.ts";
 import { resolveIntensity } from "./intensity.ts";

@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { GROUPS_DIR, PEOPLE_DIR, PERSONA_DIR } from "../claude/persona.ts";
+import { GROUPS_DIR, PEOPLE_DIR, PERSONA_DIR } from "../model/persona.ts";
 import { easternDate } from "../util/clock.ts";
 import { log } from "../util/log.ts";
 import { readPrinciples } from "./principles.ts";

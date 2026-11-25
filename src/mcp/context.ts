@@ -1,5 +1,4 @@
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { BgJobStore } from "../background/store.ts";
 import type { Config } from "../config/config.ts";
 import { loadConfig } from "../config/config.ts";
@@ -8,7 +7,6 @@ import { ChatDb } from "../imessage/db.ts";
 import { type SessionTier, isGuestTier, parseSessionTier } from "../security/policy.ts";
 import { AddressBook } from "../sessions/address-book.ts";
 import { ContactBook } from "../sessions/contacts.ts";
-import { isTradingSession } from "../sessions/key.ts";
 import { LearnedNames } from "../sessions/learned-names.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 
@@ -40,7 +38,6 @@ export type ToolContext = {
    *  lose the tools that reach other people or the global memory; see
    *  src/security/policy.ts and assembleCoreTools. */
   sessionTier: SessionTier;
-  /** Trading subsystem stores — present only for trading sessions. */
 };
 
 export function loadToolContext(): ToolContext {

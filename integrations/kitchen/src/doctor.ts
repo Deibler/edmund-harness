@@ -23,9 +23,9 @@ import { cookable, loadRecipes, offered } from "./recipes.ts";
 import { dinnersOf, nextFire, recipients } from "./schedules.ts";
 import { corruptLines, fold, live, readLog } from "./store.ts";
 
-export type Level = "ok" | "absent" | "broken";
+type Level = "ok" | "absent" | "broken";
 
-export type Finding = {
+type Finding = {
   level: Level;
   what: string;
   detail: string;

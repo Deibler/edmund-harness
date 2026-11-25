@@ -1,12 +1,11 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { z } from "zod";
-import { peekPending } from "../../bridge/session-queue.ts";
 import { markdownToPlaintext, sanitizeOutbound } from "../../channels/sanitize-outbound.ts";
+import { peekPending } from "../../channels/session-queue.ts";
 import { appleMapsLink } from "../../imessage/maps-link.ts";
 import {
   type ResolvedMessage,
-  chatRowIdForGuids,
   countSentSince,
   findRecentMessageByText,
   latestMessageInGuids,
@@ -22,7 +21,6 @@ import { integrationExport } from "../../integrations/optional.ts";
 import * as intSettings from "../../integrations/settings.ts";
 import { maybeResizeImage } from "../../media/image-resize.ts";
 import { maybePrepareVideoForSend } from "../../media/video-transcode.ts";
-import { viewerForSession } from "../../orchestrators/visibility.ts";
 import { isMirrorSession } from "../../sessions/key.ts";
 import { chatIdFromKey, isGroupSession } from "../../sessions/key.ts";
 import { StateStore } from "../../sessions/store.ts";
@@ -197,7 +195,7 @@ function normalizeReaction(input: string): string {
  * chunking and the spend ledger have one implementation.
  *
  * Credentials come from the environment, which a worker only inherits under
- * full host access (see src/claude/direct-env.ts). Under sandboxed access
+ * full host access (see src/model/direct-env.ts). Under sandboxed access
  * they are deliberately withheld, and that is reported as itself rather than
  * as a send failure.
  */
@@ -312,19 +310,11 @@ const SendLocationInput = z.object({
     ),
 });
 
-export function recordToolSend(
-  deps: Pick<ToolContext, "dataDir" | "sessionKey" | "chatGuids">,
-  sentText: string,
-  chatGuid?: string,
-): void {
+export function recordToolSend(deps: Pick<ToolContext, "dataDir" | "sessionKey">): void {
   let state: StateStore | null = null;
   try {
     state = new StateStore(deps.dataDir);
     state.noteToolSend(deps.sessionKey);
-    const guid = chatGuid ?? deps.chatGuids[0];
-    if (guid && sentText.trim().length > 0) {
-      state.recordSentAttribution(guid, viewerForSession(deps.sessionKey) ?? "main", [sentText]);
-    }
   } catch (err) {
     console.warn(
       `[send] outbound bookkeeping failed (message already sent): ${String(err).slice(0, 200)}`,
@@ -410,7 +400,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           } finally {
             store.close();
           }
-          recordToolSend(ctx, cleaned);
+          recordToolSend(ctx);
           return {
             content: [
               {
@@ -438,7 +428,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
             console.error(`[send_message] ${ctx.sessionKey} FAILED: ${res.error}`);
             return { content: [{ type: "text", text: `send error: ${res.error}` }], isError: true };
           }
-          recordToolSend(ctx, cleaned);
+          recordToolSend(ctx);
           return {
             content: [
               {
@@ -499,7 +489,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           console.error(`[send_message] ${ctx.sessionKey} FAILED: ${res.error}`);
           return { content: [{ type: "text", text: `send error: ${res.error}` }], isError: true };
         }
-        recordToolSend(ctx, cleaned, chatGuid);
+        recordToolSend(ctx);
         return { content: [{ type: "text", text: sendCountNote(ctx) }] };
       },
     },
@@ -554,7 +544,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
               isError: true,
             };
           }
-          recordToolSend(ctx, body);
+          recordToolSend(ctx);
           console.log(`[send_location] ${ctx.sessionKey} ${url} (sms, link only)`);
           return { content: [{ type: "text", text: `sent map link (SMS has no card): ${url}` }] };
         }
@@ -574,7 +564,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
               isError: true,
             };
           }
-          recordToolSend(ctx, note, chatGuid);
+          recordToolSend(ctx);
         }
 
         const res = await sendMessage({ to, isGroup, text: url, chatGuid });
@@ -584,7 +574,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
             isError: true,
           };
         }
-        recordToolSend(ctx, url, chatGuid);
+        recordToolSend(ctx);
         console.log(`[send_location] ${ctx.sessionKey} ${url}`);
         return { content: [{ type: "text", text: `sent map card: ${url}` }] };
       },
@@ -702,7 +692,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
               isError: true,
             };
           }
-          recordToolSend(ctx, args.caption ?? "");
+          recordToolSend(ctx);
           console.log(`[send_attachment] ${ctx.sessionKey} sent over MMS ${res.sentPath}`);
           return {
             content: [
@@ -766,7 +756,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
             } finally {
               store.close();
             }
-            recordToolSend(ctx, args.caption ?? "");
+            recordToolSend(ctx);
             return {
               content: [
                 {
@@ -810,7 +800,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           console.error(`[send_attachment] ${ctx.sessionKey} FAILED: ${res.error}`);
           return { content: [{ type: "text", text: `send error: ${res.error}` }], isError: true };
         }
-        recordToolSend(ctx, args.caption ?? "", chatGuid);
+        recordToolSend(ctx);
         console.log(`[send_attachment] ${ctx.sessionKey} sent ${path}`);
         return {
           content: [

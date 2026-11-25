@@ -31,7 +31,7 @@ ADMIN_PASSWORD = os.environ.get('INSTANT_SHARE_ADMIN_PASSWORD', '')
 ADMIN_PASSWORD_HASH = hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest() if ADMIN_PASSWORD else None
 
 # Config/state directory. The daemon sets INSTANT_SHARE_CONFIG_DIR to
-# <data_dir>/instant-share (see src/claude/mcp-config.ts). The fallback here
+# <data_dir>/instant-share (see src/model/mcp-config.ts). The fallback here
 # anchors to this skill's own directory so the scripts also work standalone.
 _CONFIG_FALLBACK = Path(__file__).resolve().parent.parent / '.config'
 CONFIG_DIR = Path(os.environ.get('INSTANT_SHARE_CONFIG_DIR', _CONFIG_FALLBACK))

@@ -5,8 +5,8 @@
  * process environment: the CLI ignores it in a settings `env` block.
  */
 import { describe, expect, test } from "bun:test";
-import { toolEnv } from "../src/claude/mcp-config.ts";
 import { ConfigSchema } from "../src/config/config.ts";
+import { toolEnv } from "../src/model/mcp-config.ts";
 
 describe("worker environment", () => {
   test("turns on the CLI's transcript GC", () => {

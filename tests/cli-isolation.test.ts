@@ -10,8 +10,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ISOLATED_SETTINGS_ARGS, PROMPT_SNAPSHOT_ARGS } from "../src/claude/direct-env.ts";
 import { oneShotArgv, runClaudeOneShot } from "../src/claude/one-shot.ts";
+import { ISOLATED_SETTINGS_ARGS, PROMPT_SNAPSHOT_ARGS } from "../src/model/direct-env.ts";
 
 const root = join(import.meta.dir, "..");
 const read = (p: string) => readFileSync(join(root, p), "utf8");

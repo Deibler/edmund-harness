@@ -34,32 +34,6 @@ export function getGroupParticipants(chatDb: ChatDb, chatGuid: string): string[]
     .filter(Boolean);
 }
 
-const CHAT_ROWID_FOR_GUIDS_SQL = (placeholders: string) => `
-  SELECT cmj.chat_id AS rid, MAX(m.date) AS last
-  FROM chat c
-  JOIN chat_message_join cmj ON cmj.chat_id = c.ROWID
-  JOIN message m             ON m.ROWID = cmj.message_id
-  WHERE c.guid IN (${placeholders})
-  GROUP BY cmj.chat_id
-  ORDER BY last DESC
-  LIMIT 1
-`;
-
-/**
- * Resolve a chat ROWID from one or more chat GUIDs, picking whichever chat
- * has the most recent message. DMs can map to several chat rows (an iMessage
- * thread and an SMS thread for the same person); we react in the live one.
- * `imsg react` only accepts a chat ROWID, not a GUID, hence this lookup.
- */
-export function chatRowIdForGuids(chatDb: ChatDb, guids: string[]): number | null {
-  if (guids.length === 0) return null;
-  const placeholders = guids.map(() => "?").join(",");
-  const row = chatDb
-    .query<{ rid: number | null }>(CHAT_ROWID_FOR_GUIDS_SQL(placeholders))
-    .get(...guids);
-  return row?.rid ?? null;
-}
-
 const LATEST_MESSAGE_IN_GUIDS_SQL = (placeholders: string) => `
   SELECT c.guid AS cguid, m.guid AS mguid, m.is_from_me AS from_me
   FROM message m

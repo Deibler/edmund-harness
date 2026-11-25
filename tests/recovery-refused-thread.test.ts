@@ -15,12 +15,12 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { wakeThread } from "../src/channels/history.ts";
+import { HEALERS } from "../src/claude/healers.ts";
 import { type RunResult, inBandHealer } from "../src/claude/runner.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { ChatDb } from "../src/imessage/db.ts";
+import { classifyError } from "../src/model/failure-class.ts";
 import { dropRefusedThread } from "../src/model/runner.ts";
-import { classifyError } from "../src/recovery/classify.ts";
-import { HEALERS } from "../src/recovery/healers.ts";
 import { markRecovered, recoveryTurnEnvelope } from "../src/recovery/turn.ts";
 import type { ContactBook } from "../src/sessions/contacts.ts";
 import { StateStore } from "../src/sessions/store.ts";
@@ -62,7 +62,7 @@ const state = new StateStore(dataDir);
 const config = ConfigSchema.parse({ self: { handles: [] }, allowlist: {}, identity: {} });
 const contacts = { displayName: () => null, label: () => null } as unknown as ContactBook;
 const recentThread = (key: string, guid: string) =>
-  wakeThread(key, guid, { config, chatDb, contacts, state });
+  wakeThread(key, guid, { config, chatDb, contacts });
 
 afterAll(() => {
   state.close();

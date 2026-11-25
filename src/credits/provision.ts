@@ -17,7 +17,7 @@ export class CreditsUnavailable extends Error {
   }
 }
 
-export const KEY_NAME_PREFIX = "edmund:";
+const KEY_NAME_PREFIX = "edmund:";
 
 export async function ensureWalletKey(p: {
   store: CreditStore;

@@ -9,8 +9,8 @@
  * seconds asks this, never the pool by itself.
  */
 
-import { anyVoiceLive } from "../calls/binding.ts";
 import { isWorkerPoolBusy } from "../claude/runner.ts";
+import { anyVoiceLive } from "../sessions/call-binding.ts";
 
 export function daemonBusy(): boolean {
   return isWorkerPoolBusy() || anyVoiceLive();

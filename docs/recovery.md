@@ -7,12 +7,12 @@ that refuse to act rather than act wrongly.
 
 ## Classification and healers
 
-`src/recovery/classify.ts` maps an error to a failure class:
+`src/model/failure-class.ts` maps an error to a failure class:
 `request_too_large`, `image_dim_exceeded`, `stale_session_id`,
 `session_in_use`, `bad_tool_ids`, `invalid_tool_schema`,
 `empty_content_block`, `transient_api`, `send_failed`, or `unknown`.
 
-`src/recovery/healers.ts` has one structural fix per class: compact the
+`src/claude/healers.ts` has one structural fix per class: compact the
 session transcript's images down to a size the provider accepts, downscale an
 image over 2000 pixels, drop a stale thread id so the next turn starts cold,
 rewrite bad tool ids and evict the warm worker, or relaunch Messages.app

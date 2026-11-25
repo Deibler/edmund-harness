@@ -58,9 +58,11 @@ jobs:
       - name: Ideation page template
         working-directory: edmund-harness/dashboard/ideation-template
         run: bun install --frozen-lockfile && bunx tsc --noEmit && bun run build
-      - name: Unused code (advisory until the backlog is cleared)
+      # Unused files, exports and dependencies fail the build. An export that
+      # only a script outside this repository uses is pinned by importing it
+      # in tests/sandbox-api.test.ts, which is what tells knip it is used.
+      - name: Unused code
         run: bun run knip
-        continue-on-error: true
 
   audit:
     name: dependency audit

@@ -32,7 +32,7 @@ import type { ToolDef, ToolResult } from "./types.ts";
  */
 
 /** How long wait_for_result blocks the turn. A longer job arrives as a message. */
-export const MAX_WAIT_MS = 120_000;
+const MAX_WAIT_MS = 120_000;
 const POLL_MS = 1_500;
 const MAX_TASK_CHARS = 8_000;
 
@@ -78,7 +78,7 @@ export type GrokBotDeps = {
  * is not set. Read from config so no deployment's name is written into the
  * source.
  */
-export function ownerName(ctx: ToolContext): string {
+function ownerName(ctx: ToolContext): string {
   return ctx.config.owner?.name?.trim().split(/\s+/)[0] || "the owner";
 }
 
@@ -87,7 +87,7 @@ function sentenceStart(s: string): string {
 }
 
 /** Is this the owner's own DM session? Compared on the canonical handle. */
-export function isOwnersDm(ctx: ToolContext): boolean {
+function isOwnersDm(ctx: ToolContext): boolean {
   const handle = ctx.config.grok.handle;
   if (!handle) return false;
   return ctx.sessionKey === dmKeyFor(ctx.contacts.canon(handle));
@@ -98,7 +98,7 @@ const GROUP_PREFIX = "imessage:group:";
 /** Is the owner a member of this session's group chat? Read from chat.db as of
  *  now, on the canonical handle (a phone and an email for one person match).
  *  Fails closed: no handle, no chat.db, no such chat, or an error is "no". */
-export function ownerInGroup(ctx: ToolContext): boolean {
+function ownerInGroup(ctx: ToolContext): boolean {
   const handle = ctx.config.grok.handle;
   if (!handle || !ctx.sessionKey.startsWith(GROUP_PREFIX) || !ctx.chatDb) return false;
   // For a group, `chatGuids` is exactly this one guid; the key says it too.
@@ -120,7 +120,7 @@ export function ownerInGroup(ctx: ToolContext): boolean {
  * tierForSessionKey) whoever is in it; the owner's presence is what admits it,
  * not the tier. Guest tiers never reach a group, and are refused here anyway.
  */
-export function originFor(ctx: ToolContext): PendingOrigin | null {
+function originFor(ctx: ToolContext): PendingOrigin | null {
   if (ctx.guestTier != null) return null;
   if (isOwnersDm(ctx)) {
     return ctx.sessionTier === "operator"

@@ -983,7 +983,7 @@ export class Indexer {
  *  someone would recall. The kitchen drain rewrites each site's pending.json
  *  on every pass as its heartbeat, so indexing them re-embedded three files a
  *  minute, every minute (2026-09-24). Matched on the file name. */
-export const MACHINE_STATE_FILES = new Set(["pending.json"]);
+const MACHINE_STATE_FILES = new Set(["pending.json"]);
 
 function isMachineStateRef(ref: string): boolean {
   const path = ref.replace(/#\d+$/, "");
@@ -999,7 +999,7 @@ export function artifactPurgeKey(): string {
 /** Per-call cap on purged rows. deleteRefs is synchronous on the daemon's
  *  event loop, and the first sweep of a long-lived index found ~105k rows;
  *  paying that across ticks beats one multi-minute stall. */
-export const DEPENDENCY_PURGE_BATCH = 2000;
+const DEPENDENCY_PURGE_BATCH = 2000;
 
 /**
  * Drop artifact chunks indexed under a dependency tree, or for a machine-state

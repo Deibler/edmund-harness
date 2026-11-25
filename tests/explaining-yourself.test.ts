@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { OUTPUT_RULES, buildSystemPrompt } from "../src/claude/system-prompt.ts";
+import { OUTPUT_RULES, buildSystemPrompt } from "../src/model/system-prompt.ts";
 
 const OWNER = "Dana Example";
 const prompt = (over: Record<string, unknown> = {}) =>

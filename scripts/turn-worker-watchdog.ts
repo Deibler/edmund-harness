@@ -6,9 +6,9 @@
  * daemon does not end this too. It asks the system whether the daemon's pid is
  * still there, which answers the same however the daemon went: an exit, a
  * crash or a kill. Not `process.ppid`: bun keeps the value it first read, so
- * it goes on naming a parent that has died. See src/recovery/turn-workers.ts.
+ * it goes on naming a parent that has died. See src/model/turn-workers.ts.
  */
-import { stopWorkersOf } from "../src/recovery/turn-workers.ts";
+import { stopWorkersOf } from "../src/model/turn-workers.ts";
 
 const [dir, ownerArg] = process.argv.slice(2);
 const owner = Number(ownerArg);

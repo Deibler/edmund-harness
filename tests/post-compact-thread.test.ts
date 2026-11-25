@@ -10,11 +10,11 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { postCompactContext } from "../scripts/post-compact-thread.ts";
 import { POST_COMPACT_THREAD_CHARS, recentThreadWindow } from "../src/channels/history.ts";
-import { isolatedSettingsArgs, postCompactHookSettings } from "../src/claude/direct-env.ts";
-import { postCompactContext } from "../src/claude/post-compact-thread.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { ChatDb } from "../src/imessage/db.ts";
+import { isolatedSettingsArgs, postCompactHookSettings } from "../src/model/direct-env.ts";
 import type { ContactBook } from "../src/sessions/contacts.ts";
 import { emptyChatDb } from "./helpers/chat-db.ts";
 
@@ -131,7 +131,7 @@ describe("the hook process", () => {
         cfg,
         `[self]\nhandles = []\n[allowlist]\n[identity]\n[paths]\nchat_db = "${db.path}"\ndata_dir = "${dir}"\n[behavior]\nhistory_messages = 4\n[[contacts]]\nname = "Test Person"\nhandles = ["${H}"]\n`,
       );
-      const script = join(import.meta.dir, "../src/claude/post-compact-thread.ts");
+      const script = join(import.meta.dir, "../scripts/post-compact-thread.ts");
       const r = Bun.spawnSync([process.execPath, script], {
         env: {
           ...process.env,

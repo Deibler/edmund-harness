@@ -43,7 +43,7 @@ function liveEvents(account: string): KitchenEvent[] {
  * The dish name without a trailing date ("dirty rice, Sun 8/9" -> "dirty rice"),
  * so the same dinner on two nights is one dish. The event keeps its `why`.
  */
-export function mealName(why: string | null | undefined): string {
+function mealName(why: string | null | undefined): string {
   const raw = (why ?? "").trim();
   if (!raw) return "unnamed meal";
   return (

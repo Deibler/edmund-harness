@@ -1,27 +1,22 @@
 import type { WakeThread } from "../cron/wake-thread.ts";
+import { formatHistoryLines, formatParticipantList } from "../imessage/history-format.ts";
 import { type HistoryLine, getRecentMessages, resolveBeforeRowId } from "../imessage/history.ts";
 import { getGroupParticipants } from "../imessage/participants.ts";
 import { recentReactionsToMe } from "../imessage/reactions.ts";
 import { lookupReplyContext } from "../imessage/reply-lookup.ts";
 import { findTopicShifts, pickActiveSegment, segmentByGaps } from "../imessage/segment.ts";
 import type { InboundMessage, ReplyContext } from "../imessage/types.ts";
-import {
-  type VisibilityStore,
-  makeHistoryFilter,
-  viewerForSession,
-} from "../orchestrators/visibility.ts";
 import { copyAttachments } from "../persona/copy-received.ts";
 import {
   chatIdFromKey,
   isGroupSession,
   isMirrorSession,
+  isRetiredSession,
   isSmsSession,
-  isTradingSession,
 } from "../sessions/key.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { chatGuidsForSession } from "../sessions/session-scope.ts";
 import type { Deps } from "./deps.ts";
-import { formatHistoryLines, formatParticipantList } from "./history-format.ts";
 
 /**
  * Bundle of derived envelope fields: speaker-tagged history lines, a one-line
@@ -53,7 +48,7 @@ export type HistoryBundle = {
 /**
  * The chat.db ROWID history runs up to (exclusive). A chat.db message bounds
  * history at itself. A call utterance has no row (its id is negative, see
- * calls/binding.ts), so its history runs up to the latest message; bounding at
+ * sessions/call-binding.ts), so its history runs up to the latest message; bounding at
  * the negative id would return nothing and present the call as a first meeting.
  */
 export function historyBefore(msg: Pick<InboundMessage, "rowId">): number {
@@ -186,17 +181,6 @@ export function buildHistoryBundle(
     });
   }
 
-  // Per-orchestrator visibility: chat.db is shared across personas, so the
-  // raw rows are filtered to what THIS session's orchestrator may see — the
-  // primary never sees a secondary's invocations or replies. Constant-true
-  // when no [[orchestrators]] are configured.
-  const visible = makeHistoryFilter(
-    viewerForSession(sessionKey),
-    first.chatGuid,
-    config,
-    deps.state,
-  );
-
   // ---- DM path (unchanged behavior) ----
   if (!isGroup) {
     const full = config.behavior.history_always || coldStart;
@@ -208,7 +192,7 @@ export function buildHistoryBundle(
       first.chatGuid,
       historyBefore(first),
       config.behavior.history_messages,
-    ).filter(visible);
+    );
     return {
       lines: formatHistoryLines(lines, contacts),
       scope: undefined,
@@ -225,7 +209,7 @@ export function buildHistoryBundle(
     first.chatGuid,
     historyBefore(first),
     config.behavior.history_candidate_window,
-  ).filter(visible);
+  );
   return groupHistoryBundle(candidates, {
     inboundBatch,
     inboundMs: first.timestampMs,
@@ -357,7 +341,7 @@ function groupHistoryBundle(
  * fire whose own rubric asks whether the person just wrote, with no way to
  * tell. This is the window an inbound cold start carries, read the same way:
  * SMS from its own store, orchestrator visibility applied, nothing for the
- * mirror or trading sessions, which have no chat.
+ * mirror sessions, which have no chat.
  */
 export function recentThreadLines(
   sessionKey: SessionKey,
@@ -374,12 +358,8 @@ export function recentThreadLines(
  *  that fit. Recall reads the same budget to know where that window began. */
 export const POST_COMPACT_THREAD_CHARS = 12_000;
 
-/** What reading a session's recent thread needs. `state` only serves the
- *  orchestrator visibility filter, so a process without the daemon's store
- *  (the post-compaction hook) passes null when no orchestrators are set. */
-export type ThreadDeps = Pick<Deps, "config" | "chatDb" | "contacts" | "sms"> & {
-  state: VisibilityStore | null;
-};
+/** What reading a session's recent thread needs. */
+export type ThreadDeps = Pick<Deps, "config" | "chatDb" | "contacts" | "sms">;
 
 /**
  * The latest `[behavior] history_messages` of a session's thread, oldest
@@ -400,7 +380,7 @@ export function recentThreadWindow(
   const beforeMs = opts.beforeMs ?? Number.POSITIVE_INFINITY;
   const limit = config.behavior.history_messages;
   const empty = { lines: [], formatted: [] };
-  if (limit <= 0 || isMirrorSession(sessionKey) || isTradingSession(sessionKey)) return empty;
+  if (limit <= 0 || isMirrorSession(sessionKey) || isRetiredSession(sessionKey)) return empty;
   let lines: HistoryLine[];
   if (isSmsSession(sessionKey)) {
     if (!deps.sms) return empty;
@@ -408,12 +388,11 @@ export function recentThreadWindow(
       .history(chatIdFromKey(sessionKey), limit)
       .filter((l) => l.timestampMs > sinceMs && l.timestampMs < beforeMs);
   } else {
-    const visible = makeHistoryFilter(viewerForSession(sessionKey), chatGuid, config, deps.state);
     const beforeRowId = Number.isFinite(beforeMs)
       ? resolveBeforeRowId(chatDb, chatGuid, beforeMs)
       : Number.MAX_SAFE_INTEGER;
     lines = getRecentMessages(chatDb, chatGuid, beforeRowId, limit).filter(
-      (l) => l.timestampMs > sinceMs && visible(l),
+      (l) => l.timestampMs > sinceMs,
     );
   }
   let formatted = formatHistoryLines(lines, contacts);

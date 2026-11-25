@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { groupFilePath, personFilePath } from "../claude/persona.ts";
+import { groupFilePath, personFilePath } from "../model/persona.ts";
 import type { Config } from "../config/config.ts";
 import type { CronStore } from "../cron/store.ts";
 import type { ChatDb } from "../imessage/db.ts";

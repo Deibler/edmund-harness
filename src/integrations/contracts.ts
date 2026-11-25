@@ -17,22 +17,6 @@
  */
 
 import type { Config } from "../config/config.ts";
-import type { InboundMessage } from "../imessage/types.ts";
-import type { StateStore } from "../sessions/store.ts";
-
-/** Result of the trading router gate. */
-type TradingRoute = { route: "trading" | "normal" };
-
-/**
- * `tradingGate` from the trading integration. Decides whether an inbound
- * belongs to the trading sub-persona. Absent integration ⇒ nothing routes to
- * trading, which is the correct behavior for a harness without it.
- */
-export type TradingGateFn = (
-  msg: InboundMessage,
-  config: Config,
-  state: StateStore,
-) => TradingRoute;
 
 /**
  * `mirrorEnvelopeBlock` from the mirror integration. Returns the channel

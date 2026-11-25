@@ -15,7 +15,6 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { AgentStore } from "../../src/agents/store.ts";
 import { AlertStore } from "../../src/alerts/store.ts";
-import { AnnotationStore } from "../../src/annotate/store.ts";
 import { BgJobStore } from "../../src/background/store.ts";
 import { hardenHarnessPermissions } from "../../src/boot/harden-permissions.ts";
 import { loadConfig } from "../../src/config/config.ts";
@@ -35,8 +34,6 @@ import { errorHandler } from "./middleware/error.ts";
 import { activityRoutes } from "./routes/activity.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { alertsRoutes } from "./routes/alerts.ts";
-import { annotatePageRoutes, annotateSubmitRoutes } from "./routes/annotate.ts";
-import { annotationsRoutes } from "./routes/annotations.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bgJobsRoutes } from "./routes/bgjobs.ts";
 import { brownnoseRoutes } from "./routes/brownnose.ts";
@@ -62,12 +59,6 @@ import { sessionsRoutes } from "./routes/sessions.ts";
 import { skillsRoutes } from "./routes/skills.ts";
 import { LogTail } from "./services/logTail.ts";
 
-/**
- * An annotated PNG arrives as base64 inside JSON. The route caps the decoded
- * image at 25 MB; base64 inflates by a third, plus the comment and rects.
- */
-const ANNOTATION_BODY_LIMIT = 36 * 1024 * 1024;
-
 const REPO_ROOT = resolve(import.meta.dir, "../..");
 const WEB_DIST = resolve(REPO_ROOT, "dashboard/web/dist");
 /** The USER portal SPA (bun run portal:build). Served on both listeners. */
@@ -88,7 +79,6 @@ async function main() {
   const state = new StateStore(config.paths.data_dir);
   const crons = new CronStore(config.paths.data_dir);
   const agents = new AgentStore(config.paths.data_dir);
-  const annotations = new AnnotationStore(config.paths.data_dir);
   const alerts = new AlertStore(config.paths.data_dir);
   const ghostPrefs = new GhostPrefsStore(config.paths.data_dir);
   const bgJobs = new BgJobStore(config.paths.data_dir);
@@ -108,22 +98,14 @@ async function main() {
   // State-changing API calls must come from our own origin. Registered
   // before any /api mount so the login route is covered too.
   app.use("/api/*", originGuard());
-  // Nothing under /api legitimately carries a large body except annotation
-  // uploads, which get their own, larger ceiling below. Reading a body
+  // Nothing under /api legitimately carries a large body. Reading a body
   // before authentication is where a request-size attack lands, so the
   // limit sits in front of every route.
   app.use("/api/*", bodyLimit({ maxSize: 2 * 1024 * 1024 }));
-  app.use("/api/a/*", bodyLimit({ maxSize: ANNOTATION_BODY_LIMIT }));
   app.use("/pay/*", bodyLimit({ maxSize: 1024 * 1024 }));
 
   // /api/auth is open (login doesn't have a cookie yet).
   app.route("/api/auth", authRoutes(secret));
-
-  // Annotation link pages + submit endpoint — gated by the single-use token
-  // baked into the URL, NOT by the dashboard PIN. Mounted before authMiddleware
-  // so they stay reachable to the phone the model texted the link to.
-  app.route("/a", annotatePageRoutes({ store: annotations, crons, contacts }));
-  app.route("/api/a", annotateSubmitRoutes({ store: annotations, crons, contacts }));
 
   // User self-service portal — standing per-user links (HMAC-gated, no
   // PIN). Sent at the bottom of every proactive message so each user can
@@ -168,7 +150,6 @@ async function main() {
   api.route("/media", mediaRoutes({ state, contacts, chatDb }));
   api.route("/messages", messagesRoutes({ state, chatDb, contacts }));
   api.route("/activity", activityRoutes({ state, crons, agents, contacts, chatDb, tail }));
-  api.route("/annotations", annotationsRoutes({ store: annotations, contacts, chatDb }));
   api.route("/alerts", alertsRoutes({ alerts }));
   api.route("/skills", skillsRoutes({ config, repoRoot: REPO_ROOT }));
   api.route("/models", modelsRoutes());
@@ -219,7 +200,7 @@ async function main() {
 
   // ── Public-only listener ─────────────────────────────────────────────
   // What the standing cloudflared tunnel points at. Serves EXCLUSIVELY the
-  // token-gated user surfaces — the per-user portal and annotate links —
+  // token-gated user surface, the per-user portal,
   // and a bare 404 for anything else. The PIN dashboard, API, and SPA are
   // not mounted here and can never be reached through the tunnel. Bound to
   // loopback: the only way in from outside is the tunnel itself.
@@ -231,7 +212,6 @@ async function main() {
     c.header("X-Robots-Tag", "noindex, nofollow");
     c.header("Cache-Control", "no-store"); // pages carry personal data
   });
-  pub.use("/api/a/*", bodyLimit({ maxSize: ANNOTATION_BODY_LIMIT }));
   pub.use("/pay/*", bodyLimit({ maxSize: 1024 * 1024 }));
   pub.use("/u/*", bodyLimit({ maxSize: 64 * 1024 }));
   pub.get("/robots.txt", (c) => c.text("User-agent: *\nDisallow: /\n"));
@@ -250,8 +230,6 @@ async function main() {
       spaIndexHtml: PORTAL_DIST,
     }),
   );
-  pub.route("/a", annotatePageRoutes({ store: annotations, crons, contacts }));
-  pub.route("/api/a", annotateSubmitRoutes({ store: annotations, crons, contacts }));
   // Stripe's webhook target: <external_url>/pay/stripe. Verified by
   // signature; an unset keys.stripe_webhook_secret rejects every call.
   pub.route("/pay", payRoutes({ config, store: credits, crons }));
@@ -263,7 +241,7 @@ async function main() {
     idleTimeout: 0,
   });
   console.log(
-    `[dashboard] public user listener (portal/annotate only) on 127.0.0.1:${config.dashboard.public_port}`,
+    `[dashboard] public user listener (portal only) on 127.0.0.1:${config.dashboard.public_port}`,
   );
 
   const shutdown = () => {
@@ -273,7 +251,6 @@ async function main() {
     publicServer.stop();
     crons.close();
     state.close();
-    annotations.close();
     alerts.close();
     bgJobs.close();
     chatDb.close();

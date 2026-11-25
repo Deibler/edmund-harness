@@ -5,6 +5,8 @@ import type { ChatDb } from "../imessage/db.ts";
 import { decodeMessageText } from "../imessage/decode.ts";
 import { isPermanentSendError } from "../imessage/send.ts";
 import type { InboundMessage } from "../imessage/types.ts";
+import type { FailureClass } from "../model/failure-class.ts";
+import { describeErrorClass } from "../model/failure-class.ts";
 import { compactConfigFor, reanchorCodexIfNeeded, runModel } from "../model/runner.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
@@ -12,8 +14,6 @@ import { type SessionKey, chatIdFromKey, isGroupSession } from "../sessions/key.
 import type { SessionLocks } from "../sessions/locks.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { humanMs, log } from "../util/log.ts";
-import type { FailureClass } from "./classify.ts";
-import { describeErrorClass } from "./classify.ts";
 
 /**
  * The recovery turn is the "ask the model what to do" half of the

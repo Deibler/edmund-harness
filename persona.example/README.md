@@ -38,8 +38,6 @@ Sub-directories:
 |---|---|
 | `people/<handle>.md` | Per-contact memory. Auto-injected in that person's DM. Written by the model. |
 | `groups/<slug>.md` | Per-group memory. |
-| `orchestrators/<key>/` | Per-orchestrator overrides. Any file here wins over the top-level one; anything absent falls back. |
-| `trading/` | Persona for the trading sub-agent. Only if that integration is installed. |
 | `sessions/` | Runtime session transcripts. Created automatically — leave empty. |
 
 ## Editing

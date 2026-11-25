@@ -17,7 +17,7 @@
 import type { Category, Item, Location } from "./types.ts";
 
 /** Plausible life in days, from "start wondering" to "certainly gone". */
-export type Life = { low: number; high: number };
+type Life = { low: number; high: number };
 
 type LifeRule = {
   /** Word stems matched against the item's id and name. */

@@ -14,7 +14,7 @@ import {
   parsePendingLine,
   splitSeenMidTurn,
   writePending,
-} from "../src/bridge/session-queue.ts";
+} from "../src/channels/session-queue.ts";
 import type { InboundMessage } from "../src/imessage/types.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "mid-turn-queue-"));

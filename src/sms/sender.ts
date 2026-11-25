@@ -36,7 +36,7 @@ import { SmsStore } from "./store.ts";
  * splits only here: it is MMS, billed flat per recipient per message, so
  * every extra part is another full charge to every member of the room.
  */
-export const GROUP_MESSAGE_MAX_CHARS = 1600;
+const GROUP_MESSAGE_MAX_CHARS = 1600;
 
 export type SmsChannelDelivery = {
   sent: number;
@@ -58,7 +58,7 @@ export type SmsSenderOpts = {
   mediaApi?: ConversationMediaApi;
 };
 
-export type SmsMediaDelivery =
+type SmsMediaDelivery =
   | {
       ok: true;
       /** The file actually sent, when it was converted first (HEIC → JPEG, a shrunk video). */

@@ -4,11 +4,11 @@
  * first live call. Off the call, nothing changes.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { type VoiceBinding, bindVoice, clearVoiceBindings } from "../src/calls/binding.ts";
-import { withCallBlocks } from "../src/calls/loadout.ts";
 import { wantsAutoRecall } from "../src/channels/turn.ts";
 import type { Config } from "../src/config/config.ts";
+import { withCallBlocks } from "../src/model/call-loadout.ts";
 import { modelProfileForSession } from "../src/model/profile.ts";
+import { type VoiceBinding, bindVoice, clearVoiceBindings } from "../src/sessions/call-binding.ts";
 
 const DM = "imessage:dm:+15550100001";
 const OTHER = "imessage:dm:+15550100002";

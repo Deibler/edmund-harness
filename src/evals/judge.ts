@@ -1,8 +1,8 @@
-import { OUTPUT_RULES } from "../claude/system-prompt.ts";
 import type { Config } from "../config/config.ts";
 import { ChatDb } from "../imessage/db.ts";
 import { getRecentMessages } from "../imessage/history.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
+import { OUTPUT_RULES } from "../model/system-prompt.ts";
 import { recordSpend } from "../spend/ledger.ts";
 
 /**
@@ -81,7 +81,7 @@ export function mergeBubbles<
 
 /**
  * Sample transcript slices from the most active chats of the window.
- * chat.db only holds real iMessage traffic, so mirror/trading venues are
+ * chat.db only holds real iMessage traffic, so the mirror venue is
  * excluded by construction.
  */
 export function sampleTranscripts(

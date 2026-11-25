@@ -5,8 +5,8 @@ import {
   isOperatorActionable,
   isRetryable,
 } from "../src/alerts/operator-alert.ts";
-import { retryPlan } from "../src/cron/fire.ts";
-import { classifyError } from "../src/recovery/classify.ts";
+import { classifyError } from "../src/model/failure-class.ts";
+import { retryPlan } from "../src/scheduler/fire.ts";
 
 // The strings every Claude call returned during the three login outages
 // (2026-08-25, 09-23, 10-23), copied from the daemon log. None of them

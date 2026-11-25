@@ -8,8 +8,8 @@
  * prefix at every switch.
  */
 import { describe, expect, test } from "bun:test";
-import { envelopeNeedsBrowser } from "../src/claude/mcp-config.ts";
-import { buildSystemPrompt } from "../src/claude/system-prompt.ts";
+import { envelopeNeedsBrowser } from "../src/model/mcp-config.ts";
+import { buildSystemPrompt } from "../src/model/system-prompt.ts";
 
 const prompt = (over: Record<string, unknown> = {}) =>
   buildSystemPrompt({
@@ -31,12 +31,11 @@ describe("the Chrome section", () => {
     expect(envelopeNeedsBrowser("Continue in Chrome: check the order status")).toBe(true);
   });
 
-  test("a guest or trading session is told there is no browser", () => {
-    for (const p of [prompt({ guestTier: "vouched" }), prompt({ isTrading: true })]) {
-      expect(p).toContain("No browser in this session");
-      expect(p).not.toContain("Loaded on demand");
-      expect(p).not.toContain('schedule_reminder(when: "in 10 seconds"');
-    }
+  test("a guest session is told there is no browser", () => {
+    const p = prompt({ guestTier: "vouched" });
+    expect(p).toContain("No browser in this session");
+    expect(p).not.toContain("Loaded on demand");
+    expect(p).not.toContain('schedule_reminder(when: "in 10 seconds"');
   });
 
   test("a campaign guest on the allowlisted loadout is told how Chrome arrives", () => {

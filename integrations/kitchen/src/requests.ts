@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { accountDir } from "./accounts.ts";
 
 /** Everything the page can ask for. A closed set. */
-export const KINDS = [
+const KINDS = [
   "make", // cook this dish
   "variant", // build a version around what the house has
   "compose", // nothing in the catalog fits: write a dish for what is on the clock
@@ -41,7 +41,7 @@ export const KINDS = [
   "keep", // whether running out of something means buying it again
   "notes", // ask Edmund to bring the Apple Note up to date
 ] as const;
-export type Kind = (typeof KINDS)[number];
+type Kind = (typeof KINDS)[number];
 
 export type MakeRequest = {
   kind: Kind;
@@ -126,7 +126,7 @@ export function requestKey(r: Pick<MakeRequest, "ts" | "kind" | "recipe" | "clie
   return `${r.ts}|${r.kind}|${r.recipe ?? ""}|${r.client_ts ?? ""}`;
 }
 
-export function handled(account: string): Set<string> {
+function handled(account: string): Set<string> {
   const p = handledPath(account);
   if (!existsSync(p)) return new Set();
   try {

@@ -4,8 +4,6 @@ import {
   type SessionKey,
   chatIdFromKey,
   isGroupSession,
-  isTradingSession,
-  orchestratorOfSession,
 } from "../sessions/key.ts";
 
 /**
@@ -40,17 +38,8 @@ export function ensureSandbox(sessionKey: SessionKey, displayName: string | null
 
 export function sandboxDir(sessionKey: SessionKey): string {
   const id = chatIdFromKey(sessionKey);
-  const prefix = isTradingSession(sessionKey)
-    ? "trading"
-    : isGroupSession(sessionKey)
-      ? "group"
-      : "dm";
-  // Named orchestrators get their own sandbox tree — without this,
-  // `orch:desmond:dm:<handle>` and `imessage:dm:<handle>` would collide on
-  // the same `dm_<handle>` directory and leak scratch files across personas.
-  const okey = orchestratorOfSession(sessionKey);
-  const ns = okey && okey !== "main" ? `orch_${slug(okey)}_` : "";
-  return `${sandboxRoot()}/${ns}${prefix}_${slug(id)}`;
+  const prefix = isGroupSession(sessionKey) ? "group" : "dm";
+  return `${sandboxRoot()}/${prefix}_${slug(id)}`;
 }
 
 /**

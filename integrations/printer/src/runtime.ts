@@ -44,7 +44,7 @@ import {
 import { safeName } from "./slicer.ts";
 import { type Job, PrinterStore, type Watch, printerDir } from "./store.ts";
 import { bedCommandFor, bedLabelFor, slicedBedType } from "./threemf.ts";
-import { allTrays, evaluateWatch, formatMinutes, statusLine } from "./watches.ts";
+import { allTrays, evaluateWatch, statusLine } from "./watches.ts";
 
 /**
  * The printer's side of the daemon.
@@ -1121,7 +1121,7 @@ function describeEnd(st: PrinterState): string {
 }
 
 /** What Edmund should do with each kind of wake-up. */
-export function guidanceFor(kind: Watch["kind"], approver: string, hasPhoto: boolean): string {
+function guidanceFor(kind: Watch["kind"], approver: string, hasPhoto: boolean): string {
   switch (kind) {
     case "finish":
       return `Tell the person it is done${hasPhoto ? " and send them the photo (it is attached)" : ""}; the timelapse lands on the print page in a few minutes, and printer_timelapse can fetch it. Ask ${approver} to take it off the plate when they can.`;
@@ -1160,5 +1160,3 @@ export function copyIntoJobDir(dataDir: string, jobId: number, src: string, name
   copyFileSync(src, dest);
   return dest;
 }
-
-export { formatMinutes };

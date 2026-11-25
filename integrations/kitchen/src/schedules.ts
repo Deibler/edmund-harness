@@ -68,7 +68,7 @@ export type Dinner = {
 };
 
 /** Days a suggested dish is held back from the same schedule. */
-export const REPEAT_DAYS = 7;
+const REPEAT_DAYS = 7;
 /** How many past picks a schedule remembers. */
 const PICKS_KEPT = 14;
 
@@ -417,7 +417,7 @@ export function sendTo(principal: string, body: string): void {
  * Queue the same request a "Make this" tap produces, so there is one path from
  * wanting a recipe to a written page. Best-effort; false with no served site.
  */
-export function requestWrite(
+function requestWrite(
   acct: Account,
   pick: Pick,
   to: Array<{ principal: string }>,

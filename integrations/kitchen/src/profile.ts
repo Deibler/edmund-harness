@@ -25,7 +25,7 @@ export type MealNote = {
  * decline does not suppress every pairing with the same parent; dated so it
  * expires (see `activeSkips`).
  */
-export type PairSkip = { pair: string; leg: "parent" | "child"; at: string; by?: string | null };
+type PairSkip = { pair: string; leg: "parent" | "child"; at: string; by?: string | null };
 
 export type ProfileState = {
   /** recipe id -> principals who starred it. */

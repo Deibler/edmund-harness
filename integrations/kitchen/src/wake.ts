@@ -51,7 +51,7 @@ export const RETRY_MS = 20 * 60_000;
 /** Entries older than this are forgotten; the request they name is long gone. */
 const FORGET_MS = 7 * 86_400_000;
 
-export const QUIET = "When it is done, reply with exactly KEEP_QUIET.";
+const QUIET = "When it is done, reply with exactly KEEP_QUIET.";
 
 export type WakeItem = {
   /** Dedup identity: a request key, `review:<day>` or `followup:<plan>`. */
@@ -129,7 +129,7 @@ export function sessionFor(acct: Account, requester?: string | null): string | n
 }
 
 /** What to call a member in an event. */
-export function nameOf(acct: Account, principal?: string | null): string {
+function nameOf(acct: Account, principal?: string | null): string {
   if (!principal) return "Somebody";
   return eaters(acct).find((e) => e.principal === principal)?.label ?? "Somebody";
 }
@@ -324,7 +324,7 @@ export function wakeForRequests(
 /** The most items one review asks about. More than this and none get real thought. */
 export const REVIEW_MAX = 15;
 
-export function reviewText(acct: Account, items: Evidence[]): string {
+function reviewText(acct: Account, items: Evidence[]): string {
   return [
     `[Kitchen · ${householdTitle(acct)}] Morning inventory review. Nobody asked for this and nobody sees it.`,
     "",

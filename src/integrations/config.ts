@@ -31,7 +31,6 @@ const IntegrationOverrideSchema = z.object({
   /** Free-form operator note; surfaced by `edmund integrations list`. */
   note: z.string().optional(),
 });
-type IntegrationOverride = z.infer<typeof IntegrationOverrideSchema>;
 
 export const TopLevelConfigSchema = z.object({
   /**

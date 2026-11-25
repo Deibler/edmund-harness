@@ -109,12 +109,12 @@ const s = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : 
 const obj = (v: unknown): Raw => (isPlain(v) ? v : {});
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
-export function rgb(hex: string): string {
+function rgb(hex: string): string {
   const h = hex.replace(/^#/, "").trim();
   return /^[0-9a-fA-F]{6}/.test(h) ? `#${h.slice(0, 6).toUpperCase()}` : "";
 }
 
-export const STATE_LABELS: Record<string, string> = {
+const STATE_LABELS: Record<string, string> = {
   IDLE: "idle",
   INIT: "starting up",
   PREPARE: "preparing",
@@ -127,7 +127,7 @@ export const STATE_LABELS: Record<string, string> = {
 };
 
 /** Stage ids reported in `stg_cur`, from the community protocol work (ha-bambulab). */
-export const STAGES: Record<number, string> = {
+const STAGES: Record<number, string> = {
   0: "printing",
   1: "auto bed leveling",
   2: "preheating the bed",
@@ -183,7 +183,7 @@ export const STAGES: Record<number, string> = {
   77: "preparing the AMS",
 };
 
-export const SPEEDS: Record<number, string> = {
+const SPEEDS: Record<number, string> = {
   1: "silent",
   2: "standard",
   3: "sport",

@@ -41,13 +41,18 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { type Config, loadConfig } from "../../config/config.ts";
 import { initRegistryFromConfig } from "../../integrations/registry.ts";
+import {
+  END_HOLD_SIGNAL,
+  HOLD_IDLE_MS,
+  ScreenLock,
+  screenLockPath,
+} from "../../sessions/screen-lock.ts";
 import { installLogSinkFromEnv } from "../../util/log-sink.ts";
 import { humanMs, log } from "../../util/log.ts";
-import { protectStdout } from "../stdio-safety.ts";
+import { protectStdout } from "../../util/stdio-safety.ts";
 import type { ToolDef } from "../tools/types.ts";
 import { zodToJsonSchema } from "../zod-to-json.ts";
 import { type AuditEntry, JevGuard } from "./guard.ts";
-import { END_HOLD_SIGNAL, HOLD_IDLE_MS, ScreenLock, screenLockPath } from "./lock.ts";
 import { NativeHelper } from "./native.ts";
 import { sessionPolicy } from "./policy.ts";
 import { requestReader, triggerReader } from "./request.ts";

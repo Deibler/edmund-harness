@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stageRelayMedia } from "../src/bridge/relay-media.ts";
+import { stageRelayMedia } from "../src/relay/relay-media.ts";
 
 describe("stageRelayMedia", () => {
   test("copies image + non-image into recipient sandbox and classifies images", () => {

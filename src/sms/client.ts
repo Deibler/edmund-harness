@@ -17,7 +17,7 @@ import { log } from "../util/log.ts";
  * rather than believing the write.
  */
 
-export type SmsSendOk = {
+type SmsSendOk = {
   ok: true;
   sid: string;
   /** Twilio's own view at accept time — almost always "queued"/"accepted". */
@@ -25,7 +25,7 @@ export type SmsSendOk = {
   segments: number;
 };
 
-export type SmsSendErr = {
+type SmsSendErr = {
   ok: false;
   error: string;
   /** Twilio error code, when the API gave one. */
@@ -48,7 +48,6 @@ export type SmsSendResult = SmsSendOk | SmsSendErr;
  * approved this is the expected outcome of every send, and it is billed.
  */
 export const TWILIO_STOP_ERROR = 21610;
-export const TWILIO_UNREGISTERED_ERROR = 30034;
 
 const PERMANENT_CODES = new Set([
   21211, // invalid 'To' number
@@ -145,37 +144,6 @@ export async function sendSms(params: {
   } finally {
     clearTimeout(timer);
   }
-}
-
-/**
- * Where a message actually ended up, per Twilio.
- *
- * `status` is one of queued/sending/sent/delivered/undelivered/failed. Only
- * `delivered` means it reached a handset; `sent` means it reached the carrier
- * and is where filtering silently eats messages.
- */
-export async function fetchStatus(
-  creds: TwilioCreds,
-  sid: string,
-): Promise<{ status: string; errorCode: number | null } | null> {
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages/${sid}.json`;
-  try {
-    const res = await fetch(url, { headers: { Authorization: authHeader(creds) } });
-    if (!res.ok) return null;
-    const json = (await res.json()) as Record<string, unknown>;
-    const code = json.error_code;
-    return {
-      status: String(json.status ?? "unknown"),
-      errorCode: typeof code === "number" ? code : null,
-    };
-  } catch (err) {
-    log.warn("sms", "status fetch failed", { sid, err: String(err) });
-    return null;
-  }
-}
-
-export function isPermanentCode(code: number | undefined): boolean {
-  return code !== undefined && PERMANENT_CODES.has(code);
 }
 
 // ── Conversations API (group texting) ────────────────────────────────────

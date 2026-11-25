@@ -1,18 +1,18 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "src/main.ts!",
     "src/mcp/server.ts!",
-    "cli/main.ts!",
     "scripts/*.ts!",
-    "dashboard/server/main.ts!",
+    "scripts/*/*.ts!",
+    "scripts/*/*/*.ts!",
     "dashboard/server/scripts/*.ts!",
     "integrations/*/index.ts!",
     "integrations/*/tools.ts!",
     "integrations/*/config.ts!",
     "integrations/*/scripts/*.ts!",
-    "integrations/*/dashboard/main.ts!",
     "tests/**/*.test.ts",
+    "tests/fixtures/*.ts",
+    "integrations/*/test/fixtures/*.ts",
 
     "src/ghost/mcp-server.ts!"
   ],
@@ -24,5 +24,19 @@
     "dashboard/server/**/*.ts",
     "tests/**/*.ts"
   ],
-  "ignoreBinaries": ["tail", "vite"]
+  "ignoreBinaries": [
+    "tail",
+    "vite",
+    "afconvert",
+    "ffmpeg",
+    "ffprobe",
+    "osascript",
+    "pgrep",
+    "pkill",
+    "plutil",
+    "say",
+    "sips",
+    "swiftc"
+  ],
+  "ignoreDependencies": ["sharp"]
 }

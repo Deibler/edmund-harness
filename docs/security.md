@@ -36,7 +36,7 @@ accepts what that means.
 
 | Tier | Who | Gets |
 |---|---|---|
-| Operator | `[security].operator_handles`, or `[alerts].operator_handle`; also the mirror, trading and sub-agent surfaces | Every tool |
+| Operator | `[security].operator_handles`, or `[alerts].operator_handle`; also the mirror and sub-agent surfaces | Every tool |
 | Contact | Any other allowlisted handle, and every group, under `contact_tier = "contact"` | Everything that stays inside this conversation. Not: messaging other people or errands, the contact list, cross chat or per person recall scope, writes to `SOUL.md` or domain notes, `memory_search` over every person file, publishing or installing skills |
 | Guest | Campaign key or vouched | The conversational surface only |
 
@@ -54,8 +54,7 @@ where every allowlisted contact was the operator.
   number no matter what the model decides. Skill consent withholds the skill
   body rather than asking the model to please ask first.
 - **Money has limits in code.** Generation goes through a per person wallet
-  that refuses when the balance cannot cover it. The trading integration's
-  position and order limits live in its risk module, not in the persona.
+  that refuses when the balance cannot cover it.
 - **Sends are verified against the store.** A send that lands in the wrong
   chat is detected from `chat.db` and treated as a failure, and the bridge
   refuses to send when the resolved chat is not the addressed one.
@@ -72,7 +71,7 @@ where every allowlisted contact was the operator.
   token; `edmund portal revoke <handle>` invalidates every link issued so far
   for that person and the next message carries a new one. Erasing a
   conversation from the portal requires typing a word that the server checks.
-- **The public listener** serves only the portal, payment and annotation
+- **The public listener** serves only the portal and payment
   routes and answers 404 to everything else.
 - **Files are private to your account.** Both processes set a private umask
   and tighten `data/`, `persona/`, `sandbox/`, `config.toml` and `.env` at

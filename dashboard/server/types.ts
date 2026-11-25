@@ -209,6 +209,7 @@ export type ActivityEvent =
     }
   | { kind: "error"; ts: number; tag: string | null; text: string };
 
+/** @public Imported by the operator dashboard (dashboard/web), which knip does not analyse. */
 export type BgJobDto = {
   id: string;
   sessionKey: string;
@@ -225,22 +226,6 @@ export type BgJobDto = {
   resultSummary: string | null;
   errorText: string | null;
   wakeFiredAt: number | null;
-};
-
-export type AnnotationDto = {
-  id: string;
-  sessionKey: string;
-  sessionLabel: string;
-  senderHandle: string;
-  imagePath: string;
-  instruction: string;
-  createdAtMs: number;
-  expiresAtMs: number;
-  usedAtMs: number | null;
-  submittedAtMs: number | null;
-  submittedJson: string | null;
-  tunnelPid: number | null;
-  status: "pending" | "answered" | "expired" | "used";
 };
 
 export type SkillDto = {
@@ -305,17 +290,6 @@ export type PoolStatsDto = {
   idleEvictions: number;
   lruEvictions: number;
   windowStartMs: number;
-};
-
-export type PeopleRunDto = {
-  id: number;
-  sessionKey: string;
-  label: string;
-  ranAtMs: number;
-  dryRun: boolean;
-  filesTouched: string[];
-  summary: string;
-  errorText: string | null;
 };
 
 export type ContactDto = {

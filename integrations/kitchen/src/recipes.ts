@@ -119,7 +119,7 @@ export function inSeason(r: Recipe, month: number): boolean {
 }
 
 /** Dishes that answer "what are we eating", as opposed to sides and sweets. */
-export const MEAL_CATS = new Set(["dinner", "lunch", "compound"]);
+const MEAL_CATS = new Set(["dinner", "lunch", "compound"]);
 
 /**
  * True when one batch is meant to be eaten for days. Only meals qualify: a tray
@@ -135,7 +135,7 @@ export type CookedSeed = { date: string; meal: string };
  * The shared meal catalog, which lives with the skill. Resolved from this file's
  * location rather than `$HOME`, which launchd jobs do not reliably have.
  */
-export function catalogPath(): string {
+function catalogPath(): string {
   return (
     process.env.KITCHEN_RECIPES ??
     join(import.meta.dir, "..", "..", "..", "skills", "kitchen", "recipes.json")
@@ -241,7 +241,7 @@ export function menu(account: string): Recipe[] {
   return offered(account, [...recipes, ...extra]);
 }
 
-export type Need = {
+type Need = {
   id: string;
   name: string;
   want: number | null;

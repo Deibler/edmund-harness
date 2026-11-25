@@ -32,8 +32,6 @@ import { consentState } from "../../../src/skills/consent.ts";
 import { categoryOf, readDb } from "../../../src/skills/installer.ts";
 import { type SkillGroup, skillGroupOf } from "../../../src/skills/provenance.ts";
 
-export type { SkillGroup };
-
 export type PortalSkill = {
   name: string;
   description: string;

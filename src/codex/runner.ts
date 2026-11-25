@@ -1,25 +1,23 @@
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { type InlineImage, prepareInlineImages } from "../claude/inline-images.ts";
-import {
-  ensureMcpConfig,
-  envelopeNeedsBrowser,
-  pickMcpConfig,
-  toolEnv,
-} from "../claude/mcp-config.ts";
-import { personaFingerprint } from "../claude/persona.ts";
 import type { RunInput, RunResult, RunUsage } from "../claude/runner.ts";
 import { type ModelActivity, activityDetailForTool, textDeltaForBlock } from "../claude/worker.ts";
 import type { Config } from "../config/config.ts";
 import { deriveGuestLoadout } from "../guests/access.ts";
 import { buildRunSystemPrompt } from "../model/context.ts";
+import { classifyError } from "../model/failure-class.ts";
+import { type InlineImage, prepareInlineImages } from "../model/inline-images.ts";
+import {
+  ensureMcpConfig,
+  envelopeNeedsBrowser,
+  pickMcpConfig,
+  toolEnv,
+} from "../model/mcp-config.ts";
+import { personaFingerprint } from "../model/persona.ts";
 import { type ModelEffort, modelProfileForSession } from "../model/profile.ts";
-import { orchestratorForSession } from "../orchestrators/registry.ts";
-import { classifyError } from "../recovery/classify.ts";
-import { trackTurnWorker } from "../recovery/turn-workers.ts";
+import { trackTurnWorker } from "../model/turn-workers.ts";
 import { hostAccess, tierForSessionKey } from "../security/policy.ts";
-import { type SessionKey, isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { humanCount, humanMs, log, snippet } from "../util/log.ts";
 import { codexMcpConfigArgs, tomlValue } from "./config.ts";
@@ -227,20 +225,16 @@ export async function runCodex(
   const mcpConfig = isGuest
     ? '{"mcpServers":{}}'
     : pickMcpConfig(configs, {
-        trading: isTradingSession(input.sessionKey),
         tier: tierForSessionKey(config, input.sessionKey),
         browser: needsBrowser,
       });
-  const orchestrator = orchestratorForSession(input.sessionKey, config);
-  const orchestratorModel =
-    orchestrator && !orchestrator.builtin && orchestrator.model ? orchestrator.model : null;
-  const profile = modelProfileForSession(input.sessionKey, config, orchestratorModel);
+  const profile = modelProfileForSession(input.sessionKey, config);
   // Effort is resolved per BACKEND, not per session. modelProfileForSession
   // answers with `[claude] effort`, which is tuned for Opus; a reasoning model
   // spends the same word very differently, and inheriting "medium" quietly
   // ran gpt-5.6-sol well below what it is capable of.
   const effort = config.codex.effort ?? profile.effort;
-  const systemPrompt = buildRunSystemPrompt(input, config, orchestrator);
+  const systemPrompt = buildRunSystemPrompt(input, config);
 
   const imageCache = join(input.sandboxPath, ".inline-images");
   if (input.images?.length) mkdirSync(imageCache, { recursive: true });

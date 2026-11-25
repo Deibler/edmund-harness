@@ -37,7 +37,7 @@ export const PORTAL_TABS = [
   "privacy",
 ] as const;
 
-export type PortalTab = (typeof PORTAL_TABS)[number];
+type PortalTab = (typeof PORTAL_TABS)[number];
 
 export type LinkResult = { ok: true; linkPath: string } | { ok: false; reason: string };
 

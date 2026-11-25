@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PERSONA_DIR } from "../claude/persona.ts";
+import { PERSONA_DIR } from "../model/persona.ts";
 import { atomicWriteFileSync } from "../util/atomic-write.ts";
 import { easternDate } from "../util/clock.ts";
 import { archiveSelfFile } from "./archive.ts";

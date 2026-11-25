@@ -7,12 +7,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  CALL_SERVICE,
-  anyVoiceLive,
-  clearVoiceBindings,
-  voiceBindingFor,
-} from "../src/calls/binding.ts";
 import { CallManager, type CallManagerDeps } from "../src/calls/manager.ts";
 import type { Permission } from "../src/calls/policy.ts";
 import { CallStore } from "../src/calls/store.ts";
@@ -25,6 +19,12 @@ import type {
   ProviderEvent,
 } from "../src/calls/types.ts";
 import type { InboundMessage } from "../src/imessage/types.ts";
+import {
+  CALL_SERVICE,
+  anyVoiceLive,
+  clearVoiceBindings,
+  voiceBindingFor,
+} from "../src/sessions/call-binding.ts";
 import { normalizeHandle } from "../src/sessions/key.ts";
 
 const DANA = "+15550100001";

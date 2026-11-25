@@ -1,23 +1,3 @@
-/**
- * Helper for indexing one-off artifacts into the recall store from
- * places other than the periodic Indexer — generated images/videos,
- * sandbox text files, etc.
- *
- * Designed to be safe to call from the bg-runner subprocess: opens its
- * own VectorStore handle (bun:sqlite WAL allows concurrent writers),
- * uses the configured embedding provider, swallows failures so
- * indexing never blocks the caller's primary work.
- *
- * Three convenience entrypoints:
- *
- *   - `indexGeneratedMedia(...)` — used by image/video/audio generation
- *     tools. Embeds the prompt + media-type tag.
- *   - `indexSandboxFile(...)` — used by the sandbox-artifact walker.
- *     Embeds file content (truncated) + path + mtime.
- *   - `indexArtifact(...)` — low-level, for custom callers.
- */
-
-import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Config } from "../config/config.ts";
 import type { ChatDb } from "../imessage/db.ts";
@@ -170,16 +150,6 @@ function resolveChatGuid(args: IndexArtifactArgs): string | null {
   try {
     const guids = chatGuidsForSession(args.sessionKey, args.chatDb, args.contacts);
     return guids[0] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** Re-exported for the sandbox-artifact walker (next task). */
-function fileMtimeMs(path: string): number | null {
-  try {
-    if (!existsSync(path)) return null;
-    return statSync(path).mtimeMs;
   } catch {
     return null;
   }

@@ -54,7 +54,7 @@ about what should be different, which is what the three failed guesses were.
 
 ## Failures are classified, and each class has a structural repair
 
-`src/recovery/classify.ts` turns a raw error string into one of ten named
+`src/model/failure-class.ts` turns a raw error string into one of ten named
 classes. It is pure, table driven, and ordered so that specific patterns match
 before generic ones. The patterns are loosely anchored on purpose, so they
 survive whatever framing the selected CLI wraps the underlying error in.
@@ -63,7 +63,7 @@ Adding a failure mode is one row in the classifier table and one row in the
 descriptions table, and the tests are table driven so a regression in either is
 loud.
 
-Each class maps to a healer in `src/recovery/healers.ts` that applies a
+Each class maps to a healer in `src/claude/healers.ts` that applies a
 structural fix before anything is re-invoked:
 
 | Class | Repair |
@@ -174,8 +174,8 @@ you have not written yet.
 
 | File | What it holds |
 |---|---|
-| `src/recovery/classify.ts` | The ten classes and their patterns |
-| `src/recovery/healers.ts` | One structural repair per class |
+| `src/model/failure-class.ts` | The ten classes and their patterns |
+| `src/claude/healers.ts` | One structural repair per class |
 | `src/recovery/sweeper.ts` | Finding stuck conversations |
 | `src/recovery/turn.ts` | The recovery envelope and replay bookkeeping |
 | `src/recovery/outbox-drainer.ts` | Delivery on its own clock |

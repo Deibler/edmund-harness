@@ -119,7 +119,7 @@ export function offerBrief(c: Caller, d: Decision, asks: string[] = []): string 
 
 /* ── the checklist ───────────────────────────────────────────────────────── */
 
-export type Step = {
+type Step = {
   id: "shelves" | "people" | "site" | "cooked";
   done: boolean;
   /** What this step is for, in plain words. */
@@ -297,7 +297,7 @@ export const HOW_IT_WORKS = [
  * and what it asks for is decided from the ledger when it fires, so one that
  * is no longer needed ends quietly.
  */
-export const CHECKINS = [
+const CHECKINS = [
   { kind: "dinner", day: 1, hour: 16, minute: 0 },
   { kind: "receipt", day: 4, hour: 17, minute: 30 },
   { kind: "recap", day: 7, hour: 16, minute: 0 },

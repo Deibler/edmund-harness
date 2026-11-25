@@ -11,11 +11,13 @@ import { join } from "node:path";
 import { HashEmbedProvider } from "../src/memory/embed-provider.ts";
 import { type IndexRow, VectorStore, normalize } from "../src/memory/vector-store.ts";
 
-function tempStore(): { store: VectorStore; cleanup: () => void } {
+function tempStore(): { store: VectorStore; path: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "recall-test-"));
-  const store = new VectorStore(join(dir, "recall.sqlite"));
+  const path = join(dir, "recall.sqlite");
+  const store = new VectorStore(path);
   return {
     store,
+    path,
     cleanup: () => {
       store.close();
       rmSync(dir, { recursive: true, force: true });
@@ -413,8 +415,7 @@ describe("the search cache", () => {
   });
 
   test("a hit whose row another process deleted is dropped, not returned blank", async () => {
-    const { store, cleanup } = tempStore();
-    const path = (store as unknown as { path: string }).path;
+    const { store, path, cleanup } = tempStore();
     try {
       await twelve(store);
       store.search(await embed("note 3"), { scope: { kind: "global" }, limit: 1 });

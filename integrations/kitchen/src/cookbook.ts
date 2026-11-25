@@ -14,7 +14,7 @@ import { accountDir } from "./accounts.ts";
 import { nowIso, slug } from "./store.ts";
 import { safeId } from "./util.ts";
 
-export type Ingredient = {
+type Ingredient = {
   /** Display line, e.g. "Yellow onion". */
   name: string;
   /** Display amount, e.g. "1 medium, diced". Free text: recipe amounts are prose. */
@@ -24,7 +24,7 @@ export type Ingredient = {
   note?: string | null;
 };
 
-export type Step = {
+type Step = {
   n: number;
   title: string;
   body: string;
@@ -75,7 +75,7 @@ function dir(account: string): string {
  * URLs and from public site callbacks, so a traversal is refused here rather
  * than at each caller.
  */
-export function recipePath(account: string, id: string): string {
+function recipePath(account: string, id: string): string {
   if (!safeId(id)) {
     throw new Error(`"${id}" is not a recipe id: lowercase letters, digits and dashes only.`);
   }

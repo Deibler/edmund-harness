@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { relativeAgo, relay } from "../../bridge/relay.ts";
 import { CronStore } from "../../cron/store.ts";
 import {
   getChatDisplayName,
   getGroupParticipants,
   groupsForHandle,
 } from "../../imessage/participants.ts";
+import { relativeAgo, relay } from "../../relay/relay.ts";
 import { chatIdFromKey, isGroupSession } from "../../sessions/key.ts";
 import { StateStore } from "../../sessions/store.ts";
 import type { ToolContext } from "../context.ts";
@@ -17,7 +17,7 @@ import type { ToolDef } from "./types.ts";
  * `list_contacts` — what the model can see (DM contacts, groupchats the
  * caller is in with Edmund).
  * `send_message`  — relay a text to one of those targets. Routes through
- * the recipient's session via cron-fire; see bridge/relay.ts.
+ * the recipient's session via cron-fire; see relay/relay.ts.
  *
  * Design note: tool descriptions intentionally do not mention "the other
  * person also has a bot." From the calling bot's POV this looks like

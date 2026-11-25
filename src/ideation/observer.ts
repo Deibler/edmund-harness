@@ -29,7 +29,7 @@ import type { IdeationStore } from "./store.ts";
  */
 
 /** Quiet for this long after the last reply before the ideator looks. */
-export const SETTLE_MS = 20 * 60_000;
+const SETTLE_MS = 20 * 60_000;
 export { RUN_INTERVAL_MS } from "./pacing.ts";
 
 export type ObserverDeps = {
@@ -44,7 +44,7 @@ export type ObserverDeps = {
 };
 
 /** `people = ["*"]`: everyone in a one-to-one iMessage chat who isn't a guest. */
-export const EVERYONE = "*";
+const EVERYONE = "*";
 
 /**
  * Whether this conversation is one the ideator may look at. The builder makes

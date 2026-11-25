@@ -3,7 +3,6 @@ import type { GuestCampaign, GuestTier } from "../guests/access.ts";
 import { resolveDmTier, scanForCampaignKey } from "../guests/access.ts";
 import type { GuestStore } from "../guests/store.ts";
 import type { InboundMessage } from "../imessage/types.ts";
-import { allInvocationNames } from "../orchestrators/registry.ts";
 import { normalizeHandle } from "../sessions/key.ts";
 
 export type Gate =
@@ -64,10 +63,8 @@ export function gateInbound(msg: InboundMessage, config: Config, guests?: GuestG
       (config.allowlist.groups.length === 0 && config.security?.open_group_allowlist === true) ||
       config.allowlist.groups.includes(msg.chatGuid);
     if (!registered) return { allow: false, reason: "group-not-registered" };
-    // Any orchestrator's invocation opens the gate — "edmund …" and
-    // "desmond …" both pass; the router downstream picks WHO answers.
-    // With no [[orchestrators]] configured this is exactly identity.names.
-    if (!isAssistantMentioned(msg.text, allInvocationNames(config))) {
+    // Any of the assistant's names opens the gate.
+    if (!isAssistantMentioned(msg.text, config.identity.names)) {
       return { allow: false, reason: "not-mentioned" };
     }
     return { allow: true };

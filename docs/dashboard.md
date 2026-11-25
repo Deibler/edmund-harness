@@ -17,8 +17,8 @@ this Mac only by default; `0.0.0.0` makes it reachable from your LAN. Login
 attempts are throttled per client, the cookie is SameSite Strict, mutating
 requests must come from the dashboard's own origin, and request bodies are
 capped before they are read. A second
-loopback listener on `[dashboard].public_port` (4749) serves only the portal,
-payment and annotation routes and answers 404 to everything else; that is the
+loopback listener on `[dashboard].public_port` (4749) serves only the portal
+and payment routes and answers 404 to everything else; that is the
 one a tunnel should point at.
 
 ## Auth
@@ -41,10 +41,9 @@ PIN.
 | Brown nose | Proactive state per session: queued fires, hours, enable, disable, invoke |
 | Recall | Index stats, reindex |
 | People | Maintainer state |
-| Annotate | Image annotation links and revocation |
 | Media | Generated and received media by session |
 | Logs | Live tail over server sent events |
-| Orchestrator | Model per subsystem, named orchestrators, persona file editor |
+| Orchestrator | Model per subsystem, the names the persona answers to, persona file editor |
 | Recovery | Stuck sessions, sweep, per session reset |
 | Alerts | Operator alerts, mute and unmute |
 | Skills | Installed skills, approve, disable, delete |

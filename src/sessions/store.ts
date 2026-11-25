@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { openDb } from "../db/open.ts";
-import type { SessionKey } from "./key.ts";
+import { type SessionKey, isRetiredSession } from "./key.ts";
 
 export type SessionRecord = {
   sessionKey: SessionKey;
@@ -146,9 +146,9 @@ export class StateStore {
         attempt_count    INTEGER NOT NULL DEFAULT 1
       );
       -- Per-inbound routing record: which SESSION a given chat.db row was
-      -- routed to live. The edmund DM and the trading (Wolf) DM share one
-      -- physical iMessage thread, so chat-scoped recovery/catch-up can't tell
-      -- them apart from chatGuid alone. This records the live decision so a
+      -- routed to live. More than one session can sit on one physical
+      -- iMessage thread, so chat-scoped recovery/catch-up can't tell them
+      -- apart from chatGuid alone. This records the live decision so a
       -- Wolf message is never later replayed into the edmund session (and
       -- vice-versa). Bounded by periodic prune (keep ~30 days).
       CREATE TABLE IF NOT EXISTS message_routing (
@@ -157,20 +157,6 @@ export class StateStore {
         at_ms        INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_routing_at ON message_routing(at_ms);
-      -- Outbound attribution: which ORCHESTRATOR sent a given reply chunk.
-      -- iMessage assigns the message GUID server-side, so we can't key by
-      -- row; instead we record (chat, exact chunk text, send time) and the
-      -- visibility filter matches is_from_me history rows by text + a time
-      -- window. Only written when [[orchestrators]] are configured. Pruned
-      -- alongside message_routing.
-      CREATE TABLE IF NOT EXISTS sent_attribution (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_guid    TEXT NOT NULL,
-        orchestrator TEXT NOT NULL,
-        text         TEXT NOT NULL,
-        at_ms        INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_sent_attr_chat ON sent_attribution(chat_guid, at_ms);
       -- Durable inbound ack: every accepted row gets a row here BEFORE the
       -- watcher cursor advances, and it's deleted only once a turn has
       -- actually answered it (handleBatch clears <= the max answered rowId).
@@ -185,7 +171,7 @@ export class StateStore {
         created_ms   INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_inbound_ack_session ON inbound_ack(session_key, row_id);
-      -- Relay depth (bridge/relay.ts) of the turn each session is running:
+      -- Relay depth (relay/relay.ts) of the turn each session is running:
       -- runModel writes it as the turn starts, and the relay tools read it
       -- when the model calls them. A warm worker serves many turns, so the
       -- depth cannot ride in its spawn environment.
@@ -300,35 +286,6 @@ export class StateStore {
   /** Drop routing records older than `beforeMs` (housekeeping). */
   pruneRouting(beforeMs: number): void {
     this.q("DELETE FROM message_routing WHERE at_ms < ?").run(beforeMs);
-    this.q("DELETE FROM sent_attribution WHERE at_ms < ?").run(beforeMs);
-  }
-
-  /** Record which orchestrator sent each delivered reply chunk. */
-  recordSentAttribution(
-    chatGuid: string,
-    orchestrator: string,
-    chunks: string[],
-    atMs: number = Date.now(),
-  ): void {
-    const stmt = this.q(
-      "INSERT INTO sent_attribution (chat_guid, orchestrator, text, at_ms) VALUES (?, ?, ?, ?)",
-    );
-    for (const text of chunks) {
-      if (text.trim().length === 0) continue;
-      stmt.run(chatGuid, orchestrator, text, atMs);
-    }
-  }
-
-  /** Outbound attributions for one chat since `sinceMs` (visibility filter). */
-  attributionsFor(
-    chatGuid: string,
-    sinceMs: number,
-  ): { orchestrator: string; text: string; atMs: number }[] {
-    const rows = this.q(
-      `SELECT orchestrator, text, at_ms FROM sent_attribution
-       WHERE chat_guid = ? AND at_ms >= ? ORDER BY at_ms DESC LIMIT 2000`,
-    ).all(chatGuid, sinceMs) as { orchestrator: string; text: string; at_ms: number }[];
-    return rows.map((r) => ({ orchestrator: r.orchestrator, text: r.text, atMs: r.at_ms }));
   }
 
   getCursor(name: string, fallback: number): number {
@@ -669,7 +626,7 @@ export class StateStore {
 
   listSessions(): SessionRecord[] {
     const rows = this.q(`${SESSION_SELECT_COLS} ORDER BY last_inbound_ms DESC`).all();
-    return rows as SessionRecord[];
+    return (rows as SessionRecord[]).filter((s) => !isRetiredSession(s.sessionKey));
   }
 
   /**
@@ -685,7 +642,7 @@ export class StateStore {
          WHERE last_inbound_ms > last_outbound_ms AND last_inbound_ms < ?
          ORDER BY last_inbound_ms DESC`,
     ).all(before);
-    return rows as SessionRecord[];
+    return (rows as SessionRecord[]).filter((s) => !isRetiredSession(s.sessionKey));
   }
 
   /**

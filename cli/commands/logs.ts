@@ -48,7 +48,7 @@ import {
   threadColors,
   workingLine,
 } from "../log-story.ts";
-import { DAEMON_LOG, DASHBOARD_LOG, FISHING_LOG, TRADING_LOG } from "../services/paths.ts";
+import { DAEMON_LOG, DASHBOARD_LOG, FISHING_LOG } from "../services/paths.ts";
 import { color, color256, fail, print } from "../ui.ts";
 
 type Level = "debug" | "info" | "warn" | "error";
@@ -63,11 +63,9 @@ const W_EVENT = 22;
 export async function logsCommand(p: Parsed): Promise<void> {
   const path = hasFlag(p, "fishing")
     ? FISHING_LOG
-    : hasFlag(p, "trading")
-      ? TRADING_LOG
-      : hasFlag(p, "dashboard")
-        ? DASHBOARD_LOG
-        : DAEMON_LOG;
+    : hasFlag(p, "dashboard")
+      ? DASHBOARD_LOG
+      : DAEMON_LOG;
   const follow = hasFlag(p, "follow", "f");
   // The story view reads the daemon's own lines; other logs keep the raw view.
   const names = nameLookup();
@@ -478,7 +476,7 @@ const SCOPE_FAMILIES: Array<[RegExp, (s: string) => string]> = [
   ],
   [/^(tool|mcp|agent|bg|background|skills|integrations|generation)/, color.green],
   [/^(cron|refresh|triggers|recovery|sweeper|boot|catchup|evals|daily)/, color.yellow],
-  [/^(ghost|brown-nose|person-maintainer|proactive|annotate)/, color.magenta],
+  [/^(ghost|brown-nose|person-maintainer|proactive)/, color.magenta],
   [/^(alert|alerts)$/, color.red],
 ];
 

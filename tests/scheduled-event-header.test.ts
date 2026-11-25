@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { scheduledEventHeader } from "../src/cron/fire.ts";
+import { scheduledEventHeader } from "../src/scheduler/fire.ts";
 
 describe("scheduledEventHeader", () => {
   test("an evening fire keeps its own date", () => {
@@ -20,7 +20,7 @@ describe("scheduledEventHeader", () => {
   });
 
   test("the fired envelope uses it", () => {
-    const fire = readFileSync(join(import.meta.dir, "../src/cron/fire.ts"), "utf8");
+    const fire = readFileSync(join(import.meta.dir, "../src/scheduler/fire.ts"), "utf8");
     expect(fire).toContain("scheduledEventHeader(job.nextFireMs, now, latenessNote),");
     expect(fire).not.toContain("fired=${new Date(now).toISOString()}");
   });

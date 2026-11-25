@@ -10,7 +10,7 @@ import { zipEntries, zipEntry } from "./threemf.ts";
  * parsing a model part of tens of megabytes would otherwise hold the daemon.
  */
 
-export const VIEWER_MAX_TRIANGLES = 150_000;
+const VIEWER_MAX_TRIANGLES = 150_000;
 
 export type ViewerInfo = {
   version: 1;

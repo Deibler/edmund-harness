@@ -33,7 +33,7 @@ import type { Tray } from "./report.ts";
  * window, and refuses anything that logs out, unbinds or pauses.
  */
 
-export const CONNECT_APP = "/Applications/Bambu Connect.app";
+const CONNECT_APP = "/Applications/Bambu Connect.app";
 const PROCESS_NAME = "Bambu Connect";
 const SOURCE = join(import.meta.dir, "..", "native", "connect.swift");
 
@@ -51,7 +51,7 @@ export type AxNode = {
 
 /* ── reading the screens ──────────────────────────────────────────────── */
 
-export function findAll(n: AxNode, pred: (n: AxNode) => boolean, out: AxNode[] = []): AxNode[] {
+function findAll(n: AxNode, pred: (n: AxNode) => boolean, out: AxNode[] = []): AxNode[] {
   if (pred(n)) out.push(n);
   for (const c of n.children ?? []) findAll(c, pred, out);
   return out;
@@ -81,7 +81,7 @@ function windows(tree: AxNode): AxNode[] {
 }
 
 /** The open dialog and its title. Semi dialogs put an id'd heading inside the dialog group. */
-export function openModal(tree: AxNode): { title: string; node: AxNode } | null {
+function openModal(tree: AxNode): { title: string; node: AxNode } | null {
   for (const w of windows(tree)) {
     const dialog = find(w, (n) =>
       (n.children ?? []).some((c) => c.role === "AXHeading" && c.id === "semi-modal-title"),
@@ -300,7 +300,7 @@ export function mayPress(tree: AxNode, n: AxNode): string | null {
  * The compiled helper for the current source, built on first use. Builds go
  * to a temporary name and are renamed into place.
  */
-export function helperBinary(): string {
+function helperBinary(): string {
   const source = readFileSync(SOURCE);
   const hash = createHash("sha256").update(source).digest("hex").slice(0, 12);
   const dir = join(homedir(), "Library", "Caches", "edmund-harness", "printer");
@@ -352,7 +352,7 @@ export type SendOutcome = { ok: boolean; problems: string[]; seen: string };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** How long an import may take: a minute, plus ten seconds a megabyte, up to six minutes. */
-export function importWaitMs(bytes: number): number {
+function importWaitMs(bytes: number): number {
   return Math.min(360_000, 60_000 + (bytes / 1_000_000) * 10_000);
 }
 

@@ -40,7 +40,7 @@ import { BED_TYPES, type PlateInfo, readSliced, zipEntry } from "./threemf.ts";
  * that hangs forever while the Mac's console is locked.
  */
 
-export type FilamentChoice = { type: string; color: string; infoIdx?: string };
+type FilamentChoice = { type: string; color: string; infoIdx?: string };
 
 export type SliceRequest = {
   slicerPath: string;
@@ -66,7 +66,7 @@ export type SliceRequest = {
   timeoutMs?: number;
 };
 
-export type SliceReport = {
+type SliceReport = {
   /** How much mesh went in and how much the print file carries, and any simplifying done. */
   mesh?: MeshReport;
   /** What the slicer warned about, as Bambu Studio would show it (overhangs needing support, and so on). */
@@ -176,7 +176,7 @@ const MODEL_EXT = [".stl", ".3mf", ".step", ".stp", ".obj"];
 const PART_EXT = [".stl", ".obj"];
 
 /** Where a sliced file's report lives, so later previews can show what the slicer said. */
-export function sidecarPath(file: string): string {
+function sidecarPath(file: string): string {
   return `${file.replace(/(\.gcode)?\.3mf$/i, "")}.slice.json`;
 }
 

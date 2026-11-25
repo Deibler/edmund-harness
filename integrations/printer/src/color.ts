@@ -4,9 +4,9 @@
  * question, so distances are CIEDE2000 in Lab, not RGB.
  */
 
-export type Lab = { L: number; a: number; b: number };
+type Lab = { L: number; a: number; b: number };
 
-export function hexToRgb(hex: string): [number, number, number] | null {
+function hexToRgb(hex: string): [number, number, number] | null {
   const h = hex.replace(/^#/, "");
   if (!/^[0-9a-fA-F]{6}/.test(h)) return null;
   return [
@@ -16,7 +16,7 @@ export function hexToRgb(hex: string): [number, number, number] | null {
   ];
 }
 
-export function hexToLab(hex: string): Lab | null {
+function hexToLab(hex: string): Lab | null {
   const rgb = hexToRgb(hex);
   if (!rgb) return null;
   const lin = rgb.map((c) => {
@@ -37,7 +37,7 @@ const rad = (d: number) => (d * Math.PI) / 180;
 const deg = (r: number) => (r * 180) / Math.PI;
 
 /** CIEDE2000 colour difference. Under ~2 is invisible, under ~10 reads as the same colour. */
-export function deltaE2000(x: Lab, y: Lab): number {
+function deltaE2000(x: Lab, y: Lab): number {
   const C1 = Math.hypot(x.a, x.b);
   const C2 = Math.hypot(y.a, y.b);
   const Cm = (C1 + C2) / 2;

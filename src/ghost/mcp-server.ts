@@ -16,7 +16,7 @@ import { writeFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { protectStdout } from "../mcp/stdio-safety.ts";
+import { protectStdout } from "../util/stdio-safety.ts";
 import { type TimeGuard, parseEasternWallClock, validateFireTime } from "./mcp-server-validate.ts";
 
 const DECISION_PATH = process.env.GHOST_DECISION_PATH;

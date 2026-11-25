@@ -5,7 +5,7 @@
  * had written to him for 72 hours, and the next turn started cold.
  */
 import { describe, expect, test } from "bun:test";
-import { isSessionStale } from "../src/boot/banner.ts";
+import { isSessionStale } from "../src/sessions/staleness.ts";
 
 const hours = (h: number) => Date.now() - h * 3_600_000;
 

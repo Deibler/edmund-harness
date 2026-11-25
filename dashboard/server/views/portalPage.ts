@@ -12,8 +12,8 @@
 
 import type { CronJob } from "../../../src/cron/types.ts";
 import type { ActiveHoursWindow } from "../../../src/ghost/prefs.ts";
+import { isBrownNoseEvent } from "../../../src/ghost/queue.ts";
 import type { PortalIdeas } from "../../../src/ideation/portal.ts";
-import { isBrownNoseEvent } from "../../../src/proactive/queue.ts";
 import type {
   PortalActivity,
   PortalActivityRow,
@@ -21,6 +21,7 @@ import type {
 } from "../services/portalCredits.ts";
 import type { PortalAnalytics, PortalFile } from "../services/portalData.ts";
 
+/** @public Imported by the portal web app (dashboard/user-web), which knip does not analyse. */
 export type { PortalActivity, PortalActivityRow, PortalCredits };
 
 export type PortalMediaItem = {
@@ -57,9 +58,8 @@ export type PortalPageData = {
   ideas: PortalIdeas;
 };
 
-export type { PortalIdeas };
-
-/** One row of the Skills tab. Mirrors services/portalSkills.ts. */
+/** One row of the Skills tab. Mirrors services/portalSkills.ts.
+ *  @public Imported by the portal web app (dashboard/user-web), which knip does not analyse. */
 export type SkillGroup = "yours" | "public" | "curated" | "system";
 export type PortalSkill = {
   name: string;

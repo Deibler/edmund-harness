@@ -24,19 +24,6 @@ defaults: {}
 
 integrations:
   # ─────────────────────────────────────────────────────────────────────────
-  # trading — Quant, the autonomous Robinhood sub-persona.
-  # Real money. Reachable ONLY from the `trading:` session namespace, and the
-  # eligible handles come from [trading].handles in config.toml (kept there
-  # because that file is gitignored and those are live phone numbers).
-  # Code-enforced risk limits live in integrations/trading/src/risk.ts.
-  # ─────────────────────────────────────────────────────────────────────────
-  trading:
-    enabled: false
-    note: >-
-      Disabled until the Robinhood agentic account number and the one-time MCP
-      OAuth are in place. See integrations/trading/README.md go-live checklist.
-
-  # ─────────────────────────────────────────────────────────────────────────
   # mirror — the smart mirror channel (voice in, speech + glass out).
   # A conversational medium, not a tool surface: it receives the host's
   # channel capabilities (pipeline, interrupt, lifecycle, deliverer).

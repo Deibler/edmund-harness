@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
+import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "../model/direct-env.ts";
 import { log } from "../util/log.ts";
-import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "./direct-env.ts";
 
 /**
  * Shared one-shot `claude -p` runner for the harness's satellite model

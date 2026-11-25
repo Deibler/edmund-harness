@@ -22,7 +22,7 @@ import { MeshoptSimplifier } from "meshoptimizer";
  */
 
 export const MAX_TRIANGLES = 300_000;
-export const MAX_DEVIATION_MM = 0.05;
+const MAX_DEVIATION_MM = 0.05;
 
 export type Mesh = { positions: Float32Array; indices: Uint32Array };
 
@@ -105,7 +105,7 @@ function weld(corners: Float32Array): Mesh {
   return { positions: new Float32Array(positions), indices };
 }
 
-export function readStl(buf: Buffer): Mesh {
+function readStl(buf: Buffer): Mesh {
   const n = binaryStlCount(buf);
   if (n !== null) {
     const corners = new Float32Array(n * 9);
@@ -122,7 +122,7 @@ export function readStl(buf: Buffer): Mesh {
   return weld(new Float32Array(values));
 }
 
-export function writeStl(mesh: Mesh): Buffer {
+function writeStl(mesh: Mesh): Buffer {
   const n = mesh.indices.length / 3;
   const buf = Buffer.alloc(84 + n * 50);
   buf.write("edmund-harness simplified", 0, "latin1");
@@ -157,7 +157,7 @@ export function writeStl(mesh: Mesh): Buffer {
 }
 
 /** An OBJ's geometry, or null when it carries materials or vertex colors that an STL would lose. */
-export function readObj(text: string): Mesh | null {
+function readObj(text: string): Mesh | null {
   if (/^usemtl\s/m.test(text) || /^v\s+\S+\s+\S+\s+\S+\s+\S+/m.test(text)) return null;
   const positions: number[] = [];
   const indices: number[] = [];
@@ -318,7 +318,7 @@ export function meshBlocks(xml: string): MeshBlock[] {
   return blocks;
 }
 
-export function meshXml(mesh: Mesh, paint?: string[]): string {
+function meshXml(mesh: Mesh, paint?: string[]): string {
   const out: string[] = ["<mesh>\n<vertices>\n"];
   const p = mesh.positions;
   for (let i = 0; i < p.length; i += 3) {

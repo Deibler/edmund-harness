@@ -9,14 +9,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { buildEnvelope } from "../src/channels/envelope.ts";
+import type { SessionPipeline } from "../src/channels/pipeline.ts";
 import {
   entryToInbound,
   parsePendingLine,
   pendingToInbound,
   toPendingEntry,
-} from "../src/bridge/session-queue.ts";
-import { buildEnvelope } from "../src/channels/envelope.ts";
-import type { SessionPipeline } from "../src/channels/pipeline.ts";
+} from "../src/channels/session-queue.ts";
 import { type Config, ConfigSchema } from "../src/config/config.ts";
 
 const GrokSchema = ConfigSchema.shape.grok;

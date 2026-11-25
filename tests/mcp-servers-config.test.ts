@@ -9,9 +9,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type McpConfigPaths, ensureMcpConfig, pickMcpConfig } from "../src/claude/mcp-config.ts";
 import { codexMcpConfigArgs } from "../src/codex/config.ts";
 import { ConfigSchema } from "../src/config/config.ts";
+import { type McpConfigPaths, ensureMcpConfig, pickMcpConfig } from "../src/model/mcp-config.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -47,7 +47,7 @@ function servers(path: string): Record<string, Record<string, unknown>> {
 describe("configured MCP servers", () => {
   test("operator loadouts get the server; contacts do not by default; guests never", () => {
     const paths = ensureMcpConfig(config({ skycam }));
-    for (const p of [paths.default, paths.withBrowser, paths.trading]) {
+    for (const p of [paths.default, paths.withBrowser]) {
       expect(servers(p).skycam).toEqual(skycam);
     }
     for (const p of [paths.contact, paths.contactWithBrowser, paths.guest]) {
@@ -90,7 +90,7 @@ describe("configured MCP servers", () => {
     writeFileSync(join(dir, "mcp.json"), "{}", { mode: 0o644 });
     ensureMcpConfig(config({ skycam }));
     const files = readdirSync(dir).filter((f) => f.startsWith("mcp") && f.endsWith(".json"));
-    expect(files.length).toBe(6);
+    expect(files.length).toBe(5);
     for (const f of files) expect(statSync(join(dir, f)).mode & 0o777).toBe(0o600);
   });
 
@@ -131,22 +131,14 @@ describe("choosing a loadout", () => {
     withBrowser: "op+browser",
     contact: "contact",
     contactWithBrowser: "contact+browser",
-    trading: "trading",
     guest: "guest",
   };
 
-  test("trading first, then the session's tier, then the browser", () => {
-    expect(pickMcpConfig(paths, { trading: true, tier: "contact", browser: true })).toBe("trading");
-    expect(pickMcpConfig(paths, { trading: false, tier: "operator", browser: false })).toBe("op");
-    expect(pickMcpConfig(paths, { trading: false, tier: "operator", browser: true })).toBe(
-      "op+browser",
-    );
-    expect(pickMcpConfig(paths, { trading: false, tier: "contact", browser: false })).toBe(
-      "contact",
-    );
-    expect(pickMcpConfig(paths, { trading: false, tier: "contact", browser: true })).toBe(
-      "contact+browser",
-    );
+  test("the session's tier, then the browser", () => {
+    expect(pickMcpConfig(paths, { tier: "operator", browser: false })).toBe("op");
+    expect(pickMcpConfig(paths, { tier: "operator", browser: true })).toBe("op+browser");
+    expect(pickMcpConfig(paths, { tier: "contact", browser: false })).toBe("contact");
+    expect(pickMcpConfig(paths, { tier: "contact", browser: true })).toBe("contact+browser");
   });
 
   test("both runners choose through it", () => {

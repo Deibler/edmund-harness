@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentStore } from "../src/agents/store.ts";
 import { ConfigSchema } from "../src/config/config.ts";
-import { fireJob } from "../src/cron/fire.ts";
 import type { CronJob } from "../src/cron/types.ts";
 import { checkActiveHours } from "../src/ghost/budget.ts";
 import { type BrownNosePrefs, DEFAULT_ACTIVE_HOURS_DM } from "../src/ghost/prefs.ts";
@@ -21,6 +20,7 @@ import {
 } from "../src/ideation/settle.ts";
 import { type Ideation, IdeationStore, newIdeationId } from "../src/ideation/store.ts";
 import { ChatDb } from "../src/imessage/db.ts";
+import { fireJob } from "../src/scheduler/fire.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 
 const SAM = "+15550100001";

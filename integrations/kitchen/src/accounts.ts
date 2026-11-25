@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join, resolve } from "node:path";
 import type { Account, Registry } from "./types.ts";
 
-export const DEFAULT_DIR = resolve(process.env.EDMUND_DATA_DIR ?? "./data", "kitchen");
+const DEFAULT_DIR = resolve(process.env.EDMUND_DATA_DIR ?? "./data", "kitchen");
 
 /** Set from `[kitchen] dir` when the tools are built. Env still wins over it. */
 let configured: string | null = null;
@@ -35,7 +35,7 @@ export function baseDir(): string {
   return process.env.KITCHEN_DIR || configured || DEFAULT_DIR;
 }
 
-export function registryPath(): string {
+function registryPath(): string {
   return join(baseDir(), "tenants.json");
 }
 
@@ -56,7 +56,7 @@ export function loadRegistry(): Registry {
   return JSON.parse(readFileSync(registryPath(), "utf8")) as Registry;
 }
 
-export function saveRegistry(reg: Registry): void {
+function saveRegistry(reg: Registry): void {
   if (!reg || typeof reg !== "object" || !reg.tenants) {
     throw new Error("refusing to write a malformed registry");
   }
@@ -82,7 +82,7 @@ export function listAccounts(): Array<{ id: string } & Account> {
 }
 
 /** The caller's chat session from the environment; an empty value is no identity. */
-export function principal(): string | null {
+function principal(): string | null {
   const p = process.env.KITCHEN_PRINCIPAL || process.env.EDMUND_SESSION_KEY;
   return p?.trim() ? p : null;
 }
@@ -138,7 +138,7 @@ function labelFor(p: string): string {
   return tail;
 }
 
-export function accountForPrincipal(p: string, reg?: Registry): string | null {
+function accountForPrincipal(p: string, reg?: Registry): string | null {
   const r = reg ?? loadRegistry();
   for (const id of Object.keys(r.tenants).sort()) {
     if (r.tenants[id]!.members.includes(p)) return id;

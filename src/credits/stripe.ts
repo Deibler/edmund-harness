@@ -21,12 +21,12 @@ import type { FetchLike } from "./openrouter-keys.ts";
  * (Stripe's reconciliation field, alphanumerics/dash/underscore ≤ 200).
  */
 
-export const STRIPE_SIGNATURE_TOLERANCE_S = 300;
+const STRIPE_SIGNATURE_TOLERANCE_S = 300;
 
 /** "Artificial Intelligence as a Service (AIaaS) - Cloud Based - Personal
  *  Use": access to hosted AI tools such as image generators, for personal
  *  use. On Stripe's Managed Payments eligible list (verified 2026-09-02). */
-export const DEFAULT_TAX_CODE = "txcd_10105001";
+const DEFAULT_TAX_CODE = "txcd_10105001";
 
 export function parseStripeSignature(header: string): { t: number | null; v1: string[] } {
   let t: number | null = null;
@@ -46,7 +46,7 @@ export function parseStripeSignature(header: string): { t: number | null; v1: st
   return { t, v1 };
 }
 
-export function stripeSignedPayload(timestampSec: number, rawBody: string): string {
+function stripeSignedPayload(timestampSec: number, rawBody: string): string {
   return `${timestampSec}.${rawBody}`;
 }
 
@@ -207,7 +207,7 @@ export type CheckoutCompleted = {
 
 /** The fields we act on, from a Checkout Session object (a webhook's
  *  `data.object`, or an item from `GET /v1/checkout/sessions`). */
-export function checkoutFromSession(
+function checkoutFromSession(
   obj: Record<string, unknown>,
   eventId: string,
 ): CheckoutCompleted | null {

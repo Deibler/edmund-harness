@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE = join(REPO, "persona.example");
 
-/** Kept in step with ORCH_PERSONA_FILES in src/claude/persona.ts. */
+/** Kept in step with PERSONA_FILES in dashboard/server/routes/orchestrator.ts. */
 const REQUIRED = [
   "IDENTITY.md",
   "SOUL.md",
@@ -38,11 +38,11 @@ describe("persona.example", () => {
     expect(existsSync(join(EXAMPLE, "GHOST.md"))).toBe(true);
   });
 
-  test("stays in step with persona.ts ORCH_PERSONA_FILES", () => {
-    // If someone adds a persona file to the loader, this fails until the
+  test("stays in step with the persona files the settings page lists", () => {
+    // If someone adds a persona file to that list, this fails until the
     // template gains one too — which is the whole point.
-    const src = readFileSync(join(REPO, "src/claude/persona.ts"), "utf8");
-    const block = src.match(/ORCH_PERSONA_FILES\s*(?::[^=]*)?=\s*\[([\s\S]*?)\]/);
+    const src = readFileSync(join(REPO, "dashboard/server/routes/orchestrator.ts"), "utf8");
+    const block = src.match(/const PERSONA_FILES\s*(?::[^=]*)?=\s*\[([\s\S]*?)\]/);
     expect(block).not.toBeNull();
     const declared = [...(block?.[1] ?? "").matchAll(/"([^"]+\.md)"/g)].map((m) => m[1]);
     expect(declared.length).toBeGreaterThan(0);
@@ -51,7 +51,7 @@ describe("persona.example", () => {
   });
 
   test("sub-directories the loader resolves are represented", () => {
-    for (const d of ["people", "groups", "orchestrators", "sessions"]) {
+    for (const d of ["people", "groups", "sessions"]) {
       expect(existsSync(join(EXAMPLE, d))).toBe(true);
     }
   });

@@ -52,7 +52,7 @@ export function ideationHeaders(contentType: string): Record<string, string> {
  */
 const NOT_A_PERSON = /facebookexternalhit|facebot|twitterbot|bot\b|crawler|spider|preview/i;
 
-export function isPersonOpening(req: Request): boolean {
+function isPersonOpening(req: Request): boolean {
   if (req.method !== "GET") return false;
   return !NOT_A_PERSON.test(req.headers.get("user-agent") ?? "");
 }

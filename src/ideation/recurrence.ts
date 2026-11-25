@@ -23,7 +23,7 @@ export type RecurrenceRule = {
   minDays: number;
 };
 
-export type Rejection = {
+type Rejection = {
   rowId: number;
   why: "not found" | "other chat" | "from Edmund" | "reaction" | "outside window";
 };

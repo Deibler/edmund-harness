@@ -45,7 +45,7 @@ export type Announcement = {
   active: boolean;
 };
 
-export type DeliveryState = "offered" | "delivered" | "exhausted";
+type DeliveryState = "offered" | "delivered" | "exhausted";
 
 export type Delivery = {
   announcement_id: string;

@@ -9,8 +9,7 @@ export { PERSISTENT_FAILURE_ALERT_AT, PERSISTENT_FAILURE_DISARM_AT };
  * Polls armed data triggers and fires a system event into the owning
  * session when a model-authored condition triggers. The model is invoked
  * exactly once per real event, already holding the triggering data —
- * instead of being woken for every empty check. Mirrors trading's
- * TriggerWatcher.
+ * instead of being woken for every empty check.
  */
 
 export type DataTriggerWatcherOpts = {

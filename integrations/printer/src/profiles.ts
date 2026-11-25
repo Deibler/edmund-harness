@@ -67,7 +67,7 @@ export function machineName(nozzle: string): string {
 }
 
 /** Layer heights by quality, for the 0.4 nozzle the printer ships with. */
-export const QUALITY: Record<string, string> = {
+const QUALITY: Record<string, string> = {
   extra_fine: "0.08mm High Quality @BBL P2S",
   fine: "0.12mm High Quality @BBL P2S",
   balanced: "0.16mm Standard @BBL P2S",

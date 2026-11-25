@@ -12,6 +12,13 @@ import { join } from "node:path";
 const invoke = mock(() => Promise.resolve({ guid: "G1" }));
 mock.module("../src/imessage/bridge/index.ts", () => ({ invoke }));
 
+import { ensureSessionFor } from "../src/calls/conversation.ts";
+import { deliverReply } from "../src/channels/deliver.ts";
+import { historyBefore } from "../src/channels/history.ts";
+import { SessionPipeline } from "../src/channels/pipeline.ts";
+import { ConfigSchema } from "../src/config/config.ts";
+import type { InboundMessage } from "../src/imessage/types.ts";
+import { wakeEnvelope } from "../src/scheduler/fire.ts";
 import {
   CALL_SERVICE,
   type VoiceBinding,
@@ -22,14 +29,7 @@ import {
   isCallUtterance,
   spokenSessionFor,
   voiceBindingFor,
-} from "../src/calls/binding.ts";
-import { ensureSessionFor } from "../src/calls/conversation.ts";
-import { deliverReply } from "../src/channels/deliver.ts";
-import { historyBefore } from "../src/channels/history.ts";
-import { SessionPipeline } from "../src/channels/pipeline.ts";
-import { ConfigSchema } from "../src/config/config.ts";
-import { wakeEnvelope } from "../src/cron/fire.ts";
-import type { InboundMessage } from "../src/imessage/types.ts";
+} from "../src/sessions/call-binding.ts";
 import type { EchoCache } from "../src/sessions/echo-cache.ts";
 import { SessionLocks } from "../src/sessions/locks.ts";
 import { StateStore } from "../src/sessions/store.ts";
@@ -136,7 +136,7 @@ describe("a wake-up in a conversation on a call", () => {
 });
 
 describe("a call to someone never texted", () => {
-  // A wake-up for a session with no record is skipped (cron/fire.ts), so the
+  // A wake-up for a session with no record is skipped (scheduler/fire.ts), so the
   // record has to exist before the call's first event is fired at it.
   test("gets the session record its first text would have made", () => {
     const dir = mkdtempSync(join(tmpdir(), "edmund-calls-session-"));

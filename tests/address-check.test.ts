@@ -13,8 +13,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backlogGroups } from "../src/boot/catchup.ts";
-import { entryToInbound, parsePendingLine, toPendingEntry } from "../src/bridge/session-queue.ts";
 import { buildEnvelope } from "../src/channels/envelope.ts";
+import { entryToInbound, parsePendingLine, toPendingEntry } from "../src/channels/session-queue.ts";
 import { passesGroupRegate } from "../src/channels/turn.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import {

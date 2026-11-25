@@ -3,7 +3,6 @@ import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  clearPending,
   drainPending,
   entryToInbound,
   parsePendingLine,
@@ -11,7 +10,7 @@ import {
   pendingToInbound,
   toPendingEntry,
   writePending,
-} from "../src/bridge/session-queue.ts";
+} from "../src/channels/session-queue.ts";
 import type { InboundMessage } from "../src/imessage/types.ts";
 
 const KEY = "imessage:dm:+15550001111";

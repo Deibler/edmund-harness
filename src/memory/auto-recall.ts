@@ -24,7 +24,7 @@ import { type SearchHit, type VectorStore, normalize } from "./vector-store.ts";
  * live file is already in the session's system prompt; only `archive/`
  * chunks add anything the model can't already see).
  */
-export const RECALL_KINDS: Array<"message" | "artifact" | "person-file" | "summary"> = [
+const RECALL_KINDS: Array<"message" | "artifact" | "person-file" | "summary"> = [
   "message",
   "artifact",
   "person-file",

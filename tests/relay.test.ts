@@ -3,20 +3,20 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  MAX_RELAY_DEPTH,
-  buildRelayEnvelope,
-  parseInboundDepth,
-  relativeAgo,
-  relay,
-} from "../src/bridge/relay.ts";
-import { toolEnv } from "../src/claude/mcp-config.ts";
 import { type Config, ConfigSchema } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
 import type { ChatDb } from "../src/imessage/db.ts";
 import type { ToolContext } from "../src/mcp/context.ts";
 import { contactsTools } from "../src/mcp/tools/contacts.ts";
 import { errandTools } from "../src/mcp/tools/errands.ts";
+import { toolEnv } from "../src/model/mcp-config.ts";
+import {
+  MAX_RELAY_DEPTH,
+  buildRelayEnvelope,
+  parseInboundDepth,
+  relativeAgo,
+  relay,
+} from "../src/relay/relay.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import { normalizeHandle } from "../src/sessions/key.ts";
 import { StateStore } from "../src/sessions/store.ts";

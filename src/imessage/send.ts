@@ -10,7 +10,7 @@
  * Kept as a barrel so the call sites that import from here did not all have to
  * move in the same change.
  */
-export { sendMessage, type SendArgs } from "./actions/send.ts";
+export { sendMessage } from "./actions/send.ts";
 export { configureSendVerification } from "./actions/verify.ts";
 export { isPermanentSendError } from "./actions/classify.ts";
 export { EXPRESSIVE_EFFECTS } from "./actions/effects.ts";

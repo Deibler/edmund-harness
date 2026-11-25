@@ -12,7 +12,7 @@
 
 import type { JsonMessage } from "./json-lines.ts";
 
-export type ProcessRoute = {
+type ProcessRoute = {
   pid: number;
   bundleID: string;
   inputs: string[];

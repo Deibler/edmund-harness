@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { personFilePath } from "../claude/persona.ts";
+import { personFilePath } from "../model/persona.ts";
 import { atomicWriteFileSync } from "../util/atomic-write.ts";
 
 /**
@@ -30,7 +30,7 @@ import { atomicWriteFileSync } from "../util/atomic-write.ts";
  * explicitly wanted — that is the structural opposite of a yes-man.
  */
 
-export const PRINCIPLES_HEADING = "## Operating Principles";
+const PRINCIPLES_HEADING = "## Operating Principles";
 
 /** Hard cap. The value of this section is that it is short enough to be read
  *  every turn; a long one is just the observation log again. */

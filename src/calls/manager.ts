@@ -13,10 +13,16 @@
  */
 
 import type { InboundMessage } from "../imessage/types.ts";
+import {
+  CALL_SERVICE,
+  type VoiceBinding,
+  bindVoice,
+  callRowId,
+  unbindVoice,
+} from "../sessions/call-binding.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { genId } from "../util/ids.ts";
 import { log } from "../util/log.ts";
-import { CALL_SERVICE, type VoiceBinding, bindVoice, callRowId, unbindVoice } from "./binding.ts";
 import { callEnvelopeBlock } from "./envelope.ts";
 import type { CallTarget, Permission } from "./policy.ts";
 import type { CallRequest, CallStore } from "./store.ts";
@@ -34,7 +40,7 @@ import type {
 } from "./types.ts";
 import { VoiceOut } from "./voice-out.ts";
 
-export type CallSettings = {
+type CallSettings = {
   maxCallMinutes: number;
   ringAnswerMs: number;
   endpointMs: number;
@@ -234,24 +240,24 @@ function wordsOf(text: string): string[] {
 }
 
 /** Nothing but listening noises, and few of them. */
-export function isBackchannel(text: string): boolean {
+function isBackchannel(text: string): boolean {
   const words = wordsOf(text);
   return words.length > 0 && words.length <= 3 && words.every((w) => BACKCHANNEL.has(w));
 }
 
 /** Nothing but the sound of being about to say something. */
-export function isHesitation(text: string): boolean {
+function isHesitation(text: string): boolean {
   const words = wordsOf(text);
   return words.length > 0 && words.length <= 2 && words.every((w) => HESITATION.has(w));
 }
 
 /** What they said reads as a finished sentence. */
-export function endsSentence(text: string): boolean {
+function endsSentence(text: string): boolean {
   return /[.?!]["')\]]*\s*$/.test(text);
 }
 
 /** Whether words said while Edmund speaks (or before he has begun) should stop him. */
-export function interrupts(text: string): boolean {
+function interrupts(text: string): boolean {
   const words = wordsOf(text);
   if (words.some((w) => STOP_WORDS.has(w))) return true;
   return words.length >= BARGE_IN_WORDS && !isBackchannel(text);
@@ -267,7 +273,7 @@ export function interrupts(text: string): boolean {
  * picked up (2026-11-12). The reason is his own note from another conversation, so
  * it is quoted as one.
  */
-export function ringingEvent(provider: string, label: string, reason: string | null): string {
+function ringingEvent(provider: string, label: string, reason: string | null): string {
   const note = reason ? ` Your note on why you are calling: "${reason}"` : "";
   return [
     `[${provider}] You have already placed a call to ${label} and it is ringing on their end. Do not call facetime_call again.${note}`,

@@ -21,7 +21,7 @@ import type { Account, Item } from "./types.ts";
 
 export const IDEAS_TARGET = 10;
 /** Days an unmade idea stays on the site. */
-export const IDEA_MAX_AGE_DAYS = 21;
+const IDEA_MAX_AGE_DAYS = 21;
 
 export type Idea = Recipe & { created?: string; origin?: string };
 export type Overlay = { recipes: Idea[] };
@@ -37,7 +37,7 @@ export function readOverlay(account: string): Overlay {
   }
 }
 
-export function writeOverlay(account: string, o: Overlay): void {
+function writeOverlay(account: string, o: Overlay): void {
   const p = overlayPath(account);
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, JSON.stringify(o, null, 2));

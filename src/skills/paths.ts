@@ -2,13 +2,13 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type InstallRecord, categoryOf } from "./installer.ts";
 
-export const CURATED_SKILLS_DIR = "curated";
+const CURATED_SKILLS_DIR = "curated";
 
 export function curatedSkillsRoot(skillsRoot: string): string {
   return join(skillsRoot, CURATED_SKILLS_DIR);
 }
 
-export function skillRootForRecord(skillsRoot: string, record: InstallRecord | undefined): string {
+function skillRootForRecord(skillsRoot: string, record: InstallRecord | undefined): string {
   return categoryOf(record) === "curated" ? curatedSkillsRoot(skillsRoot) : skillsRoot;
 }
 

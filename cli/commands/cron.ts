@@ -7,7 +7,7 @@
 import { loadConfig } from "../../src/config/config.ts";
 import { CronStore } from "../../src/cron/store.ts";
 import type { Parsed } from "../args.ts";
-import { getString, hasFlag } from "../args.ts";
+import { getString } from "../args.ts";
 import { color, fail, info, ok, print, section, table } from "../ui.ts";
 
 export async function cronCommand(p: Parsed): Promise<void> {

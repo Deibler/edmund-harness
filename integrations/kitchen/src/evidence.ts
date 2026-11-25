@@ -20,7 +20,7 @@ import type { Item, KitchenEvent } from "./types.ts";
 
 const DAY = 86_400_000;
 
-export type Estimate =
+type Estimate =
   /** Seen, bought or cooked with recently. No reason to doubt it. */
   | "fresh"
   /** Probably still there, within its normal life. */
@@ -57,7 +57,7 @@ const USES_TO_EMPTY: Partial<Record<Item["cat"], number>> = {
 };
 const usesToEmpty = (it: Item): number => USES_TO_EMPTY[it.cat] ?? 3;
 
-export function assess(item: Item, h: ItemHistory | null, now = Date.now()): Evidence {
+function assess(item: Item, h: ItemHistory | null, now = Date.now()): Evidence {
   const reasons: string[] = [];
   const shelf = shelfLife(item);
   const bought = days(h?.lastBought, now);

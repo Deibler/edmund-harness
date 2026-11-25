@@ -45,7 +45,7 @@ import { type InstallRecord, categoryOf } from "./installer.ts";
 
 export type ConsentDecision = "allow" | "deny";
 
-export type ConsentEntry = {
+type ConsentEntry = {
   decision: ConsentDecision;
   at_ms: number;
   /** Session that answered — recorded so an audit can see who allowed what. */
@@ -75,7 +75,7 @@ export function readConsentDb(path: string): ConsentDb {
   }
 }
 
-export function writeConsentDb(path: string, db: ConsentDb): void {
+function writeConsentDb(path: string, db: ConsentDb): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(db, null, 2));
 }

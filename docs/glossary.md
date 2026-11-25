@@ -50,7 +50,7 @@ Terms as the code uses them. One sentence each.
 - **Sandbox**: `sandbox/<slug>/`, a session's working directory and only writable tree.
 - **Self-route poisoning**: IMCore relabelling a chat with the account's own address so sends land in the bot's own thread.
 - **Session**: one conversation's memory unit, keyed by session key, holding the provider thread id.
-- **Session key**: `imessage:dm:<handle>`, `imessage:group:<guid>`, or the `sms:`, `trading:`, `mirror:`, `agent:` and `orch:` equivalents.
+- **Session key**: `imessage:dm:<handle>`, `imessage:group:<guid>`, or the `sms:`, `mirror:` and `agent:` equivalents.
 - **Skill**: a markdown document with frontmatter under `skills/` that teaches the model a procedure on demand.
 - **SOUL**: `persona/SOUL.md`, the assistant's evolving character, present in every turn of every conversation.
 - **Tapback**: an iMessage reaction; surfaced to the model, never a turn of its own.

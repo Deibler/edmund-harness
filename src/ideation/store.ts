@@ -14,7 +14,7 @@ import { openDb } from "../db/open.ts";
  */
 
 /** `withdrawn`: was published, then taken down; never served or announced again. */
-export type IdeationStatus = "building" | "ready" | "failed" | "withdrawn";
+type IdeationStatus = "building" | "ready" | "failed" | "withdrawn";
 
 export type Ideation = {
   /** 32 hex characters. Also the page's public path, so it must be unguessable. */

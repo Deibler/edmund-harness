@@ -18,7 +18,7 @@
  * read as a revocation, and a substring match would do exactly that. CTIA
  * requires the bare keyword to work; it does not require us to guess.
  */
-export const STOP_KEYWORDS = [
+const STOP_KEYWORDS = [
   "STOP",
   "STOPALL",
   "UNSUBSCRIBE",
@@ -28,8 +28,8 @@ export const STOP_KEYWORDS = [
   "OPTOUT",
   "REVOKE",
 ] as const;
-export const START_KEYWORDS = ["START", "YES", "UNSTOP"] as const;
-export const HELP_KEYWORDS = ["HELP", "INFO"] as const;
+const START_KEYWORDS = ["START", "YES", "UNSTOP"] as const;
+const HELP_KEYWORDS = ["HELP", "INFO"] as const;
 
 export type Keyword = "stop" | "start" | "help" | null;
 

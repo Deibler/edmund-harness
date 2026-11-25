@@ -4,7 +4,7 @@ import { DAY_NAME, SHORT_DAY, clock } from "../schedules.ts";
 import { escapeHtml } from "../util.ts";
 
 /** Up to two initials, for an item or dish with no photo. */
-export const monogram = (s: string) =>
+const monogram = (s: string) =>
   s
     .split(/\s+/)
     .filter(Boolean)

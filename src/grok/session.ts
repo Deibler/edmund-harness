@@ -9,7 +9,7 @@ import type { InboundMessage } from "../imessage/types.ts";
  * session (`imessage:dm:<handle>`, built by `sessionKeyFor` like any DM), so
  * the voice calls and the texts are one conversation with one memory. What
  * makes a request different is carried on the message itself, as with a
- * FaceTime utterance (`calls/binding.ts`): the `service` tag below, and a
+ * FaceTime utterance (`sessions/call-binding.ts`): the `service` tag below, and a
  * negative row id. Everything downstream keys on the message, never the
  * session: a text typed in the same conversation keeps its own debounce window,
  * envelope and delivery.

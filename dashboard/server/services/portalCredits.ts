@@ -22,7 +22,7 @@ import { b64urlEncode } from "../../../src/portal/token.ts";
  * switched to `house`.
  */
 
-export type PortalCreditPayment = {
+type PortalCreditPayment = {
   atMs: number;
   paidUsd: number;
   creditedUsd: number;

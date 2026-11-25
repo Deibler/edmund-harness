@@ -48,7 +48,7 @@ export function buildCreditRows(p: {
     } else if (isGroupSession(k)) {
       seed = { key: k, kind: "group", lastInboundMs: s.lastInboundMs };
     }
-    if (!seed) continue; // mirror, orchestrators, agents, trading: not people
+    if (!seed) continue; // mirror, agents: not people
     const prev = seeds.get(seed.key);
     if (!prev || (seed.lastInboundMs ?? 0) > (prev.lastInboundMs ?? 0)) seeds.set(seed.key, seed);
   }

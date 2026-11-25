@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OperatorAlert } from "../alerts/operator-alert.ts";
+import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "../model/direct-env.ts";
 import { log } from "../util/log.ts";
-import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "./direct-env.ts";
 import { runClaudeOneShot } from "./one-shot.ts";
 import { Worker } from "./worker.ts";
 
@@ -34,7 +34,7 @@ export type CliVersionRecord = {
 export type CanaryResult = { ok: true } | { ok: false; step: string; detail: string };
 
 /** `claude --version` → "2.1.310", or null when the CLI cannot be run. */
-export function claudeCliVersion(): Promise<string | null> {
+function claudeCliVersion(): Promise<string | null> {
   return new Promise((resolve) => {
     let out = "";
     const proc = spawn("claude", ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
@@ -75,7 +75,7 @@ export function readVersionRecord(dataDir: string): CliVersionRecord | null {
  * The two paths every turn depends on, with the flags the harness really
  * passes. Each must come back with the word asked for.
  */
-export async function runCliCanary(model: string): Promise<CanaryResult> {
+async function runCliCanary(model: string): Promise<CanaryResult> {
   const oneShot = await runClaudeOneShot({
     args: [
       "--model",

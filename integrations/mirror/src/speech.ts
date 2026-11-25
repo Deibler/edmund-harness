@@ -2,8 +2,6 @@ import type { Config } from "../../../src/config/config.ts";
 import { SpeechSidecar as SharedSidecar } from "../../../src/voice/speech-sidecar.ts";
 import { mirrorConfig } from "../config.ts";
 
-export type { KokoroAudio } from "../../../src/voice/speech-sidecar.ts";
-
 /**
  * The mirror's own speech sidecar: the shared Kokoro + Whisper process
  * (src/voice/speech-sidecar.ts), configured from [mirror]. FaceTime calls run

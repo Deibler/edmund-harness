@@ -24,7 +24,6 @@ import { installCommand } from "./commands/install.ts";
 import { killCommand } from "./commands/kill.ts";
 import { logsCommand } from "./commands/logs.ts";
 import { portalCommand } from "./commands/portal.ts";
-import { recoveryCommand } from "./commands/recovery.ts";
 import { restartCommand } from "./commands/restart.ts";
 import { reviewCommand } from "./commands/review.ts";
 import { sessionsCommand } from "./commands/sessions.ts";
@@ -47,7 +46,6 @@ ${color.bold("Services")}
 
 ${color.bold("Observe")}
   ${color.cyan("logs")}         what the model is doing, for whom (--follow, --session NAME, --all, --error/--warn, --grep RE, -n N)
-  ${color.cyan("recovery")}     operator channel (edmund-911) controls — logs [--follow]
   ${color.cyan("dashboard")}    dashboard URL, --pin, --logs [--follow]
   ${color.cyan("cron")}         list / delete scheduled jobs
   ${color.cyan("sessions")}     list / reset / heal / invoke / rerun / compact / wipe / brownnose
@@ -66,7 +64,6 @@ ${color.bold("Misc")}
 ${color.bold("Flags")}
   --harness           target only the iMessage daemon
   --dashboard         target only the web dashboard
-  --trading           target only the trading dashboard (Quant, :4848)
   --fishing           target only the fishing data API (:8087)
   --local             run in the foreground after uninstalling the launchd job
   --follow, -f        stream new output as it arrives
@@ -100,9 +97,6 @@ async function main() {
       break;
     case "logs":
       await logsCommand(p);
-      break;
-    case "recovery":
-      await recoveryCommand(p);
       break;
     case "dashboard":
       await dashboardCommand(p);

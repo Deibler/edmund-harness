@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { formatHistoryLines } from "../src/channels/history-format.ts";
+import { formatHistoryLines } from "../src/imessage/history-format.ts";
 import type { HistoryLine } from "../src/imessage/history.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
@@ -89,7 +89,7 @@ describe("history line stamps", () => {
   });
 
   test("history lines use it", () => {
-    const src = readFileSync(join(import.meta.dir, "../src/channels/history-format.ts"), "utf8");
+    const src = readFileSync(join(import.meta.dir, "../src/imessage/history-format.ts"), "utf8");
     expect(src).toContain("${historyStamp(l.timestampMs)}]");
   });
 });

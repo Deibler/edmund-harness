@@ -12,6 +12,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { wakeThread } from "../../src/channels/history.ts";
+import { HEALERS } from "../../src/claude/healers.ts";
 import {
   TARGET_AFTER_COMPACT,
   compactSession,
@@ -26,13 +27,12 @@ import {
   GhostPrefsStore,
   snoozeActive,
 } from "../../src/ghost/prefs.ts";
+import { enqueueBrownNoseFire } from "../../src/ghost/queue.ts";
 import { readRecentDecisions, runGhostTick } from "../../src/ghost/think.ts";
 import { ChatDb } from "../../src/imessage/db.ts";
 import { getChatDisplayName, getGroupParticipants } from "../../src/imessage/participants.ts";
+import { type FailureClass, classifyError } from "../../src/model/failure-class.ts";
 import { ensureSandbox, sandboxDir } from "../../src/persona/sandbox.ts";
-import { enqueueBrownNoseFire } from "../../src/proactive/queue.ts";
-import { type FailureClass, classifyError } from "../../src/recovery/classify.ts";
-import { HEALERS } from "../../src/recovery/healers.ts";
 import { loadUnansweredInbound, runRecoveryTurn } from "../../src/recovery/turn.ts";
 import { AddressBook } from "../../src/sessions/address-book.ts";
 import { ContactBook } from "../../src/sessions/contacts.ts";
@@ -287,7 +287,7 @@ async function invokeSubcmd(
         chatDb,
         echoes,
         locks,
-        recentThread: (k, guid) => wakeThread(k, guid, { config: cfg, chatDb, contacts, state }),
+        recentThread: (k, guid) => wakeThread(k, guid, { config: cfg, chatDb, contacts }),
       },
     );
     if (!result.ok) {

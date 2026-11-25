@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { PEOPLE_DIR, PERSONA_DIR } from "../../claude/persona.ts";
+import { PEOPLE_DIR, PERSONA_DIR } from "../../model/persona.ts";
 import { appendDomainNote } from "../../persona/domains.ts";
 import {
   type SelfFile,

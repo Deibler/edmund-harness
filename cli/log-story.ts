@@ -33,7 +33,7 @@ export type Story = {
   thread?: string | null;
 };
 
-export type Turn = { startedMs: number; lastMs: number; steps: number; last: string };
+type Turn = { startedMs: number; lastMs: number; steps: number; last: string };
 
 export type StoryState = {
   /** Session key (untruncated, e.g. dm:+1555…, group:any;+;abc…) -> display name. */
@@ -115,7 +115,7 @@ export function jsonString(summary: string, key: string): string | null {
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** The last two parts of a path: enough to recognise it. */
-export function shortPath(p: string): string {
+function shortPath(p: string): string {
   const parts = p.split("/").filter(Boolean);
   return parts.slice(-2).join("/");
 }
@@ -171,7 +171,7 @@ function plural(n: number, word: string): string {
 }
 
 /** The name to show for a session: learned from the log, else looked up, else the key itself. */
-export function whoFor(state: StoryState, session: string | null): string {
+function whoFor(state: StoryState, session: string | null): string {
   if (!session) return "-";
   if (session.startsWith("agent:")) {
     const id = session.slice(6);
@@ -214,7 +214,7 @@ export function tell(p: ParsedLine, state: StoryState, nowMs = Date.now()): Stor
 }
 
 /** The conversation a session's work belongs to: a subagent's parent, nothing for background jobs. */
-export function threadOf(state: StoryState, session: string | null): string | null {
+function threadOf(state: StoryState, session: string | null): string | null {
   if (!session || session.startsWith("bg:")) return null;
   const s = session.startsWith("agent:")
     ? (state.agentParent.get(session.slice(6)) ?? session)

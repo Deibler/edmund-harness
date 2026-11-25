@@ -51,7 +51,7 @@ export function readCuratorState(dataDir: string): CuratorState {
   }
 }
 
-export function writeCuratorState(dataDir: string, state: CuratorState): void {
+function writeCuratorState(dataDir: string, state: CuratorState): void {
   const p = statePath(dataDir);
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, JSON.stringify(state, null, 2));

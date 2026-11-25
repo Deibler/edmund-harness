@@ -12,10 +12,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureMcpConfig } from "../src/claude/mcp-config.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import type { ToolContext } from "../src/mcp/context.ts";
 import { assembleCoreTools } from "../src/mcp/server.ts";
+import { ensureMcpConfig } from "../src/model/mcp-config.ts";
 
 let dir: string;
 
@@ -61,7 +61,6 @@ const MUST_BE_ABSENT = [
   "update_self_memory",
   "memory_search",
   "read_self_memory",
-  "request_image_annotation",
   "schedule_reminder",
   "set_trigger",
   "start_mission",

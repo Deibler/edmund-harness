@@ -138,73 +138,6 @@ export const ConfigSchema = z.object({
       name: z.string().default(""),
     })
     .default({}),
-  /**
-   * Additional named orchestrator personas beyond the built-in main one
-   * (which is defined by [identity].names + the top-level persona/*.md
-   * files). Each entry is invocable by name in any chat: "desmond, ..."
-   * routes that message to the desmond orchestrator's own session, with
-   * its own persona files (persona/orchestrators/<key>/, falling back
-   * per-file to the shared top-level ones), and its own Claude Code model.
-   *
-   * Roles: exactly one orchestrator is "primary" — it receives un-named
-   * DMs. If no entry claims primary, the built-in main persona is primary.
-   * Messages that invoke a secondary are NEVER seen by the other
-   * orchestrators (history + envelope + MCP history tools all filter).
-   */
-  orchestrators: z
-    .array(
-      z.object({
-        /** Slug — session namespace and persona directory name. */
-        key: z
-          .string()
-          .regex(/^[a-z0-9][a-z0-9_-]{0,31}$/, "lowercase slug (a-z, 0-9, -, _), max 32 chars"),
-        /** Display name — how the persona refers to itself. */
-        name: z.string().min(1),
-        /** Trigger words that invoke this orchestrator ("desmond", "des"). */
-        invocations: z.array(z.string().min(1)).min(1),
-        role: z.enum(["primary", "secondary"]).default("secondary"),
-        /** Model override; empty = inherit claude.model. */
-        model: z.string().default(""),
-      }),
-    )
-    .superRefine((entries, ctx) => {
-      const RESERVED = new Set([
-        "main",
-        "operator",
-        "ghost",
-        "people_maintainer",
-        "trading",
-        "agents",
-      ]);
-      const keys = new Set<string>();
-      const invocations = new Set<string>();
-      let primaries = 0;
-      for (const e of entries) {
-        if (RESERVED.has(e.key)) {
-          ctx.addIssue({ code: "custom", message: `orchestrator key "${e.key}" is reserved` });
-        }
-        if (keys.has(e.key)) {
-          ctx.addIssue({ code: "custom", message: `duplicate orchestrator key "${e.key}"` });
-        }
-        keys.add(e.key);
-        if (e.role === "primary") primaries++;
-        for (const inv of e.invocations) {
-          const norm = inv.trim().toLowerCase();
-          if (!norm) continue;
-          if (invocations.has(norm)) {
-            ctx.addIssue({
-              code: "custom",
-              message: `invocation "${norm}" is used by more than one orchestrator`,
-            });
-          }
-          invocations.add(norm);
-        }
-      }
-      if (primaries > 1) {
-        ctx.addIssue({ code: "custom", message: "at most one orchestrator can be primary" });
-      }
-    })
-    .default([]),
   claude: z
     .object({
       model: z.string().default("claude-opus-4-8[1m]"),
@@ -393,9 +326,6 @@ export const ConfigSchema = z.object({
   shelf: z.object({ origin: z.string().default("") }).default({ origin: "" }),
   tools: z
     .object({
-      image_provider: z.enum(["openai", "gemini"]).default("openai"),
-      image_model: z.string().default("gpt-image-1"),
-      tts_voice: z.string().default("nova"),
       stt_model: z.string().default("whisper-1"),
       /**
        * Local speech-to-text with whisper.cpp, tried before any hosted
@@ -409,9 +339,6 @@ export const ConfigSchema = z.object({
       whisper_cli: z.string().default("whisper-cli"),
     })
     .default({
-      image_provider: "openai",
-      image_model: "gpt-image-1",
-      tts_voice: "nova",
       stt_model: "whisper-1",
       local_stt_model: "models/ggml-small.en.bin",
       whisper_cli: "whisper-cli",
@@ -549,11 +476,6 @@ export const ConfigSchema = z.object({
           }),
         )
         .default({}),
-      /** Ignored. Connector turns run in the person's DM session and use its
-       *  model: a model belongs to a session, not to one message in it. Kept
-       *  so an older config file still parses. */
-      model: z.string().optional(),
-      effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
     })
     .default({}),
   /**
@@ -588,7 +510,7 @@ export const ConfigSchema = z.object({
       call_audio_processes: z.array(z.string()).default(["com.apple.avconferenced"]),
       /** Reasoning effort while a call is live: a spoken reply waits on the
        *  model's thinking, and slow work goes to background agents anyway
-       *  (calls/loadout.ts). The model stays the conversation's own. */
+       *  (model/call-loadout.ts). The model stays the conversation's own. */
       effort: z.enum(["low", "medium", "high", "xhigh", "max"]).default("low"),
       /** Model while a call is live. Opus took 3-8 s to start each spoken
        *  reply; Sonnet starts in under a second. Empty keeps the
@@ -825,10 +747,6 @@ export const ConfigSchema = z.object({
        * The model can still call `activate_typing` mid-turn to extend.
        */
       auto_typing: z.boolean().default(true),
-      /** How long the auto-fired typing bubble lasts. Long enough to span a
-       *  typical turn; short enough that a daemon crash mid-turn doesn't
-       *  leave a ghost bubble for too long. */
-      auto_typing_seconds: z.number().int().min(5).max(120).default(30),
       /** Group history segmenter: silence (minutes) that ends a conversation
        *  thread. Anything older than this gap is treated as a separate
        *  conversation — out of scope for the current invocation unless the
@@ -899,7 +817,6 @@ export const ConfigSchema = z.object({
       session_idle_hours: 72,
       transcribe_inbound_audio: true,
       auto_typing: true,
-      auto_typing_seconds: 30,
       thread_break_minutes: 30,
       topic_shift_minutes: 5,
       history_max_per_segment: 30,
@@ -936,7 +853,7 @@ export const ConfigSchema = z.object({
        */
       external_url: z.string().default(""),
       /** Public-only listener: serves ONLY the token-gated user routes
-       *  (/u portal, /a annotate) with a 404 for everything else. Bound to
+       *  (/u portal, /pay) with a 404 for everything else. Bound to
        *  127.0.0.1 — reachable exclusively through the cloudflared tunnel
        *  (scripts/setup-portal-tunnel.sh). The PIN dashboard/API/SPA stay
        *  on `port` and are never exposed. */
@@ -952,8 +869,6 @@ export const ConfigSchema = z.object({
     }),
   /** `[cloudflare]` — owned by integrations/cloudflare-browser/config.ts. */
   cloudflare: z.unknown().optional(),
-  /** `[trading]` — owned by integrations/trading/config.ts. */
-  trading: z.unknown().optional(),
   /** `[fishing]` — owned by integrations/fishing/config.ts. */
   fishing: z.unknown().optional(),
   /** `[kitchen]` — owned by integrations/kitchen/config.ts. */
@@ -1582,7 +1497,7 @@ export const ConfigSchema = z.object({
    *
    * `config_file` points at the operator-owned store that says which installed
    * integrations this deployment actually runs. Per-integration settings stay
-   * in their own `config.toml` sections (e.g. [trading], [mirror]) — the YAML
+   * in their own `config.toml` sections (e.g. [mirror], [printer]) — the YAML
    * governs presence and access, not tuning.
    */
   integrations: z

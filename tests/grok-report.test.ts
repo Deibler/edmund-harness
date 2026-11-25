@@ -390,10 +390,15 @@ describe("callback round trip", () => {
       fetch: async (req) => {
         const body = (await req.json()) as { reply_id: string };
         setTimeout(() => {
-          void client.callTool({
-            name: "report_to_edmund",
-            arguments: { reply_id: body.reply_id, result: "Quick answer: yes." },
-          });
+          // The test ends when the report reaches Edmund, which can be before
+          // this call has its own reply. Closing the client then rejects it,
+          // and with nothing to catch that the whole run exits 1.
+          client
+            .callTool({
+              name: "report_to_edmund",
+              arguments: { reply_id: body.reply_id, result: "Quick answer: yes." },
+            })
+            .catch(() => {});
         }, 50);
         return new Response("{}", { status: 200 });
       },

@@ -11,7 +11,7 @@
  * Nothing here messages anybody about their own tap.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { eaters, getAccount, updateAccount } from "./accounts.ts";
 import { stillHere } from "./assess.ts";
@@ -37,7 +37,7 @@ import {
   sendTo,
 } from "./schedules.ts";
 import { settleAfterPurchase, shopping, tripCount } from "./shopping.ts";
-import { append, droppedBatches, fold, live, openPlans, readLog, slug } from "./store.ts";
+import { append, droppedBatches, fold, live, openPlans, readLog } from "./store.ts";
 import type { KitchenEvent } from "./types.ts";
 import { contained, positive, safeId } from "./util.ts";
 
@@ -621,7 +621,7 @@ export function stillWaiting(account: string): MakeRequest[] {
 }
 
 /** The queue file published after each pass. */
-export type Queue = {
+type Queue = {
   /** When the pass finished; a stale value means the loop is down. */
   at: string;
   account: string;

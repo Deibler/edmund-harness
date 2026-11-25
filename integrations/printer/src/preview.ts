@@ -21,10 +21,10 @@ export const VIEWS = [
   "layer",
   "first_layer",
 ] as const;
-export type View = (typeof VIEWS)[number];
+type View = (typeof VIEWS)[number];
 
 /** Close to Bambu Studio's legend colours, so a person comparing the two sees the same thing. */
-export const FEATURE_COLORS: Record<Feature, string> = {
+const FEATURE_COLORS: Record<Feature, string> = {
   "Outer wall": "#FF7D38",
   "Inner wall": "#FFDA5C",
   "Overhang wall": "#4D7CFE",

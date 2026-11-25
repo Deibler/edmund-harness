@@ -27,7 +27,7 @@ const MAX_FRAMES_DENSE = 81;
  *  sees without downscaling. */
 const FRAME_LONG_EDGE = 512;
 
-export type ContactSheet = { path: string; times: number[] };
+type ContactSheet = { path: string; times: number[] };
 
 export type WatchedVideo = {
   probe: VideoProbe | null;

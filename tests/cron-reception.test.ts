@@ -3,15 +3,15 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CronStore } from "../src/cron/store.ts";
+import { ChatDb } from "../src/imessage/db.ts";
 import {
   ASK_AFTER_IGNORED,
   type FireReception,
   fireReceptions,
   receptionBlock,
   trailingIgnored,
-} from "../src/cron/reception.ts";
-import { CronStore } from "../src/cron/store.ts";
-import { ChatDb } from "../src/imessage/db.ts";
+} from "../src/scheduler/reception.ts";
 import { emptyChatDb } from "./helpers/chat-db.ts";
 
 const { path, cleanup } = emptyChatDb();
@@ -95,7 +95,7 @@ describe("a recurring job sees how its last sends landed", () => {
   });
 
   test("recurring scheduled fires carry the block and record their window", () => {
-    const src = readFileSync(join(import.meta.dir, "..", "src/cron/fire.ts"), "utf8");
+    const src = readFileSync(join(import.meta.dir, "..", "src/scheduler/fire.ts"), "utf8");
     expect(src).toContain(
       'const recurring = job.schedule.kind !== "once" && kind === "scheduled";',
     );

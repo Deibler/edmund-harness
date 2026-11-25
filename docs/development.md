@@ -13,7 +13,9 @@ bun test ./tests/        # the suite; the ./ matters, see below
 bun run knip             # unused files, exports, dependencies
 ```
 
-All four gates should be clean before a change lands. Biome runs at 100
+All four gates should be clean before a change lands, and CI fails on each.
+The typecheck runs with `noUnusedLocals`, so an unused import or local is an
+error, and knip fails on an export nothing imports. Biome runs at 100
 columns with a few rules deliberately off: unused template literals (backticks
 are the convention here), control characters in regexes (ANSI and `chat.db`
 decoding need them), and non null assertions. `noExplicitAny` is a warning;
@@ -24,8 +26,8 @@ the remaining ones are real.
 Every push to `main` and every pull request runs `.github/workflows/ci.yml`
 on a macOS runner: the imcore-bridge client is checked out beside the
 harness and built, then typecheck, lint, the test suite and a dependency
-audit at high severity run. Knip runs as advisory until the unused-export
-backlog in the kitchen integration is cleared. `main` only accepts pull
+audit at high severity run. Knip runs last and fails the build on an unused
+file, export or dependency. `main` only accepts pull
 requests whose checks passed. Dependabot opens weekly update pull requests
 for the three package roots and the workflow actions.
 
@@ -73,6 +75,26 @@ Use the factories: `sessionKeyFor` for keys, `src/db/open.ts` for SQLite,
 `src/util/log.ts` for logging, `src/util/ids.ts` for ids. Hand built session
 key strings are how the bot once answered itself.
 
+## Where code goes
+
+A module is a folder under `src/`, and each sits in a layer
+([architecture.md](architecture.md#layers)). `tests/architecture.test.ts`
+fails on an import from a lower layer into a higher one, so the question
+"where does this file go" has a checked answer: with what it depends on, below
+what depends on it. A new folder has to be added to the layer list in that
+test before anything can import from it.
+
+When the test stops you, move the code. Something low that reaches up for one
+helper usually means the helper belongs lower. Add to the exception list only
+when a move or an injected dependency would be worse, and write down why.
+
+Before moving or renaming a file, check two lists: the entry points in the
+architecture test, which launchd and generated configs start by path, and
+`tests/sandbox-api.test.ts`, which holds what the assistant's own sandbox
+scripts import. A file that builds a path from its own location
+(`import.meta.url`) breaks silently when it moves to another depth; the
+compiler does not read path strings.
+
 ## Things that will bite you
 
 - **MCP stdout.** `src/mcp/server.ts` speaks JSON-RPC on stdout. A stray
@@ -113,7 +135,7 @@ schema before; keep them in step.
 `.claude/settings.json` is tracked and applies to anyone who opens this
 repository in Claude Code. It does not reach the daemon's workers: they run
 with `--setting-sources ""` (`ISOLATED_SETTINGS_ARGS` in
-`src/claude/direct-env.ts`), and the CLI only ever read project settings from
+`src/model/direct-env.ts`), and the CLI only ever read project settings from
 a worker's own sandbox, not from the repository. A write guard and a media
 delivery hook lived here and never ran for a worker as a result; both are
 gone. What confines a worker is `disallowedBuiltinTools` in

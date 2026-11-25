@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildSystemPrompt } from "../src/claude/system-prompt.ts";
 import { BLIND_CHECK_PROMPT } from "../src/mcp/tools/blind-check.ts";
+import { buildSystemPrompt } from "../src/model/system-prompt.ts";
 
 const prompt = (over: Record<string, unknown> = {}) =>
   buildSystemPrompt({

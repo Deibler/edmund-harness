@@ -33,7 +33,7 @@ import { loadPortalSecret, portalGeneration, portalToken, portalUrl } from "../p
 import type { ContactBook } from "../sessions/contacts.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { log } from "../util/log.ts";
-import { type Eligibility, checkEligibility } from "./eligibility.ts";
+import { checkEligibility } from "./eligibility.ts";
 import { type Announcement, AnnouncementStore } from "./store.ts";
 
 export type OfferDeps = {
@@ -183,25 +183,6 @@ export function confirmDelivery(
   } catch (err) {
     log.warn("announce", "delivery confirmation failed", { err: (err as Error).message });
     return false;
-  } finally {
-    if (owned) store.close();
-  }
-}
-
-/** Why a given conversation is or isn't eligible — for `edmund announce status`. */
-export function explainEligibility(sessionKey: SessionKey, deps: OfferDeps): Eligibility {
-  const store = deps.store ?? new AnnouncementStore(deps.dataDir);
-  const owned = !deps.store;
-  try {
-    return checkEligibility({
-      sessionKey,
-      chatDb: deps.chatDb,
-      contacts: deps.contacts,
-      guestTier: deps.guestTier,
-      lastOfferMs: store.lastOfferMs(sessionKey),
-      config: deps.config.announcements,
-      now: (deps.now ?? Date.now)(),
-    });
   } finally {
     if (owned) store.close();
   }

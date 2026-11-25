@@ -12,7 +12,7 @@ import { CronStore } from "../src/cron/store.ts";
 import { checkActiveHours, nextActiveStartMs } from "../src/ghost/budget.ts";
 import { parseEasternWallClock } from "../src/ghost/mcp-server-validate.ts";
 import { DEFAULT_ACTIVE_HOURS_DM } from "../src/ghost/prefs.ts";
-import { enqueueBrownNoseFire, isSafetyFollowup } from "../src/proactive/queue.ts";
+import { enqueueBrownNoseFire, isSafetyFollowup } from "../src/ghost/queue.ts";
 import type { SessionKey } from "../src/sessions/key.ts";
 
 // A weekday at 08:00 ET (before the 09:00 DM window opens) and the same
@@ -432,7 +432,7 @@ describe("a safety follow-up fires when it was set for", () => {
   });
 
   test("the fire leaves the settings footer off a safety follow-up", () => {
-    const src = readFileSync(join(import.meta.dir, "..", "src/proactive/fire.ts"), "utf8");
+    const src = readFileSync(join(import.meta.dir, "..", "src/ghost/fire.ts"), "utf8");
     expect(src).toContain("if (!isSafetyFollowup(payload.tags)) {");
   });
 });

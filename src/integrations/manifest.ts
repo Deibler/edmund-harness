@@ -23,15 +23,13 @@ import { z } from "zod";
  *
  * These map to the `SessionKey` namespaces in `src/sessions/key.ts`:
  *   - `main`    — the primary persona's iMessage sessions (`imessage:*`)
- *   - `orch`    — named secondary orchestrators (`orch:<key>:*`)
- *   - `trading` — the trading sub-persona (`trading:*`)
  *   - `mirror`  — the smart-mirror voice channel (`mirror:*`)
  *   - `agent`   — detached sub-agents / background runners
  *
  * An empty list means "no session may reach this", which is how you disable a
  * tool surface without deleting the package. `["*"]` means every namespace.
  */
-const SessionScopeSchema = z.enum(["*", "main", "orch", "trading", "mirror", "agent"]);
+const SessionScopeSchema = z.enum(["*", "main", "mirror", "agent"]);
 export type SessionScope = z.infer<typeof SessionScopeSchema>;
 
 /**
@@ -58,8 +56,8 @@ export const AccessSchema = z
     /**
      * When true, the integration's tools are hidden unless the session is
      * *dedicated* to it (session namespace equals the integration's
-     * `session_namespace`). This is the trading model: Robinhood tools must
-     * never appear in an ordinary chat, only inside `trading:*`.
+     * `session_namespace`). This is the mirror's model: the glass tools must
+     * never appear in an ordinary chat, only inside `mirror:*`.
      */
     dedicated_session_only: z.boolean().default(false),
   })
@@ -72,7 +70,7 @@ export type Access = z.infer<typeof AccessSchema>;
  * `ToolContext` and splices the result into the MCP tool list.
  */
 const ToolGroupSchema = z.object({
-  /** Exported factory name in `tools.ts`, e.g. "tradingTools". */
+  /** Exported factory name in `tools.ts`, e.g. "mirrorTools". */
   export_name: z.string().min(1),
   /** Human summary for `integrations list` / docs. Not sent to the model. */
   description: z.string().default(""),
@@ -85,7 +83,6 @@ const ToolGroupSchema = z.object({
   /** Per-group access override. Falls back to the integration's access. */
   access: AccessSchema.optional(),
 });
-type ToolGroup = z.infer<typeof ToolGroupSchema>;
 
 /**
  * Model-facing instructions. Kept in the manifest (not buried in a prompt
@@ -112,7 +109,6 @@ const InstructionsSchema = z
     skills: z.array(z.string()).default([]),
   })
   .default({});
-type Instructions = z.infer<typeof InstructionsSchema>;
 
 /**
  * Runtime surface: the long-lived work an integration performs inside the
@@ -135,7 +131,6 @@ const RuntimeSchema = z
     lazy: z.boolean().default(false),
   })
   .default({});
-type Runtime = z.infer<typeof RuntimeSchema>;
 
 const ManifestSchema = z.object({
   /** Package id. Must equal the directory name under `integrations/`. */
@@ -155,13 +150,13 @@ const ManifestSchema = z.object({
    */
   enabled: z.boolean().default(true),
   /**
-   * Dedicated session namespace, when the integration owns one (trading owns
-   * `trading:`, mirror owns `mirror:`). Enables `dedicated_session_only`
+   * Dedicated session namespace, when the integration owns one (the mirror
+   * owns `mirror:`). Enables `dedicated_session_only`
    * access and tells the router this namespace is claimed.
    */
   session_namespace: z.string().optional(),
   /**
-   * Config key in `config.toml` this integration reads (e.g. "trading"). The
+   * Config key in `config.toml` this integration reads (e.g. "mirror"). The
    * loader passes the resolved sub-config to the package. Declared here so
    * "which config section belongs to which package" is answerable without
    * grepping the schema.

@@ -1,7 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { protectStdout } from "../../src/mcp/stdio-safety.ts";
+import { protectStdout } from "../../src/util/stdio-safety.ts";
 
 protectStdout();
 console.log("stdio fixture startup diagnostic");

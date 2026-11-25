@@ -21,8 +21,7 @@ export type CronJob = {
    * Absolute image paths the fire path should embed as multimodal content
    * blocks on the next model turn. Used when the wake-up references an
    * image the model needs to SEE (not just know the path of) — e.g. a
-   * generate_image bg-job completion, or an annotation-submit cron that
-   * carries the user's marked-up PNG. Null/undefined = text-only wake-up.
+   * generate_image bg-job completion. Null/undefined = text-only wake-up.
    */
   attachImages: string[] | null;
   /**

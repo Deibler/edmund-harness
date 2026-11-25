@@ -213,7 +213,7 @@ export class VectorStore {
   private cacheDataVersion = 0;
 
   constructor(
-    private path: string,
+    path: string,
     private readonly cacheIdleMs = 10 * 60_000,
     /** `repair`: rebuild the FTS shadow when it disagrees with `rows`. Only
      *  the daemon passes it, once, at boot. Every MCP server and background

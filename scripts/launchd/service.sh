@@ -39,11 +39,6 @@ DASH_SRC_PLIST="$REPO_ROOT/scripts/launchd/$DASH_LABEL.plist"
 DASH_DEST_PLIST="$HOME/Library/LaunchAgents/$DASH_LABEL.plist"
 DASH_LOG="$REPO_ROOT/data/dashboard.log"
 
-TRADE_LABEL="com.edmund-harness.trading"
-TRADE_SRC_PLIST="$REPO_ROOT/scripts/launchd/$TRADE_LABEL.plist"
-TRADE_DEST_PLIST="$HOME/Library/LaunchAgents/$TRADE_LABEL.plist"
-TRADE_LOG="$REPO_ROOT/data/trading.launchd.out.log"
-
 FISH_LABEL="com.edmund-harness.fishing"
 FISH_SRC_PLIST="$REPO_ROOT/scripts/launchd/$FISH_LABEL.plist"
 FISH_DEST_PLIST="$HOME/Library/LaunchAgents/$FISH_LABEL.plist"
@@ -272,48 +267,6 @@ case "$cmd" in
     esac
     ;;
 
-  trading)
-    sub="${2:-status}"
-    case "$sub" in
-      install)
-        echo "→ installing $TRADE_LABEL"
-        [[ -f "$TRADE_SRC_PLIST" ]] || { echo "plist not found: $TRADE_SRC_PLIST" >&2; exit 1; }
-        mkdir -p "$HOME/Library/LaunchAgents"
-        render_plist "$TRADE_SRC_PLIST" "$TRADE_DEST_PLIST"
-        if pgrep -f 'bun.*integrations/trading/dashboard/main.ts' >/dev/null 2>&1; then
-          echo "→ killing stray trading-dashboard processes"
-          pkill -f 'bun.*integrations/trading/dashboard/main.ts' || true
-          sleep 1
-        fi
-        reload_agent "$TRADE_LABEL" "$TRADE_DEST_PLIST"
-        launchctl enable "$DOMAIN/$TRADE_LABEL"
-        launchctl kickstart -k "$DOMAIN/$TRADE_LABEL"
-        sleep 1
-        "$0" trading status
-        ;;
-      uninstall)
-        launchctl bootout "$DOMAIN/$TRADE_LABEL" 2>/dev/null || true
-        rm -f "$TRADE_DEST_PLIST"
-        echo "→ trading dashboard uninstalled"
-        ;;
-      start)   launchctl kickstart "$DOMAIN/$TRADE_LABEL" ;;
-      stop)    launchctl kill SIGTERM "$DOMAIN/$TRADE_LABEL" || true ;;
-      restart) launchctl kickstart -k "$DOMAIN/$TRADE_LABEL" ;;
-      status)
-        if launchctl print "$DOMAIN/$TRADE_LABEL" >/dev/null 2>&1; then
-          launchctl print "$DOMAIN/$TRADE_LABEL" | grep -E "state|pid|last exit code" | head -5
-        else
-          echo "not loaded — run: $0 trading install"
-        fi
-        ;;
-      logs)    tail -F "$TRADE_LOG" ;;
-      *)
-        echo "usage: $0 trading {install|uninstall|start|stop|restart|status|logs}" >&2
-        exit 2
-        ;;
-    esac
-    ;;
-
   fishing)
     sub="${2:-status}"
     case "$sub" in
@@ -361,7 +314,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: $0 {install|uninstall|start|stop|restart|status|logs|errors|debug|dashboard|trading|fishing|kitchen-host|sms-tunnel|grok-tunnel}" >&2
+    echo "usage: $0 {install|uninstall|start|stop|restart|status|logs|errors|debug|dashboard|fishing|kitchen-host|sms-tunnel|grok-tunnel}" >&2
     exit 2
     ;;
 esac

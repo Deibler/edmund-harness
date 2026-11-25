@@ -30,10 +30,10 @@ const GSM7_EXTENDED = "^{}\\[~]|€";
 const BASIC = new Set(GSM7_BASIC);
 const EXTENDED = new Set(GSM7_EXTENDED);
 
-export const GSM7_SINGLE = 160;
-export const GSM7_CONCAT = 153;
-export const UCS2_SINGLE = 70;
-export const UCS2_CONCAT = 67;
+const GSM7_SINGLE = 160;
+const GSM7_CONCAT = 153;
+const UCS2_SINGLE = 70;
+const UCS2_CONCAT = 67;
 
 export type Encoding = "GSM-7" | "UCS-2";
 

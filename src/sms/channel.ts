@@ -17,7 +17,7 @@ import {
   sdkMessageMediaFetcher,
 } from "./media.ts";
 import { type SmsChannelDelivery, createSmsSender } from "./sender.ts";
-import { conversationIdFromKey, smsChatGuidFor, smsGroupKeyFor, smsKeyFor } from "./session.ts";
+import { smsChatGuidFor, smsGroupKeyFor, smsKeyFor } from "./session.ts";
 import type { SmsStore } from "./store.ts";
 
 /**
@@ -42,8 +42,6 @@ import type { SmsStore } from "./store.ts";
  *    person-keyed, so a deleted-and-recreated Conversation does not fork
  *    someone's history — and `sms:group:<CH sid>` for groups.
  */
-
-export type { SmsChannelDelivery };
 
 export type SmsRuntime = {
   store: SmsStore;
@@ -377,6 +375,3 @@ export function createSmsChannel(opts: {
 function withArticle(noun: string): string {
   return /^[aeiou]/i.test(noun) ? `an ${noun}` : `a ${noun}`;
 }
-
-/** Re-export for wiring code that only has the session key. */
-export { conversationIdFromKey };

@@ -10,10 +10,10 @@ import { join } from "node:path";
  * email — the registry resolves such a send onto the note-to-self thread, and
  * the bridge refuses it as `chat_mismatch`. The message never goes.
  *
- * This was found, understood and fixed once already, in cron/fire.ts, whose
+ * This was found, understood and fixed once already, in scheduler/fire.ts, whose
  * comment reads "Both of today's misdelivered sends were cron deliveries
  * missing this pin." The fix was applied to that one call site. Five others
- * kept sending unpinned — proactive/fire.ts, recovery/turn.ts, the guest-cap
+ * kept sending unpinned — ghost/fire.ts, recovery/turn.ts, the guest-cap
  * decline, and three dashboard-tunnel notices — and went on failing for weeks
  * while the investigation looked at IMCore, at macOS Tahoe, and at the chat
  * GUID format.

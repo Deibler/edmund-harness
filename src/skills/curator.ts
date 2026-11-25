@@ -46,11 +46,11 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { PERSONA_DIR } from "../claude/persona.ts";
 import type { Config } from "../config/config.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { getGroupParticipants } from "../imessage/participants.ts";
 import { runModelOneShot } from "../model/one-shot.ts";
+import { PERSONA_DIR } from "../model/persona.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { recordSpend } from "../spend/ledger.ts";
 import { log } from "../util/log.ts";
@@ -273,7 +273,7 @@ function stripIndexPrefix(text: string): string {
   return text.replace(/^\[\d{4}-\d{2}-\d{2}\]\s*[^:]{0,64}:\s*/, "").trim();
 }
 
-export const CURATOR_PROMPT = `You are the skill curator for a personal assistant that talks to many
+const CURATOR_PROMPT = `You are the skill curator for a personal assistant that talks to many
 different people in separate conversations.
 
 You are shown a sample of things people ASKED FOR, drawn from many different
@@ -483,7 +483,7 @@ export function vetProposal(args: {
 }
 
 /** How many curated skills exist right now. */
-export function curatedCount(db: Record<string, InstallRecord>): number {
+function curatedCount(db: Record<string, InstallRecord>): number {
   return Object.values(db).filter((r) => categoryOf(r) === "curated").length;
 }
 

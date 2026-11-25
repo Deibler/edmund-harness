@@ -21,7 +21,7 @@ import type { Category } from "./types.ts";
 /** "always" restocks itself; "never" is never listed or offered. */
 export type Disposition = "always" | "never";
 
-export type Rule = {
+type Rule = {
   set: Disposition;
   at: string;
   by?: string | null;
@@ -32,7 +32,7 @@ export type Rule = {
  * trip count at the time rather than a timestamp, because a count has no ties
  * with a receipt logged in the same second.
  */
-export type Skip = {
+type Skip = {
   at: string;
   /**
    * Trips the kitchen had seen when the skip was made. Null for skips written
@@ -52,7 +52,7 @@ export type Book = {
  * protein to buy is a fresh choice each trip, and the purchase people least
  * want made for them.
  */
-export const ASK_CATEGORIES: readonly Category[] = ["meat", "seafood"];
+const ASK_CATEGORIES: readonly Category[] = ["meat", "seafood"];
 
 export function restockPath(account: string): string {
   return join(accountDir(), account, "restock.json");
@@ -153,7 +153,7 @@ export function skipped(
 }
 
 /** Trips an item must have been bought on before it counts as something this house keeps. */
-export const STAPLE_TRIPS = 2;
+const STAPLE_TRIPS = 2;
 
 /** What happens when an item runs out. */
 export type RunOut =

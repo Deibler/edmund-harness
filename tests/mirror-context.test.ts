@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mirrorEnvelopeBlock } from "../integrations/mirror/src/context.ts";
-import { buildSystemPrompt } from "../src/claude/system-prompt.ts";
 import type { Config } from "../src/config/config.ts";
+import { buildSystemPrompt } from "../src/model/system-prompt.ts";
 
 describe("Mirror tool invocation guidance", () => {
   test("marks bare MCP catalog names as non-callable", () => {

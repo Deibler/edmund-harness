@@ -122,7 +122,7 @@ describe("skill drift", () => {
   });
 
   test("the system prompt's tool references resolve too", () => {
-    const src = readFileSync(join(REPO, "src", "claude", "system-prompt.ts"), "utf8");
+    const src = readFileSync(join(REPO, "src", "model", "system-prompt.ts"), "utf8");
     const unresolved: string[] = [];
     for (const m of src.matchAll(/\\?`([a-z_][a-z0-9_]*)\(/g)) {
       const name = m[1]!;

@@ -39,7 +39,6 @@ const regions: Region[] = [
         items: [
           { to: "/recall", label: "Recall" },
           { to: "/people", label: "People" },
-          { to: "/annotations", label: "Annotate" },
           { to: "/media", label: "Media" },
           { to: "/logs", label: "Logs" },
         ],

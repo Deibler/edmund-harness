@@ -60,7 +60,7 @@ export function isPrivateAddress(address: string): boolean {
 }
 
 /** The lab's key, made once and kept. */
-export function labKey(dir: string): string {
+function labKey(dir: string): string {
   const path = join(dir, "key");
   if (existsSync(path)) {
     const key = readFileSync(path, "utf8").trim();

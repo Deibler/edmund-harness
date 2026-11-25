@@ -1,5 +1,5 @@
-import { entryToInbound, parsePendingLine, toPendingEntry } from "../bridge/session-queue.ts";
 import type { Deps } from "../channels/deps.ts";
+import { entryToInbound, parsePendingLine, toPendingEntry } from "../channels/session-queue.ts";
 import { handleBatch, shouldAccept } from "../channels/turn.ts";
 import type { TurnOpts } from "../channels/turn.ts";
 import type { AddressChecker } from "../gating/address-check.ts";
@@ -7,9 +7,7 @@ import { guestGateFor } from "../gating/allowlist.ts";
 import { getGroupParticipants } from "../imessage/participants.ts";
 import type { InboundMessage } from "../imessage/types.ts";
 import { readBacklog } from "../imessage/watcher.ts";
-import type { TradingGateFn } from "../integrations/contracts.ts";
-import { integrationExportSync } from "../integrations/optional.ts";
-import { sessionKeyFor, tradingKeyFor } from "../sessions/key.ts";
+import { sessionKeyFor } from "../sessions/key.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import type { SessionLocks } from "../sessions/locks.ts";
 import type { StateStore } from "../sessions/store.ts";
@@ -73,17 +71,8 @@ export function groupBacklog(
       if (!woken) continue;
       msg = woken;
     }
-    // Routing-aware, exactly like the live path: a "wolf …" backlog message
-    // goes to the trading session, everything else to edmund (per-message,
-    // by name only — no stickiness). Record the decision so recovery agrees.
-    const key =
-      integrationExportSync<TradingGateFn>("trading", "index.ts", "tradingGate")?.(
-        msg,
-        deps.config,
-        deps.state,
-      )?.route === "trading"
-        ? tradingKeyFor(msg.fromHandle)
-        : sessionKeyFor(msg, deps.contacts);
+    // Keyed exactly like the live path. Record the decision so recovery agrees.
+    const key = sessionKeyFor(msg, deps.contacts);
     deps.state.recordRouting(msg.rowId, key);
     let batch = groups.get(key);
     if (!batch) {

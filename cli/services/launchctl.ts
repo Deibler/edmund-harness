@@ -4,16 +4,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import {
-  DASHBOARD_LABEL,
-  FISHING_LABEL,
-  HARNESS_LABEL,
-  REPO,
-  SERVICE_SH,
-  TRADING_LABEL,
-} from "./paths.ts";
+import { DASHBOARD_LABEL, FISHING_LABEL, HARNESS_LABEL, REPO, SERVICE_SH } from "./paths.ts";
 
-export type Svc = "harness" | "dashboard" | "trading" | "fishing";
+export type Svc = "harness" | "dashboard" | "fishing";
 
 export type SvcState = {
   label: string;
@@ -25,15 +18,13 @@ export type SvcState = {
 
 function labelFor(svc: Svc): string {
   if (svc === "harness") return HARNESS_LABEL;
-  if (svc === "trading") return TRADING_LABEL;
   if (svc === "fishing") return FISHING_LABEL;
   return DASHBOARD_LABEL;
 }
 
 /**
  * service.sh argv prefix for a service's op. The harness is the bare verb
- * (`install`); dashboard and trading are namespaced (`dashboard install`,
- * `trading install`).
+ * (`install`); the dashboard is namespaced (`dashboard install`).
  */
 function svcArgs(svc: Svc, op: string): string[] {
   return svc === "harness" ? [op] : [svc, op];
@@ -67,11 +58,9 @@ export function localPids(svc: Svc): number[] {
   const pattern =
     svc === "harness"
       ? "bun run.*src/main.ts"
-      : svc === "trading"
-        ? "bun.*integrations/trading/dashboard/main.ts"
-        : svc === "fishing"
-          ? "fishctl serve"
-          : "bun.*dashboard/server/main.ts";
+      : svc === "fishing"
+        ? "fishctl serve"
+        : "bun.*dashboard/server/main.ts";
   const r = spawnSync("pgrep", ["-f", pattern], { encoding: "utf8" });
   if (r.status !== 0) return [];
   return r.stdout

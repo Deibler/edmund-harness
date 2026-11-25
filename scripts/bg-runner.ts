@@ -75,7 +75,7 @@ function fireWakeUp(status: "done" | "failed", summary: string, resultPath?: str
     // dignified...") instead of calling send_attachment. The user got
     // a caption with no image. The model has no need to see the file
     // it just generated; the path in the envelope plus the MANDATORY
-    // instruction above is enough to route it. Annotate/edit flows that
+    // instruction above is enough to route it. Edit flows that
     // genuinely need vision pass attachImages through their own paths.
     const attachImages = undefined;
     crons.create({

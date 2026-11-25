@@ -80,7 +80,7 @@ describe("addresses default to a card, and we can tell whether they did", () => 
   });
 
   test("the prompt makes the card the default, not an option", () => {
-    const prompt = readFileSync(join(import.meta.dir, "..", "src/claude/system-prompt.ts"), "utf8");
+    const prompt = readFileSync(join(import.meta.dir, "..", "src/model/system-prompt.ts"), "utf8");
     expect(prompt).toContain("send_location");
     // "available" would leave it optional; the rule has to be imperative or it
     // loses to the path of least resistance, which is typing the address.

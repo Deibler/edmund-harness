@@ -463,24 +463,6 @@ cdp_port = 9222
 # is mid-turn. 0 disables; the MCP tools still self-heal reactively on use.
 refresh_hours = 6
 
-# Autonomous Robinhood trading sub-persona. REAL MONEY. Reachable only from
-# handles listed here, and only inside its own `trading:` session namespace.
-# Limits below are enforced in code (integrations/trading/src/risk.ts), not
-# merely suggested to the model. See integrations/trading/README.md.
-# [trading]
-# enabled = false
-# handles = []                  # ONLY these handles may reach it. Empty = nobody.
-# trigger_names = ["trader", "quant"]
-# account_number = ""           # must be an agentic_allowed Robinhood account
-# cash_floor = 5                # never let settled cash drop below this
-# max_position_pct = 25         # max % of portfolio in any one name
-# max_order_usd = 12            # hard $ ceiling per order
-# max_orders_per_run = 3        # runaway-loop guard
-# kill_nav = 0                  # below this portfolio value: report only, no trades
-# prefer_limit = true           # marketable limit orders, not plain market
-# dashboard_port = 4848
-# mcp_url = ""                  # hosted Robinhood MCP endpoint
-
 # The smart mirror channel is documented above under [mirror].
 
 # Operator dashboard. It is a PIN gated http UI, so it listens on this Mac
@@ -492,7 +474,7 @@ bind = "127.0.0.1"
 port = 4747
 # external_url = ""   # Public URL if you've fronted the dashboard with a tunnel
 #                     # (cloudflared, ngrok, tailscale funnel). Used by tools that
-#                     # build links for the user's phone, e.g. request_image_annotation.
+#                     # build links for the user's phone, e.g. the portal.
 #                     # Leave empty to fall back to http://<LAN-IP>:<port> (same-Wi-Fi only).
 
 # Instant-share: serve model-generated artifacts (HTML reports, charts, apps)
@@ -506,9 +488,6 @@ port = 4747
 
 # Tool defaults.
 [tools]
-image_provider = "openai"        # "openai" | "gemini"
-image_model = "gpt-image-1"      # or "imagen-3.0-generate-002" for gemini
-tts_voice = "nova"                # openai tts voice
 stt_model = "whisper-1"
 # Local speech-to-text (whisper.cpp), tried before any hosted backend. Install
 # with `brew install whisper-cpp` and put a ggml model where this points (a

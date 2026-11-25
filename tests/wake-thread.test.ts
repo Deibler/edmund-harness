@@ -98,7 +98,7 @@ const sms = {
     sid === SMS_GROUP ? { friendlyName: null, participants: [MEMBER_A, MEMBER_B_SMS] } : null,
 };
 const recentThread = (key: string, guid: string, sinceMs?: number) =>
-  wakeThread(key, guid, { config, chatDb, contacts, state, sms }, sinceMs);
+  wakeThread(key, guid, { config, chatDb, contacts, sms }, sinceMs);
 
 afterAll(() => {
   chatDb.close();
@@ -226,10 +226,10 @@ describe("wake-ups and the recent thread", () => {
   });
 
   test("the mirror and trading sessions have no chat to read", () => {
-    expect(recentThreadLines("mirror:pi-4", GUID, { config, chatDb, contacts, state })).toEqual([]);
-    expect(
-      recentThreadLines(`trading:dm:${HANDLE}`, GUID, { config, chatDb, contacts, state }),
-    ).toEqual([]);
+    expect(recentThreadLines("mirror:pi-4", GUID, { config, chatDb, contacts })).toEqual([]);
+    expect(recentThreadLines(`trading:dm:${HANDLE}`, GUID, { config, chatDb, contacts })).toEqual(
+      [],
+    );
   });
 
   test("a failed read skips the thread instead of stopping the event", () => {

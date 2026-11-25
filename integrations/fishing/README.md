@@ -40,7 +40,7 @@ api_url = "http://127.0.0.1:8087/api/v1"
 ## Service management (launchd)
 
 The fishing API is a first-class managed service alongside the harness, dashboard,
-and trading dashboard. It runs `uv run fishctl serve` (a uv/Python server in
+service. It runs `uv run fishctl serve` (a uv/Python server in
 `~/fishing-data-platform`) under a LaunchAgent (`com.edmund-harness.fishing`,
 KeepAlive) so it auto-starts at login and relaunches on crash.
 
@@ -57,12 +57,12 @@ edmund logs --fishing [-f]     # tail data/fishing.launchd.out.log
 edmund start --fishing --local # foreground (runs scripts/launchd/run-fishing.sh)
 ```
 
-Wiring (mirrors the dashboard/trading services):
+Wiring (mirrors the dashboard service):
 - `scripts/launchd/com.edmund-harness.fishing.plist` + `run-fishing.sh` (wrapper:
   `cd ~/fishing-data-platform && exec uv run fishctl serve`)
 - `scripts/launchd/service.sh` — `fishing {install|uninstall|start|stop|restart|status|logs}`
 - `cli/services/{paths,launchctl,target,preflight}.ts` — `Svc` gains `"fishing"`;
-  default target set is harness + dashboard + trading + fishing; port (8087) parsed
+  default target set is harness + dashboard + fishing; port (8087) parsed
   from `[fishing] api_url`; process signature `fishctl serve`.
 
 Data freshness: run `uv run fishctl scheduler` (separately) if you want connectors

@@ -112,20 +112,6 @@ export async function createKey(p: {
   return { apiKey: body.key, status: toStatus(body.data) };
 }
 
-export async function getKey(p: {
-  provisioningKey: string;
-  hash: string;
-  fetch?: FetchLike;
-}): Promise<KeyStatus> {
-  const body = await call<{ data?: RawKeyData }>(
-    "getKey",
-    p.fetch ?? fetch,
-    `${BASE}/keys/${encodeURIComponent(p.hash)}`,
-    { method: "GET", headers: headers(p.provisioningKey) },
-  );
-  return toStatus(body.data);
-}
-
 export async function updateKey(p: {
   provisioningKey: string;
   hash: string;

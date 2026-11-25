@@ -4,7 +4,7 @@
  * Answers one question: may THIS session reach THIS integration? Every tool
  * exposure and runtime start goes through here, so the rule lives in exactly
  * one place instead of being re-implemented as an ad-hoc `if` at each call
- * site (which is how `trading` tools nearly leaked into ordinary chats before
+ * site (which is how one integration's tools nearly leaked into ordinary chats before
  * they self-gated).
  *
  * Evaluation order — first match wins, deny beats allow:
@@ -15,7 +15,7 @@
  *   4. handles                 → handle allowlist, when non-empty
  */
 
-import { isMirrorSession, isTradingSession, normalizeHandle } from "../sessions/key.ts";
+import { isMirrorSession, normalizeHandle } from "../sessions/key.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import type { Access, Manifest, SessionScope } from "./manifest.ts";
 
@@ -33,16 +33,13 @@ const ALLOWED: AccessDecision = { allowed: true };
 
 /**
  * Classify a session key into its namespace scope. Mirrors the routing rules
- * in `src/sessions/key.ts` — `orch:` and `trading:`/`mirror:` are explicit
- * prefixes, an agent context is flagged by the caller, and everything else is
- * the main persona.
+ * in `src/sessions/key.ts` — `mirror:` is an explicit prefix, an agent
+ * context is flagged by the caller, and everything else is the main persona.
  */
 function scopeForSession(sessionKey: SessionKey | null, isAgent = false): SessionScope {
   if (isAgent) return "agent";
   if (!sessionKey) return "main";
-  if (isTradingSession(sessionKey)) return "trading";
   if (isMirrorSession(sessionKey)) return "mirror";
-  if (sessionKey.startsWith("orch:")) return "orch";
   return "main";
 }
 
@@ -72,7 +69,7 @@ export function resolveAccess(
 
   const scope = scopeForSession(input.sessionKey, input.isAgent);
 
-  // 1. Dedicated-session integrations (trading, mirror) are invisible from
+  // 1. Dedicated-session integrations (the mirror) are invisible from
   //    anywhere but their own namespace. This is the strongest rule and it
   //    runs first so a permissive `sessions: ["*"]` can never widen it.
   if (access.dedicated_session_only) {

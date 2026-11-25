@@ -1,5 +1,5 @@
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
-import { personFilePath } from "../claude/persona.ts";
+import { personFilePath } from "../model/persona.ts";
 import { atomicWriteFileSync } from "../util/atomic-write.ts";
 import { ensurePersonFile } from "./ensure.ts";
 

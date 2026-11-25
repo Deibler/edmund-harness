@@ -49,7 +49,7 @@ export type Charge = {
   footer: (meta?: ChargeMeta) => Promise<string>;
 };
 
-export type ChargeMeta = { model?: string; generationId?: string | null };
+type ChargeMeta = { model?: string; generationId?: string | null };
 
 export class CreditsRefused extends Error {
   constructor(message: string) {
@@ -58,7 +58,7 @@ export class CreditsRefused extends Error {
   }
 }
 
-export const REFUSED_PREFIX = "GENERATION REFUSED";
+const REFUSED_PREFIX = "GENERATION REFUSED";
 
 /** Balances at or under this read as empty — OpenRouter bills fractions of
  *  a cent and a $0.003 remainder cannot buy anything. */
@@ -66,7 +66,7 @@ const EMPTY_USD = 0.01;
 /** Default clip length when the model did not pass one (Veo's default). */
 const DEFAULT_VIDEO_SECONDS = 8;
 
-export function exhaustedMessage(topUpUrl: string, remainingUsd: number | null): string {
+function exhaustedMessage(topUpUrl: string, remainingUsd: number | null): string {
   const left = remainingUsd === null ? "$0.00" : usd(Math.max(0, remainingUsd));
   return [
     `${REFUSED_PREFIX} — the user's generation credit is used up (${left} left). Do not retry and do not try another model.`,
@@ -76,11 +76,7 @@ export function exhaustedMessage(topUpUrl: string, remainingUsd: number | null):
   ].join("\n");
 }
 
-export function shortForVideoMessage(
-  topUpUrl: string,
-  remainingUsd: number,
-  estimateUsd: number,
-): string {
+function shortForVideoMessage(topUpUrl: string, remainingUsd: number, estimateUsd: number): string {
   return [
     `${REFUSED_PREFIX} — this video would cost about ${usd(estimateUsd)} and the user has ${usd(remainingUsd)} of generation credit left. Do not retry as-is.`,
     `Tell them in one or two lines. Their options: a shorter or cheaper clip that fits ${usd(remainingUsd)}, or adding credit here:`,
@@ -88,21 +84,21 @@ export function shortForVideoMessage(
   ].join("\n");
 }
 
-export function unavailableMessage(detail: string): string {
+function unavailableMessage(detail: string): string {
   return [
     `${REFUSED_PREFIX} — the credits system could not be reached (${detail}).`,
     "This is not the user's balance and not their fault. Tell them in one line to try again in a few minutes. Do not retry now.",
   ].join("\n");
 }
 
-export function disabledMessage(): string {
+function disabledMessage(): string {
   return [
     `${REFUSED_PREFIX} — the operator has paused this person's generation key.`,
     "Do not retry. Tell them in one line that generation is paused for them right now and the operator can turn it back on.",
   ].join("\n");
 }
 
-export function accountOutMessage(remainingUsd: number | null): string {
+function accountOutMessage(remainingUsd: number | null): string {
   const theirs = remainingUsd === null ? "their credit" : `their ${usd(remainingUsd)} of credit`;
   return [
     `${REFUSED_PREFIX} — OpenRouter refused payment at the ACCOUNT level, not this person's balance (${theirs} is intact). Do not send them a top-up link.`,
@@ -135,7 +131,7 @@ function agentParentLookup(dataDir: string): (id: string) => string | null {
 /** Per-second price × seconds, from the live model list. Null when the
  *  model is unknown or unpriced — the caller then relies on OpenRouter's
  *  own enforcement rather than refusing on a guess. */
-export async function estimateVideoUsd(p: {
+async function estimateVideoUsd(p: {
   apiKey: string;
   model: string;
   durationS: number | undefined;

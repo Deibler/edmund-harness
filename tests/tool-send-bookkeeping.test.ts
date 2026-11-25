@@ -74,35 +74,17 @@ describe("StateStore.noteToolSend", () => {
 });
 
 describe("recordToolSend", () => {
-  const deps = () => ({ dataDir: dir, sessionKey: KEY, chatGuids: [CHAT] });
+  const deps = () => ({ dataDir: dir, sessionKey: KEY });
 
-  test("bumps last_outbound_ms and records an attribution row for the sent text", () => {
-    recordToolSend(deps(), "on it, gimme a sec");
-    const row = s.getSession(KEY)!;
-    expect(row.lastOutboundMs).toBeGreaterThan(0);
-    const attrs = s.attributionsFor(CHAT, 0);
-    expect(attrs).toHaveLength(1);
-    expect(attrs[0]!.text).toBe("on it, gimme a sec");
-    expect(attrs[0]!.orchestrator).toBe("main");
-  });
-
-  test("an explicit chatGuid (reply_to resolution) wins over the session default", () => {
-    recordToolSend(deps(), "answering the older thread", "chat-guid-2");
-    expect(s.attributionsFor("chat-guid-2", 0)).toHaveLength(1);
-    expect(s.attributionsFor(CHAT, 0)).toHaveLength(0);
-  });
-
-  test("captionless attachment still bumps the outbound clock, without an attribution row", () => {
-    recordToolSend(deps(), "");
+  test("bumps last_outbound_ms", () => {
+    expect(s.getSession(KEY)!.lastOutboundMs).toBe(0);
+    recordToolSend(deps());
     expect(s.getSession(KEY)!.lastOutboundMs).toBeGreaterThan(0);
-    expect(s.attributionsFor(CHAT, 0)).toHaveLength(0);
   });
 
   test("swallows bookkeeping failures — the send already happened", () => {
     // An unwritable data dir makes the StateStore constructor throw inside
     // recordToolSend; the helper must not let that escape to the tool result.
-    expect(() =>
-      recordToolSend({ dataDir: "/dev/null/nope", sessionKey: KEY, chatGuids: [CHAT] }, "hi"),
-    ).not.toThrow();
+    expect(() => recordToolSend({ dataDir: "/dev/null/nope", sessionKey: KEY })).not.toThrow();
   });
 });

@@ -96,7 +96,7 @@ export const TIER_NOTE: Record<Tier, string> = {
 const norm = (s: string) => s.trim().toLowerCase();
 
 /** Match an app by bundle id, file name or display name, ignoring case. */
-export function matchesApp(app: InstalledApp, query: string): boolean {
+function matchesApp(app: InstalledApp, query: string): boolean {
   const q = norm(query).replace(/\.app$/, "");
   return [app.bundleId, app.name, app.displayName].some((n) => norm(n) === q);
 }

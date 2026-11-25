@@ -5,8 +5,8 @@
  * Sessions now fire independently; one session's fires still run in order.
  */
 import { describe, expect, test } from "bun:test";
-import { Scheduler } from "../src/cron/scheduler.ts";
 import type { CronJob } from "../src/cron/types.ts";
+import { Scheduler } from "../src/scheduler/scheduler.ts";
 
 function job(id: string, sessionKey: string, nextFireMs = Date.now() - 1000): CronJob {
   return {

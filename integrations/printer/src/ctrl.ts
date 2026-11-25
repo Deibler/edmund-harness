@@ -20,7 +20,7 @@ const MAGIC_CTRL = 0x0102013f;
 const MTYPE_CTRL = 12289;
 const MTYPE_SETUP = 12291;
 
-export const RESULT = { OK: 0, CONTINUE: 1, FILE_EXISTS: 19, STORAGE_UNAVAILABLE: 17 } as const;
+const RESULT = { OK: 0, CONTINUE: 1, FILE_EXISTS: 19, STORAGE_UNAVAILABLE: 17 } as const;
 
 export type CtrlFile = {
   name: string;

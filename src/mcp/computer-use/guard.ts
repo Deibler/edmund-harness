@@ -344,7 +344,7 @@ export class JevGuard implements Guard {
 }
 
 /** Every harm's probability from a decisions response; throws if any is missing. */
-export function readScores(body: unknown): Record<Harm, number> {
+function readScores(body: unknown): Record<Harm, number> {
   const answers = (body as { answers?: Record<string, { noul?: unknown }> })?.answers;
   if (!answers) throw new Error("classifier returned no answers");
   const out = {} as Record<Harm, number>;

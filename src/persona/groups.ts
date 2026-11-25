@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { groupFilePath } from "../claude/persona.ts";
+import { groupFilePath } from "../model/persona.ts";
 import { atomicWriteFileSync } from "../util/atomic-write.ts";
 import { easternDate } from "../util/clock.ts";
 

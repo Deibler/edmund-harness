@@ -30,7 +30,7 @@ import { log } from "../util/log.ts";
  */
 
 /** How often to try the queue. Short: the failures this clears are transient. */
-export const DRAIN_INTERVAL_MS = 10_000;
+const DRAIN_INTERVAL_MS = 10_000;
 
 /**
  * How long a reply may sit before the operator is told.
@@ -51,7 +51,7 @@ export const STUCK_ALERT_AFTER_MS = 10 * 60_000;
  * burned on one conversation before this was added. Fast while a failure
  * might be a blip, patient once it plainly is not.
  */
-export const MAX_DRAIN_BACKOFF_MS = 5 * 60_000;
+const MAX_DRAIN_BACKOFF_MS = 5 * 60_000;
 
 /**
  * How long a reply sits failing before we try rebuilding the chat registry.

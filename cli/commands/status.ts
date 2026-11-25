@@ -10,7 +10,7 @@ import { loadConfig } from "../../src/config/config.ts";
 import type { Parsed } from "../args.ts";
 import * as ctl from "../services/launchctl.ts";
 import type { Svc } from "../services/launchctl.ts";
-import { DAEMON_LOG, DASHBOARD_LOG, FISHING_LOG, REPO, TRADING_LOG } from "../services/paths.ts";
+import { DAEMON_LOG, DASHBOARD_LOG, FISHING_LOG, REPO } from "../services/paths.ts";
 import { classifyHolders, findPortPids } from "../services/ports.ts";
 import { servicePort, serviceSignature } from "../services/preflight.ts";
 import { prettyName, resolveTargets } from "../services/target.ts";
@@ -140,14 +140,7 @@ function showSvc(svc: Svc): void {
     );
   }
 
-  const logPath =
-    svc === "harness"
-      ? DAEMON_LOG
-      : svc === "trading"
-        ? TRADING_LOG
-        : svc === "fishing"
-          ? FISHING_LOG
-          : DASHBOARD_LOG;
+  const logPath = svc === "harness" ? DAEMON_LOG : svc === "fishing" ? FISHING_LOG : DASHBOARD_LOG;
   if (existsSync(logPath)) {
     const s = statSync(logPath);
     kv("log", `${color.dim(logPath)}  ${color.dim(formatSize(s.size))}`);

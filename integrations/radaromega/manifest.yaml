@@ -20,7 +20,7 @@ access:
   sessions: ["*"]
 
 # No `tools:` entry: RadarOmega's ~26 tools come from the vendored stdio MCP
-# server wired in src/claude/mcp-config.ts, not from a factory in this package.
+# server wired in src/model/mcp-config.ts, not from a factory in this package.
 # The manifest still owns the runtime + docs so the integration is one unit.
 tools: []
 

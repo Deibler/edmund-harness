@@ -1,17 +1,6 @@
 import { isOperatorActionable, isRetryable } from "../alerts/operator-alert.ts";
 import { type Offer, confirmDelivery, pickOffer } from "../announce/offer.ts";
-import { isSessionStale } from "../boot/banner.ts";
-import {
-  type PendingEntry,
-  clearPending,
-  drainPending,
-  peekPending,
-  pendingToInbound,
-  splitSeenMidTurn,
-} from "../bridge/session-queue.ts";
-import { isVoiceLive, spokenSessionFor, voiceBindingFor } from "../calls/binding.ts";
 import { contextTokens, shouldCompact } from "../claude/auto-compact.ts";
-import { envelopeNeedsBrowser } from "../claude/mcp-config.ts";
 import { takeSeenMidTurn } from "../claude/mid-turn.ts";
 import { compactWarmSession } from "../claude/runner.ts";
 import type { Config } from "../config/config.ts";
@@ -41,19 +30,20 @@ import { AUTO_TRANSCRIBE_MAX_DURATION_S, sttBackend } from "../media/transcribe.
 import { describeVideo } from "../media/video-probe.ts";
 import { type AutoRecallResult, recallLogSegment } from "../memory/auto-recall.ts";
 import { type ModelBackend, backendForModel, transitionModelSession } from "../model/backend.ts";
+import { envelopeNeedsBrowser } from "../model/mcp-config.ts";
 import { modelProfileForSession } from "../model/profile.ts";
 import { compactConfigFor, dropRefusedThread, runModel } from "../model/runner.ts";
-import { invocationsForSession, orchestratorForSession } from "../orchestrators/registry.ts";
-import { viewerForSession } from "../orchestrators/visibility.ts";
 import { copyReceivedAttachments } from "../persona/copy-received.ts";
 import { ensurePersonFile } from "../persona/ensure.ts";
 import { ensureGroupFile } from "../persona/groups.ts";
 import { listRecentReceived } from "../persona/recent-received.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
+import { isVoiceLive, spokenSessionFor, voiceBindingFor } from "../sessions/call-binding.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
 import { type SessionKey, chatIdFromKey } from "../sessions/key.ts";
 import { isMirrorSession, isSmsSession } from "../sessions/key.ts";
+import { isSessionStale } from "../sessions/staleness.ts";
 import { localDay, recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { genId } from "../util/ids.ts";
 import { humanCount, log, shortSession } from "../util/log.ts";
@@ -70,13 +60,19 @@ import {
   groupRoster,
 } from "./history.ts";
 import { sentinelAt } from "./sanitize-outbound.ts";
+import {
+  type PendingEntry,
+  clearPending,
+  drainPending,
+  peekPending,
+  pendingToInbound,
+  splitSeenMidTurn,
+} from "./session-queue.ts";
 
 /** Per-turn options. `catchUp` marks a single coalesced turn produced on recovery after the
  *  daemon was down — it carries the missed-message count + downtime so the model is told it
  *  was offline and replies once (or stays silent) instead of answering each missed message. */
 export type TurnOpts = { catchUp?: { count: number; downtimeMs: number } };
-
-const EDMUND_911_TRIGGER_PREFIX = "Claude ";
 
 export function shouldAccept(
   msg: InboundMessage,
@@ -93,20 +89,6 @@ export function shouldAccept(
   if (echoes.isEcho(msg.text, msg.msgGuid)) return false;
   if (looksLikeLeakedScaffolding(msg.text)) {
     console.warn(`[gate] leaked scaffolding in rowId=${msg.rowId}, dropping`);
-    return false;
-  }
-  // Hand-off to edmund-911. Capital-C "Claude " from the operator handle
-  // (config.alerts.operator_handle — the same identity edmund-911 watches,
-  // sourced from config instead of a hardcoded duplicate) is the emergency
-  // trigger; that daemon answers instead. No operator configured ⇒ no hand-off.
-  if (
-    config.alerts?.operator_handle &&
-    msg.fromHandle === config.alerts.operator_handle &&
-    msg.text.startsWith(EDMUND_911_TRIGGER_PREFIX)
-  ) {
-    if (process.env.DEBUG) {
-      console.log(`[gate] skip rowId=${msg.rowId} — edmund-911 trigger`);
-    }
     return false;
   }
   const gate = gateInbound(msg, config, guests);
@@ -481,12 +463,7 @@ async function handleBatchInner(
 
   const session = state.getSession(key);
   const stale = isSessionStale(session, config.behavior.session_idle_hours);
-  const orchestrator = orchestratorForSession(key, config);
-  const orchestratorModel =
-    orchestrator && !orchestrator.builtin && orchestrator.model ? orchestrator.model : null;
-  const selectedBackend = backendForModel(
-    modelProfileForSession(key, config, orchestratorModel).model,
-  );
+  const selectedBackend = backendForModel(modelProfileForSession(key, config).model);
   const transition = transitionModelSession(
     {
       sessionId: session?.claudeSessionId ?? null,
@@ -768,7 +745,7 @@ async function handleBatchInner(
         chatGuid: first.chatGuid,
         replyTo: isGroup && threadAnchor ? threadAnchor : undefined,
         turnId: mirrorTurn || callVoice ? modelTurn.id : undefined,
-        // Spoken only if this turn began on the call (calls/binding.ts).
+        // Spoken only if this turn began on the call (sessions/call-binding.ts).
         sessionKey: spokenSessionFor(key, callVoice),
         grok: grokTurn,
       },
@@ -840,20 +817,6 @@ async function handleBatchInner(
       }
     }
     if (delivery.sent > 0) {
-      // Outbound attribution: iMessage assigns the row GUID server-side, so
-      // we can't key by row — record (chat, owner, exact chunk text, time)
-      // and let the visibility filter match the is_from_me rows back later.
-      // Recorded unconditionally (cheap, pruned with message_routing) so
-      // history stays attributable even if orchestrators are configured
-      // after the fact.
-      // A spoken reply has no chat.db row to attribute.
-      if (delivery.medium !== "voice") {
-        state.recordSentAttribution(
-          first.chatGuid,
-          viewerForSession(key) ?? "main",
-          delivery.sentChunks,
-        );
-      }
       state.upsertSession({
         sessionKey: key,
         claudeSessionId,
@@ -883,15 +846,11 @@ async function handleBatchInner(
       // dedup'd per session). Updates persona/people/<handle>.md (DMs)
       // or persona/groups/<slug>.md (groups). Runs regardless of
       // brown-nose state — memory hygiene is decoupled from proactive
-      // outreach. Skipped for named-orchestrator sessions: the maintainer
-      // reads raw chat history and writes into SHARED person files, which
-      // the primary's system prompt auto-injects — a secondary's private
-      // exchange must not leak there. (Ghost guards orch: internally.)
-      // Skipped for guest tiers too: conversation-scoped memory only.
-      if (!key.startsWith("orch:") && !guest && texted) deps.personMaintainer?.onMainReplied(key);
+      // outreach. Skipped for guest tiers: conversation-scoped memory only.
+      if (!guest && texted) deps.personMaintainer?.onMainReplied(key);
       // Ideations: same trigger and the same exclusions. The observer itself
       // admits only configured people in one-to-one iMessage chats.
-      if (!key.startsWith("orch:") && !guest && texted) deps.ideationObserver?.onMainReplied(key);
+      if (!guest && texted) deps.ideationObserver?.onMainReplied(key);
     }
   };
 
@@ -936,10 +895,8 @@ async function handleBatchInner(
     if (last.msgGuid) replyAnchor = last.msgGuid;
     const coldStart = iter === 0 && !claudeSessionId;
 
-    // Names to strip / re-gate against: the invocations of whichever
-    // orchestrator owns THIS session ("desmond, …" turns strip "desmond";
-    // main sessions keep stripping identity.names exactly as before).
-    const sessionNames = invocationsForSession(key, config);
+    // Names to strip / re-gate against.
+    const sessionNames = config.identity.names;
     const cleaned: InboundMessage[] = messages.map((m) => ({
       ...m,
       text: sanitizeInbound(isGroup ? stripMention(m.text, sessionNames) : m.text),

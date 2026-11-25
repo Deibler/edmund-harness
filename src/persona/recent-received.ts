@@ -94,8 +94,3 @@ export function listRecentReceived(sandboxPath: string, limit = 6): RecentItem[]
   cache.set(sandboxPath, { limit, bucketMtimes: sigs, items: result });
   return result;
 }
-
-/** Test-only: clear the in-process cache so tests don't share state. */
-export function _resetRecentReceivedCache(): void {
-  cache.clear();
-}

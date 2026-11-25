@@ -76,7 +76,7 @@ export function percentile(values: number[], p: number): number | null {
 }
 
 /** Counts of the log lines that mark background work failing or helping. */
-export const LOG_SIGNALS: Array<{ label: string; re: RegExp }> = [
+const LOG_SIGNALS: Array<{ label: string; re: RegExp }> = [
   { label: "scheduled job failed", re: /\[cron\] fire failed/ },
   { label: "scheduled job gave up after retries", re: /retries exhausted/ },
   { label: "memory note pass failed", re: /\[persona-maintainer\] model call failed/ },

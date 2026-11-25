@@ -28,10 +28,10 @@ import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { configuredAgentModel, notifyParent } from "../src/agents/spawn.ts";
 import { AgentStore } from "../src/agents/store.ts";
-import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "../src/claude/direct-env.ts";
 import { buildCodexExecArgs, codexExecutable, parseCodexJsonLine } from "../src/codex/runner.ts";
 import { CronStore } from "../src/cron/store.ts";
 import { backendForModel } from "../src/model/backend.ts";
+import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "../src/model/direct-env.ts";
 import type { ModelEffort } from "../src/model/profile.ts";
 import {
   type HostAccess,
@@ -62,11 +62,7 @@ if (!store.claimRunning(id, process.pid)) {
   process.exit(0);
 }
 
-// Trading sub-agents load the trading MCP config (Robinhood tools) so they can
-// research with live market data — but they are forbidden from placing orders
-// (see the preamble below); execution stays in the parent trading session.
-const isTrading = process.env.EDMUND_TRADING === "1";
-const mcpConfig = join(dataDir, isTrading ? "mcp-trading.json" : "mcp.json");
+const mcpConfig = join(dataDir, "mcp.json");
 const teamShared = process.env.AGENT_TEAM_SHARED;
 const teamId = process.env.AGENT_TEAM_ID;
 const role = process.env.AGENT_ROLE;
@@ -83,24 +79,9 @@ const teamLines = teamShared
     ]
   : [];
 
-const tradingLines = isTrading
-  ? [
-      ``,
-      `You are a RESEARCH sub-agent for an autonomous Robinhood trading bot.`,
-      `You have read access to Robinhood market data and the web. Your job is to`,
-      `research and RECOMMEND — gather data, analyze, and produce a clear thesis.`,
-      `You must NEVER place, modify, or cancel any order, and never call`,
-      `place_equity_order / cancel_equity_order. All execution happens in the`,
-      `parent trading session through its risk-checked path. If your analysis`,
-      `suggests a trade, state it as a recommendation (symbol, side, size rationale,`,
-      `entry/exit logic) for the parent to risk-check and place.`,
-    ]
-  : [];
-
 const systemPrompt = [
   `You are a sub-agent working on behalf of Edmund's iMessage assistant.`,
   `You are NOT Edmund and NOT talking to a user directly; your parent will relay results.`,
-  ...tradingLines,
   ``,
   `Task:`,
   task,

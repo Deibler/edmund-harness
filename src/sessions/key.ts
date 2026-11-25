@@ -15,22 +15,22 @@ export type SessionKey = string;
 const PREFIX_DM = "imessage:dm:";
 const PREFIX_GROUP = "imessage:group:";
 /**
- * Trading sub-persona namespace. A DM from one of the trading handles that
- * has switched into the trading persona is keyed here instead of the normal
- * `imessage:dm:` namespace, so it gets the trading loadout (persona +
- * mcp-trading.json) everywhere downstream — persona load, system prompt,
- * MCP-config selection, sandbox slug, and cron-fire target — automatically.
+ * Namespaces of features that were removed: a trading sub-persona
+ * (`trading:dm:<handle>`) and named orchestrators (`orch:<name>:…`). Nothing
+ * creates such a key any more, but a deployment that used either still has
+ * rows keyed this way in state.db and in the routing table. They must never
+ * be acted on. A trading key in particular carries a real person's handle:
+ * treated as an ordinary key it would resolve to that person's live DM, its
+ * sandbox and its unanswered messages. So the store does not list these rows
+ * (StateStore.listSessions), and `chatIdFromKey` hands a retired key back
+ * whole instead of the handle inside it.
  */
-const PREFIX_TRADING_DM = "trading:dm:";
-/**
- * Named-orchestrator namespace. A message that invokes a configured
- * orchestrator by name ("desmond, ...") is keyed `orch:<okey>:dm:<handle>`
- * or `orch:<okey>:group:<chatGuid>` so that persona, model, MCP env, sandbox
- * and history scope all resolve per-orchestrator — exactly the same trick as
- * the trading namespace, generalized. The built-in main persona keeps the
- * legacy un-prefixed `imessage:` keys so existing session memory survives.
- */
-const PREFIX_ORCH = "orch:";
+const RETIRED_PREFIXES = ["trading:", "orch:"] as const;
+
+/** True for a session key left behind by a removed feature. */
+export function isRetiredSession(key: string): boolean {
+  return RETIRED_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
 
 export type ContactResolver = { canon: (h: string) => string };
 
@@ -58,11 +58,7 @@ export function normalizeHandle(h: string): string {
 }
 
 export function isGroupSession(key: SessionKey): boolean {
-  return (
-    key.startsWith(PREFIX_GROUP) ||
-    key.startsWith("sms:group:") ||
-    (key.startsWith(PREFIX_ORCH) && key.includes(":group:"))
-  );
+  return key.startsWith(PREFIX_GROUP) || key.startsWith("sms:group:");
 }
 
 /** True for a plain main-persona DM session (`imessage:dm:<handle>`). Guest
@@ -70,11 +66,6 @@ export function isGroupSession(key: SessionKey): boolean {
  *  exclusions (ghost targeting, enrollment) key off this + tier resolution. */
 export function isDmSession(key: SessionKey): boolean {
   return key.startsWith(PREFIX_DM);
-}
-
-/** True for a trading sub-persona session key. Trading is DM-only. */
-export function isTradingSession(key: SessionKey): boolean {
-  return key.startsWith(PREFIX_TRADING_DM);
 }
 
 /** True for an SMS (Twilio) session key. SMS conversations live in their own
@@ -110,43 +101,9 @@ export function isSubagentSession(key: SessionKey | string): boolean {
   return key.startsWith("agent:") || process.env.EDMUND_AGENT === "1";
 }
 
-/** Build the trading session key for a (normalized) handle. */
-export function tradingKeyFor(handle: string): SessionKey {
-  return `${PREFIX_TRADING_DM}${normalizeHandle(handle)}`;
-}
-
 /** Build the DM session key for a (normalized) handle. Mirrors sessionKeyFor. */
 export function dmKeyFor(handle: string): SessionKey {
   return `${PREFIX_DM}${normalizeHandle(handle)}`;
-}
-
-/** Build the session key for a named orchestrator. Mirrors sessionKeyFor. */
-export function orchKeyFor(
-  orchKey: string,
-  msg: InboundMessage,
-  contacts?: ContactResolver,
-): SessionKey {
-  if (msg.isGroup) return `${PREFIX_ORCH}${orchKey}:group:${msg.chatGuid}`;
-  const raw = msg.fromHandle || msg.chatIdentifier;
-  const canon = contacts ? contacts.canon(raw) : normalizeHandle(raw);
-  return `${PREFIX_ORCH}${orchKey}:dm:${canon}`;
-}
-
-/**
- * Which orchestrator owns this session?
- *  - `orch:<okey>:…`  → that orchestrator
- *  - `imessage:…`     → "main" (the built-in persona)
- *  - anything else (trading, cron, …) → null: not part of the named-
- *    orchestrator world; callers treat it as exempt from visibility rules.
- */
-export function orchestratorOfSession(key: SessionKey): string | null {
-  if (key.startsWith(PREFIX_ORCH)) {
-    const rest = key.slice(PREFIX_ORCH.length);
-    const cut = rest.indexOf(":");
-    return cut > 0 ? rest.slice(0, cut) : null;
-  }
-  if (key.startsWith(PREFIX_DM) || key.startsWith(PREFIX_GROUP)) return "main";
-  return null;
 }
 
 export function chatIdFromKey(key: SessionKey): string {
@@ -158,12 +115,8 @@ export function chatIdFromKey(key: SessionKey): string {
   // handle, so a stale row still resolves to their iMessage DM.
   if (key.startsWith("grok:dm:")) return key.slice("grok:dm:".length);
   if (key.startsWith(PREFIX_GROUP)) return key.slice(PREFIX_GROUP.length);
-  if (key.startsWith(PREFIX_TRADING_DM)) return key.slice(PREFIX_TRADING_DM.length);
   if (key.startsWith(PREFIX_DM)) return key.slice(PREFIX_DM.length);
-  if (key.startsWith(PREFIX_ORCH)) {
-    const rest = key.slice(PREFIX_ORCH.length);
-    const m = rest.match(/^[^:]+:(?:dm|group):(.*)$/);
-    if (m) return m[1]!;
-  }
+  // A retired key (isRetiredSession) falls through on purpose: the whole key
+  // is not anyone's handle, so nothing built from it can reach a real chat.
   return key;
 }

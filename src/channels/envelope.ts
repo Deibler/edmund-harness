@@ -135,7 +135,7 @@ export type EnvelopeContext = {
  * check that let it in only decides whether to wake him; whether anything
  * needs saying is his call, so the line says so.
  */
-export function describeUnnamedWake(w: UnnamedWake): string {
+function describeUnnamedWake(w: UnnamedWake): string {
   const why =
     w.reason === "reply-to-assistant"
       ? "it's a swipe-reply to one of your messages"
@@ -373,7 +373,7 @@ export function buildEnvelope(ctx: EnvelopeContext): string {
  * before callers were tracked) keeps the plain wording. Several distinct callers
  * in one batch are all named.
  */
-export function grokFromLine(ctx: Pick<EnvelopeContext, "messages" | "senderLabel">): string {
+function grokFromLine(ctx: Pick<EnvelopeContext, "messages" | "senderLabel">): string {
   const grok = ctx.messages.filter((m) => isGrokInbound(m) || isGrokAsyncInbound(m));
   const named = new Map<string, string>();
   for (const m of grok) {

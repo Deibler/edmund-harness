@@ -15,10 +15,10 @@ import { priceMaxAgeDays } from "./settings.ts";
 import { slug } from "./store.ts";
 
 export const STORES = ["aldi", "giant", "walmart", "target"] as const;
-export type Store = (typeof STORES)[number];
+type Store = (typeof STORES)[number];
 
 /** Resolved per call, so a configured data directory always applies. */
-export function priceFile(): string {
+function priceFile(): string {
   return join(baseDir(), "prices.json");
 }
 
@@ -49,7 +49,7 @@ export function loadPrices(): PriceBook {
   return JSON.parse(readFileSync(priceFile(), "utf8")) as PriceBook;
 }
 
-export function savePrices(book: PriceBook): void {
+function savePrices(book: PriceBook): void {
   const f = priceFile();
   mkdirSync(dirname(f), { recursive: true });
   const tmp = `${f}.tmp`;
@@ -62,7 +62,7 @@ export function savePrices(book: PriceBook): void {
  * count). An unparseable size returns null and is ranked on sticker price
  * instead of being guessed into comparability.
  */
-export function unitize(
+function unitize(
   price: number,
   size?: string | null,
 ): { unitPrice: number | null; unit: string | null } {

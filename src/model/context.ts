@@ -1,15 +1,13 @@
-import { buildSystemPrompt } from "../claude/system-prompt.ts";
 import type { Config } from "../config/config.ts";
 import { collectIntegrationInstructions } from "../integrations/host.ts";
 import * as intSettings from "../integrations/settings.ts";
-import type { Orchestrator } from "../orchestrators/registry.ts";
 import {
   type SessionKey,
   chatIdFromKey,
   isGroupSession,
   isMirrorSession,
-  isTradingSession,
 } from "../sessions/key.ts";
+import { buildSystemPrompt } from "./system-prompt.ts";
 
 type PromptInput = {
   sessionKey: SessionKey;
@@ -24,13 +22,8 @@ type PromptInput = {
 };
 
 /** Build the provider-neutral prompt shared by Claude Code and Codex. */
-export function buildRunSystemPrompt(
-  input: PromptInput,
-  config: Config,
-  orchestrator: Orchestrator | null,
-): string {
+export function buildRunSystemPrompt(input: PromptInput, config: Config): string {
   const isGroup = isGroupSession(input.sessionKey);
-  const isTrading = isTradingSession(input.sessionKey);
   const isGuest = input.guest != null && input.guest.loadout !== "allowlisted";
   return buildSystemPrompt({
     senderLabel: input.senderLabel,
@@ -48,22 +41,8 @@ export function buildRunSystemPrompt(
           config,
         ),
     radarOmegaEnabled: intSettings.radaromega(config).enabled,
-    orchestrator: orchestrator ? { key: orchestrator.key, name: orchestrator.name } : null,
     guestTier: input.guest?.tier ?? null,
     guestLoadout: input.guest?.loadout ?? null,
     campaignContextPath: input.guest?.campaignContextPath ?? null,
-    isTrading,
-    tradingConfig: isTrading
-      ? {
-          accountNumber: intSettings.trading(config).account_number,
-          cashFloor: intSettings.trading(config).cash_floor,
-          maxPositionPct: intSettings.trading(config).max_position_pct,
-          maxOrderUsd: intSettings.trading(config).max_order_usd,
-          maxOrdersPerRun: intSettings.trading(config).max_orders_per_run,
-          killNav: intSettings.trading(config).kill_nav,
-          preferLimit: intSettings.trading(config).prefer_limit,
-          universe: intSettings.trading(config).universe,
-        }
-      : undefined,
   });
 }

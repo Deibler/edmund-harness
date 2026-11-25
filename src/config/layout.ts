@@ -15,7 +15,7 @@ import { parse, stringify } from "smol-toml";
  * file, and config.example.toml follows the same order (a test checks).
  */
 
-export type LayoutSection = { name: string; note: string };
+type LayoutSection = { name: string; note: string };
 export type LayoutTier = { title: string; intro: string; sections: LayoutSection[] };
 
 export const CONFIG_LAYOUT: LayoutTier[] = [
@@ -93,14 +93,6 @@ export const CONFIG_LAYOUT: LayoutTier[] = [
       },
       { name: "fishing", note: "The fishing data service." },
       { name: "radaromega", note: "The RadarOmega weather app Edmund drives." },
-      {
-        name: "trading",
-        note: "Robinhood trading. Real money: leave disabled unless you mean it.",
-      },
-      {
-        name: "orchestrators",
-        note: "Extra named personas on other models. Empty means Edmund alone.",
-      },
       { name: "dashboard", note: "The operator dashboard." },
       { name: "instant_share", note: "Quick share pages." },
       { name: "tools", note: "Image, speech and voice providers for the built-in tools." },
@@ -227,7 +219,7 @@ function wrap(text: string, width = 78): string[] {
 }
 
 /** The ruled banner that opens a tier, shared by the formatter and config.example.toml. */
-export function tierBanner(t: LayoutTier): string[] {
+function tierBanner(t: LayoutTier): string[] {
   const rule = `# ${"═".repeat(76)}`;
   return [rule, `# ${t.title.toUpperCase()}`, ...wrap(t.intro), rule];
 }

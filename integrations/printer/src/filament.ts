@@ -21,8 +21,8 @@ export type Need = {
   infoIdx?: string;
 };
 
-export type Assignment = { need: Need; tray: Tray; distance: number };
-export type Swap = { need: Need; slot: Tray; replaces: Tray | null };
+type Assignment = { need: Need; tray: Tray; distance: number };
+type Swap = { need: Need; slot: Tray; replaces: Tray | null };
 
 export type Plan = {
   ok: boolean;

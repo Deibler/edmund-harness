@@ -40,7 +40,7 @@ import { join } from "node:path";
 import { recallSightSince } from "../src/boot/wire-recall.ts";
 import { loadConfig } from "../src/config/config.ts";
 import { ChatDb } from "../src/imessage/db.ts";
-import { RECALL_KINDS, autoRecall } from "../src/memory/auto-recall.ts";
+import { autoRecall } from "../src/memory/auto-recall.ts";
 import { embedQuery, makeProvider } from "../src/memory/embed-provider.ts";
 import { VectorStore, normalize } from "../src/memory/vector-store.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";

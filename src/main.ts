@@ -13,6 +13,7 @@ import { banner, highWaterMark } from "./boot/banner.ts";
 import { daemonBusy } from "./boot/busy.ts";
 import { type CatchUp, runCatchUp } from "./boot/catchup.ts";
 import { hardenHarnessPermissions } from "./boot/harden-permissions.ts";
+import { checkLoadout, formatLoadoutReport } from "./boot/loadout-check.ts";
 import { LoopLagMonitor } from "./boot/loop-lag.ts";
 import { schedulingPriority, throttledQosWarning } from "./boot/qos.ts";
 import {
@@ -25,17 +26,15 @@ import { crashesSinceLastBoot, describeUptime } from "./boot/runtime-crash.ts";
 import { missingStorage } from "./boot/storage.ts";
 import { wireRecall } from "./boot/wire-recall.ts";
 import { wireRecovery } from "./boot/wire-recovery.ts";
-import { toPendingEntry, writePending } from "./bridge/session-queue.ts";
-import { anyVoiceLive } from "./calls/binding.ts";
 import { startCallRuntime } from "./calls/runtime.ts";
 import { isBargeIn } from "./channels/barge-in.ts";
 import { deliverReply, setGrokDeliverer, setSmsDeliverer } from "./channels/deliver.ts";
 import type { Deps } from "./channels/deps.ts";
 import { wakeThread } from "./channels/history.ts";
 import { SessionPipeline } from "./channels/pipeline.ts";
+import { toPendingEntry, writePending } from "./channels/session-queue.ts";
 import { handleBatch, shouldAccept } from "./channels/turn.ts";
 import { startCliWatch } from "./claude/cli-canary.ts";
-import { checkLoadout, formatLoadoutReport } from "./claude/loadout-check.ts";
 import { showToRunningTurn } from "./claude/mid-turn.ts";
 import {
   evictIdleWorkerForMemory,
@@ -46,8 +45,6 @@ import {
 } from "./claude/runner.ts";
 import { loadConfig } from "./config/config.ts";
 import { startCreditsMaintenance } from "./credits/maintenance.ts";
-import { fireJob } from "./cron/fire.ts";
-import { Scheduler } from "./cron/scheduler.ts";
 import { CronStore } from "./cron/store.ts";
 import { maybeRunPersonaProbes, runWeeklyEvalIfDue } from "./evals/loop.ts";
 import { AddressChecker } from "./gating/address-check.ts";
@@ -56,6 +53,7 @@ import { intensityTable, resolveIntensity } from "./ghost/intensity.ts";
 import { GhostObserver } from "./ghost/observer.ts";
 import { sweepFireOutcomes } from "./ghost/outcomes.ts";
 import { GhostPrefsStore, autoEnrollSessions } from "./ghost/prefs.ts";
+import { initSemaphore } from "./ghost/semaphore.ts";
 import { setGhostAlertHook } from "./ghost/think.ts";
 import { createGrokChannel } from "./grok/channel.ts";
 import { type GrokRelay, trackGrokTurns } from "./grok/relay.ts";
@@ -71,20 +69,20 @@ import {
   stopBridge,
 } from "./imessage/bridge/index.ts";
 import { ChatDb } from "./imessage/db.ts";
-import { decodeMessageText } from "./imessage/decode.ts";
 import { dmChatGuid, getGroupParticipants } from "./imessage/participants.ts";
 import { configureSendVerification } from "./imessage/send.ts";
 import type { InboundMessage } from "./imessage/types.ts";
 import { startWatcher } from "./imessage/watcher.ts";
 import * as intSettings from "./integrations/settings.ts";
 import { backendForModel } from "./model/backend.ts";
-import { routeForMessage, sessionKeyForOrchestrator } from "./orchestrators/registry.ts";
 import { sweepAllArchives } from "./persona/archive.ts";
 import { PersonMaintainer } from "./persona/maintainer-observer.ts";
 import { reapSandboxCaches } from "./persona/sandbox-reaper.ts";
-import { initSemaphore } from "./proactive/semaphore.ts";
+import { fireJob } from "./scheduler/fire.ts";
+import { Scheduler } from "./scheduler/scheduler.ts";
 import { hostAccess } from "./security/policy.ts";
 import { AddressBook } from "./sessions/address-book.ts";
+import { anyVoiceLive } from "./sessions/call-binding.ts";
 import { ContactBook } from "./sessions/contacts.ts";
 import { EchoCache } from "./sessions/echo-cache.ts";
 import {
@@ -92,7 +90,7 @@ import {
   chatIdFromKey,
   isDmSession,
   normalizeHandle,
-  tradingKeyFor,
+  sessionKeyFor,
 } from "./sessions/key.ts";
 import { LearnedNames } from "./sessions/learned-names.ts";
 import { SkillCurator } from "./skills/curator-observer.ts";
@@ -103,16 +101,11 @@ import { ensureTwilioWebhooks } from "./sms/twilio-config.ts";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const execAsync = promisify(exec);
-import type { TradingGateFn } from "./integrations/contracts.ts";
 import { startIntegrationRuntimes, stopIntegrationRuntimes } from "./integrations/host.ts";
-import {
-  integrationExport,
-  integrationExportSync,
-  warmOptionalExports,
-} from "./integrations/optional.ts";
+import { integrationExport } from "./integrations/optional.ts";
 import { initRegistryFromConfig } from "./integrations/registry.ts";
 import { setEmbedHealthHook, trimTransformerEmbeddingWorkers } from "./memory/embed-provider.ts";
-import { guardTurnWorkers } from "./recovery/turn-workers.ts";
+import { guardTurnWorkers } from "./model/turn-workers.ts";
 import { RefreshWatcher, buildRefreshRepairEvent } from "./refresh/runner.ts";
 import { RefreshScriptStore } from "./refresh/store.ts";
 import { SessionLocks, sessionLockTimeoutMs } from "./sessions/locks.ts";
@@ -141,8 +134,6 @@ async function main() {
   // Build the integration registry from [integrations] before anything asks
   // for tools or runtimes.
   initRegistryFromConfig(config);
-  // Pre-resolve integration exports the watcher reads synchronously.
-  await warmOptionalExports();
   const logPath = installLogSink(config.paths.data_dir);
   console.log(`[edmund-harness] logging to ${logPath}`);
   // Before the control socket is served and before catch-up replays anything:
@@ -265,7 +256,7 @@ async function main() {
   });
   // Start the ghost observer. Phase 3: when ghost says act:true, the
   // observer enqueues a brown-nose cron row that the existing scheduler
-  // picks up — fireJob routes [BROWN_NOSE] events to src/proactive/fire.ts.
+  // picks up — fireJob routes [BROWN_NOSE] events to src/ghost/fire.ts.
   // Named so the SMS block below can attach its transcript reader once the
   // channel is up (the same late wiring deps.sms gets).
   const ghostDeps: ConstructorParameters<typeof GhostObserver>[0] = {
@@ -765,7 +756,7 @@ async function main() {
   // when idle, so the extra ticks are essentially free.)
   const externalPoke = setInterval(() => scheduler.poke(), 2_000);
 
-  // Integration runtimes (trading price-triggers, RadarOmega freshness
+  // Integration runtimes (the printer's watch loop, RadarOmega freshness
   // watchdog, the mirror bridge, …). Each package declares its runtime in
   // `manifest.yaml`; the registry imports and starts only the ones installed
   // AND enabled, so this block does not name any specific integration and an
@@ -1138,25 +1129,7 @@ async function main() {
   // once this returns. The address check calls it too, for an un-named group
   // message Jev judged to be for the assistant, after the cursor has moved on.
   const routeAccepted = (msg: InboundMessage): void => {
-    // Trading sub-persona routing: an eligible handle that has switched into
-    // the trading persona is keyed into the `trading:dm:` namespace, which
-    // carries the trading loadout (persona + Robinhood tools) everywhere
-    // downstream. The two-handle restriction is enforced here, before the
-    // key is computed, independent of allowlist.dm.
-    //
-    // Otherwise, named-orchestrator routing (same per-message, no-stickiness
-    // model): a message that names a configured orchestrator ("desmond, …")
-    // is keyed into that orchestrator's namespace; an un-named message goes
-    // to the primary. With no [[orchestrators]] configured this collapses
-    // to the legacy sessionKeyFor — byte-identical routing.
-    const key =
-      integrationExportSync<TradingGateFn>("trading", "index.ts", "tradingGate")?.(
-        msg,
-        config,
-        state,
-      )?.route === "trading"
-        ? tradingKeyFor(msg.fromHandle)
-        : sessionKeyForOrchestrator(routeForMessage(msg.text, config), msg, contacts);
+    const key = sessionKeyFor(msg, contacts);
 
     // On-demand Cloudflare dashboard tunnel trigger for the operator DM
     if (!msg.isGroup && msg.fromHandle && config.alerts.operator_handle) {

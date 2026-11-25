@@ -17,10 +17,10 @@ import { append, fold, match } from "./store.ts";
 import type { Item, KitchenEvent } from "./types.ts";
 
 export const VERDICTS = ["here", "frozen", "low", "gone"] as const;
-export type ItemVerdict = (typeof VERDICTS)[number];
+type ItemVerdict = (typeof VERDICTS)[number];
 
 /** Stamped on writes that record what a person said about their kitchen. */
-export const TOLD_SRC = "told";
+const TOLD_SRC = "told";
 
 export type VerdictInput = { item: string; verdict: ItemVerdict; reason?: string | null };
 

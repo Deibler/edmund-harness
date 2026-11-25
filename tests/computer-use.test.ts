@@ -22,7 +22,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureMcpConfig } from "../src/claude/mcp-config.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { CronStore } from "../src/cron/store.ts";
 import { ChatDb } from "../src/imessage/db.ts";
@@ -53,7 +52,6 @@ import {
   movesCaret,
   parseChord,
 } from "../src/mcp/computer-use/keys.ts";
-import { HOLD_IDLE_MS, ScreenLock, endScreenHold } from "../src/mcp/computer-use/lock.ts";
 import type {
   Button,
   Capture,
@@ -98,13 +96,15 @@ import {
   isUntitled,
 } from "../src/mcp/computer-use/session.ts";
 import { MIN_EXPLANATION, computerTools } from "../src/mcp/computer-use/tools.ts";
-import { noteTurnStart, readTurn } from "../src/mcp/computer-use/turn.ts";
 import type { ToolContext } from "../src/mcp/context.ts";
 import { cronTools } from "../src/mcp/tools/cron.ts";
 import type { ToolResult } from "../src/mcp/tools/types.ts";
 import { zodToJsonSchema } from "../src/mcp/zod-to-json.ts";
+import { ensureMcpConfig } from "../src/model/mcp-config.ts";
 import { noteScreenTurn, releaseScreen } from "../src/model/runner.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
+import { HOLD_IDLE_MS, ScreenLock, endScreenHold } from "../src/sessions/screen-lock.ts";
+import { noteTurnStart, readTurn } from "../src/sessions/turn-origin.ts";
 
 const CMD = 0x100000;
 const SHIFT = 0x20000;
@@ -3419,7 +3419,6 @@ describe("MCP config", () => {
     const paths = ensureMcpConfig(config);
     expect(servers(paths.default)).toContain("computer");
     expect(servers(paths.withBrowser)).toContain("computer");
-    expect(servers(paths.trading)).toContain("computer");
     expect(servers(paths.guest)).toEqual(["edmund-harness"]);
     // Claude Code drops a configured server named after its built-in one.
     expect(servers(paths.default)).not.toContain("computer-use");

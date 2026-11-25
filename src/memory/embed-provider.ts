@@ -193,7 +193,7 @@ function tellHealth(event: EmbedHealthEvent): void {
 /** When failures are an outage rather than a blip: this many in a row,
  *  spanning at least this long. */
 export type EmbedAlertAfter = { failures: number; ms: number };
-export const EMBED_ALERT_AFTER: EmbedAlertAfter = { failures: 3, ms: 5 * 60_000 };
+const EMBED_ALERT_AFTER: EmbedAlertAfter = { failures: 3, ms: 5 * 60_000 };
 
 /**
  * Local embeddings via @huggingface/transformers (Transformers.js).
@@ -216,7 +216,7 @@ export const EMBED_ALERT_AFTER: EmbedAlertAfter = { failures: 3, ms: 5 * 60_000 
  * live recall query waits behind a backfill, since chunks are sent one at a
  * time and a query slots in between them.
  */
-export const LOCAL_EMBED_BATCH = 8;
+const LOCAL_EMBED_BATCH = 8;
 
 /**
  * Most texts one index request sends. A batch cannot be interrupted, so it is

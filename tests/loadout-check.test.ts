@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkLoadout } from "../src/claude/loadout-check.ts";
+import { checkLoadout } from "../src/boot/loadout-check.ts";
 
 // Only the model-name check: whether a claude binary is installed varies by
 // machine (CI has none).

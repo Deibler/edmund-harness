@@ -8,13 +8,13 @@
  * category averages is a ballpark and must be presented as one.
  */
 
-export type Macro = { kcal: number; protein: number; carb: number; fat: number };
+type Macro = { kcal: number; protein: number; carb: number; fat: number };
 /**
  * `carried`: a leftover, counted when it was cooked, so zero here and excluded
  * from confidence. `mismatched-unit`: a use recorded in a unit other than the
  * stocking unit, which contributes nothing rather than a wrong number.
  */
-export type Basis = "table" | "category" | "carried" | "mismatched-unit" | "unknown";
+type Basis = "table" | "category" | "carried" | "mismatched-unit" | "unknown";
 
 /**
  * Per one stocking unit (a bag, a jug, a package, one egg). Portions come from
@@ -131,7 +131,7 @@ const BY_CATEGORY: Record<string, Macro> = {
 
 const ZERO: Macro = { kcal: 0, protein: 0, carb: 0, fat: 0 };
 
-export function macroFor(itemId: string, cat?: string): { macro: Macro; basis: Basis } {
+function macroFor(itemId: string, cat?: string): { macro: Macro; basis: Basis } {
   const hit = TABLE[itemId];
   if (hit) return { macro: hit, basis: "table" };
   // Leftovers were counted when the meal was cooked.
@@ -194,7 +194,7 @@ export function addTo(
  * How much of a total rests on table hits, 0..1. Leftovers are excluded from
  * both sides: they are a deliberate zero, not a measurement.
  */
-export function confidence(t: MacroTotal): number {
+function confidence(t: MacroTotal): number {
   const n = t.fromTable + t.fromCategory + t.unknown + t.mismatched;
   return n ? t.fromTable / n : 0;
 }

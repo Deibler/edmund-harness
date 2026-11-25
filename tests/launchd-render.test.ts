@@ -105,6 +105,6 @@ describe("reload_agent", () => {
       .split("\n")
       .filter((l) => !l.trim().startsWith("#"));
     expect(script.filter((l) => l.includes("launchctl bootstrap")).length).toBe(1);
-    expect(script.filter((l) => /^\s*reload_agent "/.test(l)).length).toBe(5);
+    expect(script.filter((l) => /^\s*reload_agent "/.test(l)).length).toBe(4);
   });
 });

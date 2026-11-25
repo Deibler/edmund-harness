@@ -15,7 +15,7 @@ import { getRecentMessages } from "../../imessage/history.ts";
 import { AddressBook } from "../../sessions/address-book.ts";
 import { ContactBook } from "../../sessions/contacts.ts";
 import { chatGuidsForSession } from "../../sessions/session-scope.ts";
-import { readTurn } from "./turn.ts";
+import { readTurn } from "../../sessions/turn-origin.ts";
 
 const MESSAGES = 3;
 const SCAN = 30;

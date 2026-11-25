@@ -10,15 +10,15 @@ import {
   type GhostPrefsStore,
   snoozeActive,
 } from "../../../src/ghost/prefs.ts";
-import { runGhostTick } from "../../../src/ghost/think.ts";
-import { getGroupParticipants } from "../../../src/imessage/participants.ts";
-import { sandboxDir } from "../../../src/persona/sandbox.ts";
 import {
   BROWN_NOSE_PREFIX,
   decodeBrownNoseSystemEvent,
   enqueueBrownNoseFire,
   isBrownNoseEvent,
-} from "../../../src/proactive/queue.ts";
+} from "../../../src/ghost/queue.ts";
+import { runGhostTick } from "../../../src/ghost/think.ts";
+import { getGroupParticipants } from "../../../src/imessage/participants.ts";
+import { sandboxDir } from "../../../src/persona/sandbox.ts";
 import type { ContactBook } from "../../../src/sessions/contacts.ts";
 import type { SessionKey } from "../../../src/sessions/key.ts";
 import { chatIdFromKey, isGroupSession } from "../../../src/sessions/key.ts";

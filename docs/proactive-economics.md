@@ -167,7 +167,7 @@ model's, and it is why the eagerness clause is a prompt rather than a threshold.
 | `src/ghost/outcomes.ts` | Outcome backfill and its classification |
 | `src/ghost/think.ts` | The tick itself, prompt assembly, the agent spawn |
 | `src/ghost/mcp-server.ts` | `submit_decision` and its schema |
-| `src/proactive/` | The queue, semaphore and firing path |
+| `src/ghost/queue.ts`, `semaphore.ts`, `fire.ts` | The queue, semaphore and firing path |
 
 The plan written before it was built is in
 [design/brownnose-plan.md](design/brownnose-plan.md).

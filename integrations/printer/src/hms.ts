@@ -72,7 +72,7 @@ export function loadErrorDb(dataDir?: string): ErrorDb {
 
 const hex = (n: number, w: number) => (n >>> 0).toString(16).toUpperCase().padStart(w, "0");
 
-export function formatHms(attr: number, code: number): string {
+function formatHms(attr: number, code: number): string {
   const a = hex(attr, 8);
   const c = hex(code, 8);
   return `${a.slice(0, 4)}_${a.slice(4)}_${c.slice(0, 4)}_${c.slice(4)}`;

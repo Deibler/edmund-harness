@@ -16,7 +16,6 @@ import {
   MirrorComponentSpecSchema,
   MirrorLifespanSchema,
   MirrorPresentationSchema,
-  type MirrorZone,
   MirrorZoneSchema,
   mirrorFrameId,
   placementForIntent,

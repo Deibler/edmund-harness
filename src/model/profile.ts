@@ -1,35 +1,20 @@
-import { callLoadout } from "../calls/loadout.ts";
 import type { Config } from "../config/config.ts";
 import * as intSettings from "../integrations/settings.ts";
 import type { SessionKey } from "../sessions/key.ts";
-import { isTradingSession } from "../sessions/key.ts";
+import { callLoadout } from "./call-loadout.ts";
 
 export type ModelEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelProfile = { model: string; effort: ModelEffort };
 
 /** Resolve the effective model after session-specific overrides. A session on
- *  a live call takes the call's model and effort (calls/loadout.ts). */
-export function modelProfileForSession(
-  sessionKey: SessionKey,
-  config: Config,
-  orchestratorModel: string | null = null,
-): ModelProfile {
-  const profile = baseProfile(sessionKey, config, orchestratorModel);
+ *  a live call takes the call's model and effort (model/call-loadout.ts). */
+export function modelProfileForSession(sessionKey: SessionKey, config: Config): ModelProfile {
+  const profile = baseProfile(sessionKey, config);
   const call = callLoadout(sessionKey, config);
   return call ? { model: call.model ?? profile.model, effort: call.effort } : profile;
 }
 
-function baseProfile(
-  sessionKey: SessionKey,
-  config: Config,
-  orchestratorModel: string | null,
-): ModelProfile {
-  if (isTradingSession(sessionKey) && intSettings.trading(config).model) {
-    return {
-      model: intSettings.trading(config).model,
-      effort: intSettings.trading(config).effort || config.claude.effort,
-    };
-  }
+function baseProfile(sessionKey: SessionKey, config: Config): ModelProfile {
   // No Grok branch: connector requests run inside the person's DM session and
   // use its model (src/grok/session.ts). A model is chosen per session, not per
   // turn, so an override would also move their texts.
@@ -40,7 +25,7 @@ function baseProfile(
     };
   }
   return {
-    model: orchestratorModel ?? config.claude.model,
+    model: config.claude.model,
     effort: config.claude.effort,
   };
 }

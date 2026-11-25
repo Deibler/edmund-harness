@@ -69,11 +69,6 @@ export function buildSynthesizerTask(
   ].join("\n");
 }
 
-type ReducerOutput = {
-  summary: string;
-  briefPath: string;
-};
-
 /**
  * Pure helper used by the MCP tool to format the post-spawn return
  * message. Tells the model what to expect and where to look.

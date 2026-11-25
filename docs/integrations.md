@@ -41,8 +41,8 @@ smart mirror is the only one.
 ## Access control
 
 Declared in the manifest, evaluated per session, deny beats allow. A package
-can restrict itself to its own session namespace (this is how the trading
-tools stay inside `trading:` sessions without an `if` at every call site),
+can restrict itself to its own session namespace (this is how the glass
+tools stay inside `mirror:` sessions without an `if` at every call site),
 deny specific namespaces, allow specific namespaces, or allow only certain
 senders.
 
@@ -59,12 +59,11 @@ global `[integrations]` switch.
 |---|---|---|---|
 | `kitchen` | Per household inventory, meal plans that refuse missing ingredients, grocery deals, a site per household, a shared Apple Note per household that Edmund keeps up to date on screen. | Ledger files, OpenRouter for presentation media only, `[computer_use]` with Notes for the shared note | Food judgement runs in the household's main session, never a kitchen sub-agent |
 | `mirror` | A voice and display channel on a Raspberry Pi smart mirror: wake word, speech to text, spoken replies, typed on-glass components. | The Pi bridge, a local speech sidecar | The only channel integration; its own session namespace |
-| `trading` | An autonomous trading sub-persona with risk limits enforced in code, price triggers, a journal and a kill switch. | The broker's MCP endpoint and an account | Real money. Off by default. Own session namespace and own dashboard |
 | `radaromega` | Drives a radar application over the Chrome DevTools Protocol. Contributes a freshness watchdog and two skills; the tools come from a vendored MCP server. | The application, a vendored server that is not in this repository | Tied to a paid desktop app |
 | `fishing` | Query and chart tools over a local fishing data platform. | A separate data platform repository | Regional dataset |
 | `cloudflare-browser` | Screenshot, PDF, markdown, scrape and JSON extraction rendered at Cloudflare's edge. | A Cloudflare account with Browser Rendering | Generic |
 
-The kitchen, mirror, trading, radar and fishing packages exist because the
+The kitchen, mirror, radar and fishing packages exist because the
 author needed them. They are here as working examples of what an integration
 can be, not because your kitchen or your mirror will match. Delete what you
 do not need; the build will not notice.
@@ -111,5 +110,5 @@ do not need; the build will not notice.
   Neither command exists yet.
 - The manifest's `external_deps` field is informational; nothing checks it.
 - The registry, manifest parser and access evaluator have no dedicated tests.
-  The access rule that keeps trading tools out of ordinary chats is enforced
+  The access rule that keeps the glass tools out of ordinary chats is enforced
   by code but not pinned by a test. Contributions welcome.

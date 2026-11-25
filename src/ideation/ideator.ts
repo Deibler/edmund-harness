@@ -27,16 +27,16 @@ import { type IdeationStore, type InterestThread, threadKey } from "./store.ts";
  * pages across 81 chats, none for them.
  */
 
-export const WINDOW_DAYS = 30;
-export const MIN_DAYS = 3;
+const WINDOW_DAYS = 30;
+const MIN_DAYS = 3;
 /** Not the same thread twice in this long. */
-export const THREAD_COOLDOWN_DAYS = 21;
+const THREAD_COOLDOWN_DAYS = 21;
 const DAY = 86_400_000;
 const MODEL_TIMEOUT_MS = 300_000;
 /** Above this the transcript is cut: replies first, then the oldest lines. */
 const TRANSCRIPT_BUDGET_CHARS = 160_000;
 
-export const CATEGORIES = [
+const CATEGORIES = [
   "interest",
   "project",
   "career",
@@ -119,7 +119,7 @@ export type IdeatorDeps = {
 // ─── the transcript ────────────────────────────────────────────────────
 
 /** A month of the conversation, their lines numbered by chat.db row so they can be cited. */
-export function buildTranscript(
+function buildTranscript(
   chatDb: ChatDb,
   chatGuids: string[],
   sinceMs: number,
@@ -170,7 +170,7 @@ export function personExcerpt(body: string): string {
 
 // ─── the prompt ────────────────────────────────────────────────────────
 
-export const IDEATOR_SYSTEM = `You work beside Edmund, an AI assistant people text over iMessage. Edmund answers fast and well, but always in text, so the people who use him only ever see text answers. Your job is to find what one person keeps coming back to and decide whether Edmund should build them something for it, unasked: an interactive web page that does what a text reply cannot.
+const IDEATOR_SYSTEM = `You work beside Edmund, an AI assistant people text over iMessage. Edmund answers fast and well, but always in text, so the people who use him only ever see text answers. Your job is to find what one person keeps coming back to and decide whether Edmund should build them something for it, unasked: an interactive web page that does what a text reply cannot.
 
 You get a month of their conversation. Their messages are numbered (#row). Edmund's replies are not numbered and are cut short.
 
@@ -195,7 +195,7 @@ You get a month of their conversation. Their messages are numbered (#row). Edmun
 Reply with JSON only, no prose around it:
 {"threads":[{"label":"...","category":"interest","evidence":[123,456]}],"candidates":[{"thread":"<a label from threads>","title":"...","pitch":"...","why":"...","brief":"..."}],"reason":"why these, or why nothing"}`;
 
-export function ideatorInput(args: {
+function ideatorInput(args: {
   name: string;
   today: string;
   excerpt: string;
@@ -247,7 +247,7 @@ function liftReason(json: unknown): unknown {
 }
 
 /** The parsed answer, or what is wrong with it in words the model can fix. */
-export function readIdeatorOutput(raw: string): { out: IdeatorOutput } | { error: string } {
+function readIdeatorOutput(raw: string): { out: IdeatorOutput } | { error: string } {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start < 0 || end <= start) return { error: "there is no JSON object in the answer" };
@@ -338,7 +338,7 @@ export function pickCandidate(
 }
 
 /** All ideation spend in the 7 days to `nowMs`, every person together. */
-export function weeklyIdeationSpend(dataDir: string, nowMs: number): number {
+function weeklyIdeationSpend(dataDir: string, nowMs: number): number {
   return getSpendLedger(dataDir)
     .daily(7, nowMs)
     .filter((r) => r.subsystem === "ideation")

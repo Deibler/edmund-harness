@@ -8,7 +8,7 @@
  *   - Snapshot reports the correct in-flight count
  */
 import { describe, expect, test } from "bun:test";
-import { ProactiveSemaphore } from "../src/proactive/semaphore.ts";
+import { ProactiveSemaphore } from "../src/ghost/semaphore.ts";
 
 describe("ProactiveSemaphore", () => {
   test("at-most-N concurrent — 10 attempts, cap 3, exactly 3 acquire", () => {

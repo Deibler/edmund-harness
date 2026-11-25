@@ -91,7 +91,7 @@ export function conversationKeys(c: Conversation): string[] {
 }
 
 /** Every conversation a title shown in Messages could be, as keys. */
-export function titleKeys(title: string): string[] {
+function titleKeys(title: string): string[] {
   const t = norm(title);
   if (!t) return [];
   const keys = [`title:${t}`];
@@ -313,7 +313,7 @@ export function rowAt(
   return window?.found[id]?.rows.find((r) => within(r.frame, at)) ?? null;
 }
 
-export function within(r: Rect | undefined, at: { x: number; y: number }): boolean {
+function within(r: Rect | undefined, at: { x: number; y: number }): boolean {
   return !!r && at.x >= r.x && at.x < r.x + r.width && at.y >= r.y && at.y < r.y + r.height;
 }
 

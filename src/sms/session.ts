@@ -38,8 +38,8 @@ import { normalizeHandle } from "../sessions/key.ts";
  * Twilio considers it the same conversation.
  */
 
-export const SMS_DM_PREFIX = "sms:dm:";
-export const SMS_GROUP_PREFIX = "sms:group:";
+const SMS_DM_PREFIX = "sms:dm:";
+const SMS_GROUP_PREFIX = "sms:group:";
 
 /** `sms:dm:+17175550123` — a one-to-one SMS conversation. */
 export function smsKeyFor(handle: string): string {
@@ -55,17 +55,13 @@ export function isSmsSession(key: string): boolean {
   return key.startsWith(SMS_DM_PREFIX) || key.startsWith(SMS_GROUP_PREFIX);
 }
 
-export function isSmsGroupSession(key: string): boolean {
-  return key.startsWith(SMS_GROUP_PREFIX);
-}
-
 /** The phone number behind a DM session key, or null (groups have no single handle). */
-export function smsHandleFromKey(key: string): string | null {
+function smsHandleFromKey(key: string): string | null {
   return key.startsWith(SMS_DM_PREFIX) ? key.slice(SMS_DM_PREFIX.length) : null;
 }
 
 /** The Twilio Conversation SID behind a group session key, or null. */
-export function smsConversationFromKey(key: string): string | null {
+function smsConversationFromKey(key: string): string | null {
   return key.startsWith(SMS_GROUP_PREFIX) ? key.slice(SMS_GROUP_PREFIX.length) : null;
 }
 

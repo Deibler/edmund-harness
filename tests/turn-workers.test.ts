@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type TurnWorkerEntry, reapTurnWorkers } from "../src/recovery/turn-workers.ts";
+import { type TurnWorkerEntry, reapTurnWorkers } from "../src/model/turn-workers.ts";
 
 const root = join(import.meta.dir, "..");
 
@@ -105,7 +105,7 @@ async function startDaemon(
   writeFileSync(
     script,
     `import { spawn } from "node:child_process";
-import { guardTurnWorkers, trackTurnWorker } from ${JSON.stringify(join(root, "src/recovery/turn-workers.ts"))};
+import { guardTurnWorkers, trackTurnWorker } from ${JSON.stringify(join(root, "src/model/turn-workers.ts"))};
 await guardTurnWorkers(process.argv[2]);
 const worker = spawn("/bin/sh", ["-c", "sleep 300 & sleep 300 & wait"], { detached: true, stdio: "ignore" });
 trackTurnWorker(worker, "dm:+15550100");
@@ -196,7 +196,7 @@ describe("turn workers answer to one daemon", () => {
     writeFileSync(
       script,
       `import { spawn } from "node:child_process";
-import { guardTurnWorkers, trackTurnWorker } from ${JSON.stringify(join(root, "src/recovery/turn-workers.ts"))};
+import { guardTurnWorkers, trackTurnWorker } from ${JSON.stringify(join(root, "src/model/turn-workers.ts"))};
 await guardTurnWorkers(process.argv[2]);
 const worker = spawn("/usr/bin/true", [], { detached: true, stdio: "ignore" });
 trackTurnWorker(worker, "dm:+15550100");
@@ -318,10 +318,20 @@ describe("turn workers, structurally", () => {
       .map((name) => `${folder}/${name}`);
 
   // One-shots answer a question for the daemon and deliver nothing themselves.
-  const deliversNothing = new Set(["src/claude/one-shot.ts"]);
+  // The ledger starts its own watchdog detached, which is not a model process.
+  const deliversNothing = new Set([
+    "src/claude/one-shot.ts",
+    "src/model/one-shot.ts",
+    "src/model/turn-workers.ts",
+  ]);
 
   test("every detached model process that runs a turn is written down", () => {
-    const detached = [...sourcesIn("src/claude"), ...sourcesIn("src/codex")].filter(
+    // The whole model runtime: the backends and what they share.
+    const detached = [
+      ...sourcesIn("src/model"),
+      ...sourcesIn("src/claude"),
+      ...sourcesIn("src/codex"),
+    ].filter(
       (file) =>
         !deliversNothing.has(file) &&
         readFileSync(join(root, file), "utf8").includes("detached: true"),

@@ -76,11 +76,6 @@ export function isGrokCaller(v: unknown): v is GrokCaller {
   );
 }
 
-/** Two callers are the same party. */
-export function sameCaller(a: GrokCaller, b: GrokCaller): boolean {
-  return a.kind === "bot" && b.kind === "bot" ? a.bot === b.bot : a.kind === b.kind;
-}
-
 /** The task went to `sentTo`; the report came on another bot's own key. The
  *  shared key never mismatches: it cannot say which bot it is. */
 export function reportMismatch(sentTo: string, caller: GrokCaller): boolean {

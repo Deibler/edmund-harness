@@ -10,7 +10,7 @@
 import { lstatSync, readlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-export const MOVABLE_STORAGE = ["sandbox", join("persona", "sessions")];
+const MOVABLE_STORAGE = ["sandbox", join("persona", "sessions")];
 
 /** One line per linked location whose target is missing; empty when all is well. */
 export function missingStorage(repoRoot: string): string[] {

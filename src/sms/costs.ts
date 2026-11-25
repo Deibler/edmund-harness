@@ -63,7 +63,7 @@ export function estimateInboundUsd(kind: "sms" | "mms"): number {
 /** Billing kind from a REAL Twilio Messages SID (MM = MMS, SM = SMS). Only
  *  valid for Messages-API records — a Conversations webhook's IM… sid says
  *  nothing about billing and must not be sniffed. */
-export function kindFromMessagesSid(sid: string): "sms" | "mms" {
+function kindFromMessagesSid(sid: string): "sms" | "mms" {
   return sid.startsWith("MM") ? "mms" : "sms";
 }
 

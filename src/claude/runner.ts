@@ -2,15 +2,26 @@ import { spawn } from "node:child_process";
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { withCallBlocks } from "../calls/loadout.ts";
 import type { Config } from "../config/config.ts";
 import { deriveGuestLoadout } from "../guests/access.ts";
+import { withCallBlocks } from "../model/call-loadout.ts";
 import { buildRunSystemPrompt } from "../model/context.ts";
+import {
+  PROMPT_SNAPSHOT_ARGS,
+  isolatedSettingsArgs,
+  postCompactHookSettings,
+} from "../model/direct-env.ts";
+import { type FailureClass, classifyError } from "../model/failure-class.ts";
+import { type InlineImage, prepareInlineImages } from "../model/inline-images.ts";
+import {
+  ensureMcpConfig,
+  envelopeNeedsBrowser,
+  pickMcpConfig,
+  toolEnv,
+} from "../model/mcp-config.ts";
+import { personaFingerprint } from "../model/persona.ts";
 import { modelProfileForSession } from "../model/profile.ts";
-import { orchestratorForSession } from "../orchestrators/registry.ts";
-import { type FailureClass, classifyError } from "../recovery/classify.ts";
-import { HEALERS } from "../recovery/healers.ts";
-import { trackTurnWorker } from "../recovery/turn-workers.ts";
+import { trackTurnWorker } from "../model/turn-workers.ts";
 import {
   disallowedBuiltinTools,
   hostAccess,
@@ -18,7 +29,6 @@ import {
   tierForSessionKey,
 } from "../security/policy.ts";
 import type { SessionKey } from "../sessions/key.ts";
-import { isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { DEBUG, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import {
@@ -29,15 +39,8 @@ import {
   contextTokens,
   iterationContextTokens,
 } from "./auto-compact.ts";
-import {
-  PROMPT_SNAPSHOT_ARGS,
-  isolatedSettingsArgs,
-  postCompactHookSettings,
-} from "./direct-env.ts";
-import { type InlineImage, prepareInlineImages } from "./inline-images.ts";
-import { ensureMcpConfig, envelopeNeedsBrowser, pickMcpConfig, toolEnv } from "./mcp-config.ts";
+import { HEALERS } from "./healers.ts";
 import type { InjectResult } from "./mid-turn.ts";
-import { personaFingerprint } from "./persona.ts";
 import { WorkerPool } from "./pool.ts";
 import {
   SESSION_SIZE_SOFT_LIMIT,
@@ -210,12 +213,12 @@ export type RunInput = {
    * Optional image paths to embed as multimodal content blocks on this
    * turn. Claude sees the pixels directly — no Read tool call required.
    * Used for inbound iMessage photos and for wake-ups that carry a
-   * generated image (bg-job-done on generate_image, annotation submit).
+   * generated image (bg-job-done on generate_image).
    */
   images?: string[];
   /**
    * Depth of the inbound envelope this turn responds to. 0 = organic
-   * iMessage; N = a relay arriving at depth N (see bridge/relay.ts).
+   * iMessage; N = a relay arriving at depth N (see relay/relay.ts).
    * runModel records it for the session's turn (StateStore.setTurnDepth),
    * where the relay tools read it to cap loop chains at MAX_RELAY_DEPTH.
    */
@@ -412,23 +415,13 @@ export async function runClaude(
   // envelope looks like — their mcp config is the core server alone.
   const isGuest = input.guest != null && input.guest.loadout !== "allowlisted";
   if (isGuest) needsBrowser = false;
-  // Trading sessions always get the trading loadout (Robinhood tools), which
-  // takes precedence over the browser heuristic.
-  const isTrading = isTradingSession(input.sessionKey);
   const mcpConfigPath = isGuest
     ? mcpConfigs.guest
     : pickMcpConfig(mcpConfigs, {
-        trading: isTrading,
         tier: tierForSessionKey(config, input.sessionKey),
         browser: needsBrowser,
       });
-  // Named-orchestrator sessions carry their persona + model override; main
-  // resolves to the synthetic builtin entry (no overrides), trading/cron to
-  // null. A deleted config entry behind a live orch: session also resolves
-  // null — the turn then runs with main's loadout rather than erroring.
-  const orch = orchestratorForSession(input.sessionKey, config);
-  const orchModel = orch && !orch.builtin && orch.model ? orch.model : null;
-  const profile = modelProfileForSession(input.sessionKey, config, orchModel);
+  const profile = modelProfileForSession(input.sessionKey, config);
 
   // Prep multimodal attachments first — if any succeed, switch the Claude
   // input format from plain text to stream-json so we can pass image blocks
@@ -482,7 +475,7 @@ export async function runClaude(
     //
     // On a live call the tools that block for seconds are off too, so slow
     // work goes to background agents while Edmund keeps talking
-    // (calls/loadout.ts). This list is in the rebind key, so the worker is
+    // (model/call-loadout.ts). This list is in the rebind key, so the worker is
     // respawned as a call starts and again after it ends.
     "--disallowedTools",
     withCallBlocks(disallowedBuiltinTools(hostAccess(config), isGuest), input.sessionKey, config),
@@ -493,10 +486,9 @@ export async function runClaude(
     "--mcp-config",
     mcpConfigPath,
     // Load ONLY the servers in the chosen config file — do not inherit
-    // user/project-scoped MCP servers from ~/.claude.json. This is what keeps
-    // the Robinhood MCP OUT of the edmund persona (its mcp.json has no
-    // Robinhood server) and scoped to trading sessions only (mcp-trading.json
-    // adds it explicitly). Deterministic regardless of cwd / registration scope.
+    // user/project-scoped MCP servers from ~/.claude.json. A server the
+    // operator registered for their own Claude Code never reaches a worker.
+    // Deterministic regardless of cwd / registration scope.
     "--strict-mcp-config",
     // The operator's CLAUDE.md files, auto-memory and plugins stay out. The
     // one hook a conversation worker runs puts the chat's own messages back
@@ -505,7 +497,7 @@ export async function runClaude(
     ...PROMPT_SNAPSHOT_ARGS,
     ...pluginDirArgs(config.claude.plugin_dirs, hostAccess(config), isGuest),
     "--append-system-prompt",
-    buildRunSystemPrompt(input, config, orch),
+    buildRunSystemPrompt(input, config),
   ];
 
   const env = toolEnv(
@@ -808,11 +800,6 @@ async function runViaPool(args: {
     // Chrome connection (the real win); non-browser turns will rebind to the
     // lighter config, which is a one-time cost.
     `browser=${needsBrowser ? "1" : "0"}`,
-    // Trading workers load a different mcp-config (Robinhood tools) and a
-    // different persona/system prompt, so they must never be reused for a
-    // non-trading session or vice-versa. (The sandbox path already differs,
-    // but make the discriminator explicit.)
-    `trading=${isTradingSession(input.sessionKey) ? "1" : "0"}`,
     // Guest tier + campaign are spawn-time properties (mcp config, tool
     // env, system prompt). A handle promoted guest→allowlisted — or a
     // campaign swap — must recycle the worker, not inherit the old loadout.
@@ -1022,11 +1009,6 @@ async function coldStartWithCollisionFallback(
 
 function isSessionInUseError(msg: string): boolean {
   return /already in use/i.test(msg);
-}
-
-function deriveSessionId(sessionKey: SessionKey): string {
-  const hash = new Bun.CryptoHasher("sha256").update(sessionKey).digest("hex") as string;
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
 type ContentBlock =
