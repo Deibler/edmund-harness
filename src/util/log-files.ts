@@ -31,6 +31,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import type { Channel } from "./log-channels.ts";
+import { withoutProcessLog } from "./log-instrument.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -355,7 +356,9 @@ export type JanitorReport = {
 };
 
 async function gzip(path: string): Promise<boolean> {
-  const proc = Bun.spawn(["gzip", "-f", path], { stdout: "ignore", stderr: "ignore" });
+  const proc = withoutProcessLog(() =>
+    Bun.spawn(["gzip", "-f", path], { stdout: "ignore", stderr: "ignore" }),
+  );
   return (await proc.exited) === 0;
 }
 
@@ -405,7 +408,9 @@ async function trimCaptures(
     mkdirSync(out, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const target = join(out, `${name.replace(/\.log$/, "")}-until-${stamp}.log.gz`);
-    const proc = Bun.spawn(["gzip", "-c", path], { stdout: Bun.file(target), stderr: "ignore" });
+    const proc = withoutProcessLog(() =>
+      Bun.spawn(["gzip", "-c", path], { stdout: Bun.file(target), stderr: "ignore" }),
+    );
     if ((await proc.exited) !== 0) {
       report.errors.push(`could not archive ${name}`);
       rmSync(target, { force: true });

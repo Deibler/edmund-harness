@@ -174,6 +174,16 @@ function argvOf(args: unknown[]): readonly unknown[] {
   return ["?"];
 }
 
+/**
+ * A child that ended with a non-zero status failed, unless it was asked to
+ * stop: the daemon lets the embedder go with SIGTERM every time it has been
+ * idle for a minute, and that is not a warning. A kill, a crash or an abort is.
+ */
+function failed(code: number | null, signal: string | undefined): boolean {
+  if (signal === "SIGTERM" || signal === "SIGINT" || signal === "SIGHUP") return false;
+  return code !== 0;
+}
+
 /** A child still running after this long gets a line of its own, so a hung one is on record. */
 const LONG_RUNNING_MS = 10_000;
 
@@ -223,7 +233,7 @@ function instrumentSpawn(write: Write): void {
               "exit",
               described,
               { pid: child.pid, code, ...(signal ? { signal } : {}), ms: Date.now() - started },
-              code !== 0,
+              failed(code, signal),
             );
           },
           () => clearTimeout(stillRunning),
@@ -250,7 +260,7 @@ function instrumentSpawn(write: Write): void {
             ms: Date.now() - started,
             sync: true,
           },
-          result.exitCode !== 0,
+          failed(result.exitCode, signal),
         );
       } catch {}
       return result;

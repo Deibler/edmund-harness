@@ -47,7 +47,7 @@
     "release": "changeset tag",
     "dashboard:dev": "concurrently -n srv,web -c blue,magenta \"bun run dashboard:server\" \"cd dashboard/web && vite\"",
     "dashboard:server": "bun --watch run dashboard/server/main.ts",
-    "dashboard:build": "cd dashboard/web && vite build",
+    "dashboard:build": "cd dashboard/web && bun run build",
     "portal:dev": "cd dashboard/user-web && bun run dev",
     "portal:build": "cd dashboard/user-web && bun run build",
     "dashboard:prod": "bun run dashboard:build && bun run dashboard/server/main.ts",

@@ -187,7 +187,7 @@ export function channelForTag(tag: string): Channel {
  * refused, denied or cut off. `\b` keeps ECONNREFUSED, a network failure, out.
  */
 const SECURITY_EVENT =
-  /\b(chat_mismatch|refused|denied|forbidden|unauthori[sz]ed|not allowed|not permitted|blocked|revoked|capped|allowlist|rate.?limit(ed)?|invalid (pin|token|signature|code|key))\b/i;
+  /\b(chat_mismatch|refused|denied|forbidden|unauthori[sz]ed|not allowed|not permitted|blocked|revoked|capped|rate.?limit(ed)?|invalid (pin|token|signature|code|key))\b/i;
 
 /** Whether a line filed elsewhere is copied to the security channel as well. */
 export function isSecurityEvent(message: string): boolean {

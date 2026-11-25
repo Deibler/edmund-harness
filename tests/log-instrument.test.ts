@@ -61,9 +61,23 @@ describe("a process that logs to files", () => {
 
   test("records every child process however it was started", () => {
     const procs = all("proc").filter((r) => r.msg.startsWith("exit "));
-    // spawnSync, execFileSync, spawnSync(sh), spawn, Bun.spawn, Bun.spawnSync
-    expect(procs.map((r) => r.fields!.cmd)).toEqual(["true", "true", "sh", "true", "echo", "true"]);
+    // spawnSync, execFileSync, spawnSync(sh), spawn, Bun.spawn, Bun.spawnSync, then two sleeps
+    expect(procs.map((r) => r.fields!.cmd)).toEqual([
+      "true",
+      "true",
+      "sh",
+      "true",
+      "echo",
+      "true",
+      "sleep",
+      "sleep",
+    ]);
     expect(procs[2]).toMatchObject({ level: "warn", fields: { code: 3 } });
+    // Asked to stop is not a failure; killed is.
+    expect(procs[6]).toMatchObject({ level: "info", fields: { signal: "SIGTERM" } });
+    expect(procs[7]).toMatchObject({ level: "warn", fields: { signal: "SIGKILL" } });
+    // The janitor ran gzip in that process, and that is not on record.
+    expect(all("proc").some((r) => r.fields!.cmd === "gzip")).toBe(false);
     expect(procs[4]!.fields!.args).toBe("--token *** hello");
     for (const p of procs) expect(typeof p.fields!.ms).toBe("number");
   });

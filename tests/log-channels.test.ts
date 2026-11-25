@@ -81,7 +81,12 @@ describe("filing", () => {
     ]) {
       expect(isSecurityEvent(line)).toBe(true);
     }
-    for (const line of ["connect ECONNREFUSED 10.0.0.9:8883", "fire ok", "turn refusedly named"]) {
+    for (const line of [
+      "connect ECONNREFUSED 10.0.0.9:8883",
+      "fire ok",
+      "turn refusedly named",
+      "booted cursor=1 provider=claude watcher=auto allowlist=0dm/0g contacts=1",
+    ]) {
       expect(isSecurityEvent(line)).toBe(false);
     }
   });
