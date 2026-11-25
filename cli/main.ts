@@ -47,7 +47,7 @@ ${color.bold("Services")}
 
 ${color.bold("Observe")}
   ${color.cyan("logs")}         what the model is doing, for whom (--follow, --session NAME, --all, --error/--warn, --grep RE, -n N)
-               logs channels | logs <channel> [--since 2h] [-f] | logs errors | logs trace <turn|name> [--at 14:05] | logs tidy
+               logs channels | logs <channel> [--since 2h] [-f] | logs errors | logs traffic [--since 24h] | logs trace <turn|name> [--at 14:05] | logs tidy
   ${color.cyan("data")}         what is in the data folder and who owns it: data audit | data clean [--apply]
   ${color.cyan("dashboard")}    dashboard URL, --pin, --logs [--follow]
   ${color.cyan("cron")}         list / delete scheduled jobs

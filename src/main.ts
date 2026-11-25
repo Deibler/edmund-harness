@@ -19,6 +19,7 @@ import { BgJobStore } from "./background/store.ts";
 import { banner, highWaterMark } from "./boot/banner.ts";
 import { daemonBusy } from "./boot/busy.ts";
 import { type CatchUp, runCatchUp } from "./boot/catchup.ts";
+import { ExposureWatch } from "./boot/exposure.ts";
 import { hardenHarnessPermissions } from "./boot/harden-permissions.ts";
 import { checkLoadout, formatLoadoutReport } from "./boot/loadout-check.ts";
 import { LoopLagMonitor } from "./boot/loop-lag.ts";
@@ -122,7 +123,7 @@ import { defaultProbe } from "./triggers/evaluate.ts";
 import { DataTriggerStore } from "./triggers/store.ts";
 import { DataTriggerWatcher } from "./triggers/watcher.ts";
 import { prepareDataFolder } from "./util/data-migrate.ts";
-import { runLogJanitor } from "./util/log-files.ts";
+import { readChannel, runLogJanitor } from "./util/log-files.ts";
 import { withoutProcessLog } from "./util/log-instrument.ts";
 import { installLogSink } from "./util/log-sink.ts";
 import { log } from "./util/log.ts";
@@ -584,6 +585,35 @@ async function main() {
         .filter((pid): pid is number => pid !== null),
   });
   telemetry.start();
+
+  // What on this machine can be reached from outside it: see boot/exposure.ts.
+  const exposure = new ExposureWatch({
+    intervalMs: config.logs.resource_sample_seconds > 0 ? 5 * 60_000 : 0,
+  });
+  exposure.start();
+
+  // A scan is the internet's weather and is only recorded. A flood, or
+  // someone refused again and again at a login, is worth being told about:
+  // the servers that see it are other processes, so it is read from the
+  // record they leave.
+  let attacksReadTo = Date.now();
+  const watchAttacks = setInterval(() => {
+    const from = attacksReadTo;
+    attacksReadTo = Date.now();
+    try {
+      for (const r of readChannel(
+        resolve(config.paths.logs_dir),
+        "security",
+        from,
+        attacksReadTo,
+      )) {
+        const kind = String(r.fields?.kind ?? "");
+        if (r.tag !== "inbound" || (kind !== "flood" && kind !== "brute-force")) continue;
+        void alert.notify({ category: `inbound-${kind}`, error: r.msg });
+      }
+    } catch {}
+  }, 60_000);
+  watchAttacks.unref?.();
 
   // Keep the logs within [logs]: file what rotation moved aside, compress
   // days that are over, drop what is past retention. A minute after boot so
@@ -1364,6 +1394,8 @@ async function main() {
     clearInterval(poolStatsTimer);
     resourceGovernor.stop();
     telemetry.stop();
+    exposure.stop();
+    clearInterval(watchAttacks);
     clearTimeout(firstTidy);
     clearInterval(logTidyTimer);
     loopLag.stop();

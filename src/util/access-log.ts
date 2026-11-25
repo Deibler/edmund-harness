@@ -19,7 +19,17 @@
  * The first one is recorded as it happens and the rest as one line a minute
  * with their number and timing. Anything that changes something, and anything
  * refused or failed, is always its own record.
+ *
+ * Each record also says what the request itself gives away: which public
+ * name it was sent to, the country Cloudflare saw it come from, what kind of
+ * client the user agent claims to be, and which known probes it matches
+ * (inbound-signals.ts). And each client is watched over ten minutes: one
+ * that matches probe after probe, asks for page after page that is not
+ * there, is refused again and again, or sends hundreds of requests a minute
+ * gets one line in the `security` channel saying so (`scan`, `brute-force`,
+ * `flood`), not one per request.
  */
+import { classifyClient, threatSignals } from "./inbound-signals.ts";
 import { safePath } from "./log-instrument.ts";
 import { log } from "./log.ts";
 
@@ -101,6 +111,121 @@ function countedAsRepeat(
   return false;
 }
 
+// --- watching each client ---------------------------------------------------
+//
+// Measured on the public router's first hours of records (2026-11-25): a
+// person opening a page makes a few dozen requests in a burst and almost none
+// that fail. The thresholds sit far above that and far below what a scanner
+// does, which is hundreds of addresses that are not there.
+
+const WATCH_WINDOW_MS = 10 * 60_000;
+/** Requests in one minute from one client. */
+const FLOOD_PER_MINUTE = 300;
+/** Requests matching a known probe, in the window. */
+const SCAN_PROBES = 5;
+/** Different addresses that were not there, in the window. */
+const SCAN_NOT_FOUND = 20;
+/** Refusals (401, 403), in the window. */
+const BRUTE_FORCE_DENIED = 8;
+
+type Watched = {
+  windowStart: number;
+  requests: number;
+  probes: number;
+  denied: number;
+  notFound: Set<string>;
+  minuteStart: number;
+  minuteRequests: number;
+  said: Set<string>;
+};
+const watched = new Map<string, Watched>();
+const seenToday = new Set<string>();
+let seenDay = "";
+
+type Observed = {
+  server: string;
+  client: string;
+  path: string;
+  status: number;
+  probes: string[];
+  isPublic: boolean;
+  fields: Record<string, unknown>;
+};
+
+function watchClient(o: Observed, now: number): void {
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (day !== seenDay) {
+    seenDay = day;
+    seenToday.clear();
+  }
+  const key = `${o.server}|${o.client}`;
+  // Who is new today, among those who came from outside.
+  if (o.isPublic && !seenToday.has(key) && seenToday.size < 20_000) {
+    seenToday.add(key);
+    log.event("security", "inbound", `first request today from ${o.client} to ${o.server}`, {
+      ...o.fields,
+      kind: "new-client",
+    });
+  }
+  let w = watched.get(key);
+  if (!w || now - w.windowStart >= WATCH_WINDOW_MS) {
+    if (!w && watched.size > 5_000) {
+      for (const [k, v] of watched) if (now - v.windowStart >= WATCH_WINDOW_MS) watched.delete(k);
+    }
+    w = {
+      windowStart: now,
+      requests: 0,
+      probes: 0,
+      denied: 0,
+      notFound: new Set(),
+      minuteStart: now,
+      minuteRequests: 0,
+      said: new Set(),
+    };
+    watched.set(key, w);
+  }
+  if (now - w.minuteStart >= 60_000) {
+    w.minuteStart = now;
+    w.minuteRequests = 0;
+  }
+  w.requests++;
+  w.minuteRequests++;
+  if (o.probes.length > 0) w.probes++;
+  if (o.status === 401 || o.status === 403) w.denied++;
+  if (o.status === 404 && w.notFound.size < 200) w.notFound.add(o.path);
+
+  const say = (kind: string, what: string) => {
+    if (w.said.has(kind)) return;
+    w.said.add(kind);
+    log.event(
+      "security",
+      "inbound",
+      `${kind} from ${o.client} on ${o.server}: ${what}`,
+      {
+        kind,
+        server: o.server,
+        client: o.client,
+        country: o.fields.country,
+        client_kind: o.fields.client,
+        ua: o.fields.ua,
+        requests: w.requests,
+        probes: w.probes,
+        denied: w.denied,
+        not_found: w.notFound.size,
+        window_s: Math.round((now - w.windowStart) / 1000),
+      },
+      "warn",
+    );
+  };
+  if (w.minuteRequests >= FLOOD_PER_MINUTE)
+    say("flood", `${w.minuteRequests} requests in a minute`);
+  if (w.probes >= SCAN_PROBES) say("scan", `${w.probes} requests matching known probes`);
+  else if (w.notFound.size >= SCAN_NOT_FOUND) {
+    say("scan", `${w.notFound.size} different addresses that are not here`);
+  }
+  if (w.denied >= BRUTE_FORCE_DENIED) say("brute-force", `${w.denied} requests refused`);
+}
+
 /**
  * Wrap a `Bun.serve` fetch handler so each request leaves a record. The
  * handler's answer, including "no response, the socket was upgraded", passes
@@ -124,27 +249,61 @@ export function withAccessLog<S, R extends Response | undefined>(
       throw err;
     } finally {
       let path = "";
+      let address = "";
       try {
-        path = safePath(new URL(req.url).pathname);
+        const url = new URL(req.url);
+        path = safePath(url.pathname);
+        address = url.pathname + url.search;
       } catch {}
+      const caller = callerOf(req, srv);
+      const userAgent = req.headers.get("user-agent");
+      const client = classifyClient(userAgent);
+      // The query is read here and nowhere kept: only the names of what it matched.
+      const probes = threatSignals(req.method, address, userAgent);
+      const host = req.headers.get("host") ?? undefined;
       const fields = {
         server,
         method: req.method,
         path,
         status,
         ms: Math.round(performance.now() - started),
-        ...callerOf(req, srv),
-        ua: (req.headers.get("user-agent") ?? "").slice(0, 120) || undefined,
+        ...caller,
+        ...(host ? { host } : {}),
+        ...(req.headers.get("cf-ipcountry") ? { country: req.headers.get("cf-ipcountry") } : {}),
+        client: client.name ? `${client.kind}:${client.name}` : client.kind,
+        ua: (userAgent ?? "").slice(0, 120) || undefined,
+        ...(probes.length > 0 ? { probes } : {}),
         ...(failure ? { err: failure } : {}),
       };
       const line = `${server} ${req.method} ${path} ${status}`;
-      const routine = req.method === "GET" && status < 400;
-      if (!routine || !countedAsRepeat(line, fields, fields.ms, Date.now())) {
-        log.event("net-in", "net-in", line, fields, status >= 400 ? "warn" : "info");
+      const now = Date.now();
+      const routine = req.method === "GET" && status < 400 && probes.length === 0;
+      if (!routine || !countedAsRepeat(line, fields, fields.ms, now)) {
+        // A request that asked for something that is not here is the asker's
+        // mistake, not a fault: only a failure of the server is a warning.
+        log.event("net-in", "net-in", line, fields, status >= 500 ? "warn" : "info");
       }
       if (status === 401 || status === 403 || status === 429) {
-        log.event("security", "net-in", `${line} denied`, fields, "warn");
+        log.event("security", "net-in", `${line} denied`, fields);
       }
+      if (probes.length > 0) {
+        log.event("security", "inbound", `probe ${probes.join(",")}: ${line}`, {
+          ...fields,
+          kind: "probe",
+        });
+      }
+      watchClient(
+        {
+          server,
+          client: caller.via ?? caller.ip ?? "?",
+          path,
+          status,
+          probes,
+          isPublic: caller.via !== undefined,
+          fields,
+        },
+        now,
+      );
     }
   };
 }

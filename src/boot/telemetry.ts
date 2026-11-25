@@ -85,7 +85,8 @@ export function parseThermalState(output: string): { cpuSpeedLimit?: number } {
 /** The commands a sample is running right now, which are not part of what it measures. */
 const sampling = new Set<number>();
 
-async function read(command: string[]): Promise<string> {
+/** Run a measuring command and return what it printed; empty when it is missing or fails. */
+export async function quietRead(command: string[]): Promise<string> {
   let pid = 0;
   try {
     const proc = withoutProcessLog(() =>
@@ -161,7 +162,7 @@ export class Telemetry {
   private readProcesses(): Promise<SampledProcess[]> {
     return (
       this.opts.readProcesses?.() ??
-      read(["/bin/ps", "-axo", "pid=,ppid=,pgid=,rss=,pcpu=,etime=,comm="]).then(
+      quietRead(["/bin/ps", "-axo", "pid=,ppid=,pgid=,rss=,pcpu=,etime=,comm="]).then(
         parseSampledProcesses,
       )
     );
@@ -170,9 +171,9 @@ export class Telemetry {
   private async readMachine(): Promise<Record<string, unknown>> {
     if (this.opts.readMachine) return this.opts.readMachine();
     const [memory, gpu, thermal] = await Promise.all([
-      read(["/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level", "vm.swapusage"]),
-      read(["/usr/sbin/ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"]),
-      read(["/usr/bin/pmset", "-g", "therm"]),
+      quietRead(["/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level", "vm.swapusage"]),
+      quietRead(["/usr/sbin/ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"]),
+      quietRead(["/usr/bin/pmset", "-g", "therm"]),
     ]);
     const m = parseMemoryState(memory);
     const g = parseGpuState(gpu);

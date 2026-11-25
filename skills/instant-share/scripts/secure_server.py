@@ -403,6 +403,69 @@ KILLED_PAGE = '''<!DOCTYPE html>
 </html>'''
 
 
+def harness_safe_path(path):
+    """A path fit for a log: long opaque segments (share tokens, ids) cut to six characters."""
+    parts = []
+    for segment in (path or "").split("/"):
+        if len(segment) >= 20 and re.search(r"\d", segment) and re.fullmatch(r"[\w.~%-]+", segment):
+            parts.append(segment[:6] + "\u2026")
+        else:
+            parts.append(segment)
+    return "/".join(parts)
+
+
+def harness_log_request(handler, path, status):
+    """Leave one record of this request in the harness's net-in channel.
+
+    A page served straight through a tunnel of its own never passes the
+    public router, so the router's access log does not see it. Same record
+    shape as src/util/access-log.ts; no query string, header or body. Never
+    raises: a log that cannot be written must not fail the request.
+    """
+    try:
+        logs = os.environ.get("EDMUND_LOGS_DIR") or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "logs"
+        )
+        now = datetime.utcnow()
+        folder = os.path.join(logs, "net-in")
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        headers = getattr(handler, "headers", None) or {}
+        forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        via = headers.get("cf-connecting-ip") or forwarded or None
+        safe = harness_safe_path(path)
+        method = getattr(handler, "command", None) or "GET"
+        fields = {
+            "server": "site-server",
+            "app": getattr(handler, "ARTIFACT_ID", None),
+            "method": method,
+            "path": safe,
+            "status": status,
+            "ip": handler.client_address[0],
+        }
+        if via:
+            fields["via"] = via
+        for name, key in (("host", "host"), ("cf-ipcountry", "country")):
+            if headers.get(name):
+                fields[key] = headers.get(name)
+        if headers.get("user-agent"):
+            fields["ua"] = headers.get("user-agent")[:120]
+        record = {
+            "ts": now.strftime("%Y-%m-%dT%H:%M:%S.") + ("%03d" % (now.microsecond // 1000)) + "Z",
+            "level": "info",
+            "ch": "net-in",
+            "tag": "net-in",
+            "msg": "site-server %s %s %s" % (method, safe, status),
+            "proc": "site-server",
+            "pid": os.getpid(),
+            "fields": fields,
+        }
+        target = os.path.join(folder, now.strftime("%Y-%m-%d") + ".jsonl")
+        with open(os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a") as out:
+            out.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
 class SecureArtifactHandler(http.server.BaseHTTPRequestHandler):
     AUTH_TOKEN = None
     ARTIFACT_ROOT = None
@@ -424,6 +487,7 @@ class SecureArtifactHandler(http.server.BaseHTTPRequestHandler):
         }
         REQUEST_LOG.append(entry)
         SERVER_STATE['request_count'] += 1
+        harness_log_request(self, path, status)
     
     def send_html(self, code, html):
         content = html.encode('utf-8')

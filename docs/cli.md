@@ -38,6 +38,7 @@ edmund logs --dashboard | --fishing
 edmund logs channels
 edmund logs <channel> [--since 2h] [-f] [--session X] [--grep RE] [--warn|--error] [--json] [-n 200]
 edmund logs errors [--since 2h]
+edmund logs traffic [--since 24h] [--json]
 edmund logs trace <turn id | part of a name> [--at 14:05] [--minutes 5] [--all] [--json]
 edmund logs tidy
 ```

@@ -101,6 +101,60 @@ no conversation and still explains one: the resource samples, server requests
 and errors in the same window. `--all` adds everything else in the window,
 `--json` prints the records as they are stored.
 
+### Who is at the door
+
+Everything a person or a program on the internet can reach passes through one
+of the harness's servers, and each request is one `net-in` record: the public
+router (kitchen sites, shelf links, pages, and whatever the assistant has
+mounted behind it), the portal, the dashboard, the SMS and Grok webhooks, the
+printer pages, and the site server that serves a shared artifact through a
+tunnel of its own. A record says which server answered, which public name the
+request was sent to, the address and country it came from, what kind of
+client the user agent claims to be (browser, link preview, crawler, tool,
+scanner), and which known probes it matches.
+
+Known probes are the things asked of every address on the internet: a
+secrets file (`/.env`, `/.git/config`), the admin page of software that is
+not installed, a router's setup form, a path that climbs out of the site, an
+injection in the query. The query is read to decide and never stored; the
+record keeps only the names of what matched.
+
+Each client is also watched over ten minutes, and gets one line in
+`security` when it does one of these, not one line a request:
+
+| Event | When |
+|---|---|
+| `scan` | 5 requests matching known probes, or 20 different addresses that are not there |
+| `brute-force` | 8 requests refused (401 or 403) |
+| `flood` | 300 requests in a minute |
+
+A flood or a brute force is also sent to the operator as an alert. A scan is
+the internet's weather and is only recorded.
+
+```bash
+edmund logs traffic                 # the last 24 hours, summed
+edmund logs traffic --since 7d
+edmund logs security --since 2h     # every probe, refusal and flagged client
+edmund logs net-in --grep site.example.com
+```
+
+`edmund logs traffic` sums the period: requests by server, by the public name
+they were sent to, by kind of client and by country; the clients that probed
+most; what was flagged; the hours that stand far above the others; and what
+is reachable from outside this machine.
+
+That last part is its own record. Every five minutes the daemon lists each
+`cloudflared` tunnel with the local address it publishes, and every TCP port
+this account's processes have open that is not bound to loopback. The first
+reading of a day is written whole; after that a tunnel or a listener that
+opens is a warning in `security`, and one that closes is noted. It is how a
+tunnel the assistant opened for one afternoon, and nobody closed, gets seen.
+
+Not covered: a program that listens through a tunnel of its own and is not
+the harness's site server. Its tunnel shows in the inventory; its requests
+are in nobody's log unless it sits behind the public router (`registerMount`),
+which is where a page that should be watched belongs.
+
 ### What is kept out
 
 Request and response bodies and headers are never recorded, and neither is
