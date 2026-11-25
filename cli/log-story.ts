@@ -19,6 +19,7 @@
  * visible the day it starts logging.
  */
 
+import { PERSISTENT_FAILURE_ALERT_AT } from "../src/triggers/thresholds.ts";
 import type { ParsedLine } from "./commands/logs.ts";
 
 export type Story = {
@@ -65,10 +66,14 @@ const NOISE: Array<[RegExp, RegExp]> = [
   [/^claude-worker$/, /^shutting down/],
   [/^sms$/, /^spend today/],
   [/^refresh$/, /^applied /],
-  [/^recall$/, /./],
+  // Recall's progress is chatter. Its being broken is the story.
+  [/^recall$/, /^(?!the embedder |recall could not run)/],
   [/^mirror$/, /^(screen disconnected|connected to|liveness timeout)/],
   [/^liveness$/, /./],
-  [/^resources$/, /soft memory limit/],
+  // The governor trimming, or holding a restart until a turn ends, is it
+  // doing its job. A restart it actually asks for stays visible.
+  [/^resources$/, /soft memory limit|hard limit restart deferred/],
+  [/^trigger$/, /^rate limited by /],
   [/^integrations$/, /^loaded \d+/],
   [/^ghost-observer$/, /./],
   [/^credits$/, /^liability/],
@@ -225,6 +230,12 @@ function tellLine(p: ParsedLine, state: StoryState, nowMs: number): Story | null
   const ms = p.ts ? Date.parse(p.ts) : nowMs;
 
   for (const [s, t] of NOISE) if (s.test(scope) && t.test(text)) return null;
+  // A trigger check that failed is retried with a backoff, and the operator
+  // is alerted at the fifth failure in a row. Until then it is not news.
+  if (scope === "trigger") {
+    const failure = /^check failed .*failure #(\d+)/.exec(text);
+    if (failure && Number(failure[1]) < PERSISTENT_FAILURE_ALERT_AT) return null;
+  }
   if (/^\[?integrations\]? loaded/.test(text) || text.startsWith("computer[")) return null;
 
   // A message in.

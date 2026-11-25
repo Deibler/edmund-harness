@@ -203,3 +203,59 @@ describe("one color per conversation", () => {
     expect(THREAD_PALETTE).not.toContain(196);
   });
 });
+
+describe("the story view shows trouble, not the machinery handling it", () => {
+  const at = "2026-11-25T20:00:22.000Z";
+  const shown = (line: string) => run([`${at} ${line}`]).out[0];
+
+  test("a trigger check that failed is not news until the operator would be alerted", () => {
+    const failed = (n: number) =>
+      `[warn] [trigger] check failed id=trg_1 (Restock watch) — failure #${n} err="The operation timed out."`;
+    for (const n of [1, 2, 3, 4]) expect(shown(failed(n))).toBeNull();
+    expect(shown(failed(5))?.details).toContain("failure #5");
+    expect(shown(failed(12))).not.toBeNull();
+    expect(
+      shown(
+        "[warn] [trigger] auto-disarmed id=trg_1 (Restock watch) after 24 consecutive failures",
+      ),
+    ).not.toBeNull();
+    expect(
+      shown("[log] [trigger] FIRED id=trg_1 (Restock watch) → dm:+15555550101"),
+    ).not.toBeNull();
+  });
+
+  test("a host asking for fewer requests is handled, and hidden", () => {
+    expect(
+      shown("[log] [trigger] rate limited by shop.example.com; its checks wait 2m id=trg_1"),
+    ).toBeNull();
+  });
+
+  test("a restart held until a turn ends is hidden; a restart that happens is not", () => {
+    expect(
+      shown("[warn] [resources] hard limit restart deferred until active turns and calls finish"),
+    ).toBeNull();
+    expect(shown("[warn] [resources] soft memory limit: trimmed 1 embedding worker(s)")).toBeNull();
+    const restart = shown(
+      "[error] [resources] graceful restart requested: managed memory remained at 7722 MiB for 3 samples",
+    );
+    expect(restart?.tone).toBe("bad");
+  });
+
+  test("recall's progress is hidden, recall being broken is not", () => {
+    expect(shown("[log] [recall] +1 msg  msgs ▓▓▓▓▓▓▓▓▓▓ caught up · 61k indexed")).toBeNull();
+    expect(shown("[warn] [recall] coverage document counts were slow ms=882")).toBeNull();
+    expect(shown("[warn] [recall] embed batch failed; will retry next tick batch=2")).toBeNull();
+    const failing = shown(
+      '[error] [recall] the embedder keeps failing; replies are going out without recall model=m failures=3 minutes=5 err="Cannot find module"',
+    );
+    expect(failing?.tone).toBe("bad");
+    expect(
+      shown(
+        '[warn] [recall] recall could not run for this message; replying without it session=dm:+15555550101 err="embed: Error"',
+      ),
+    ).not.toBeNull();
+    expect(
+      shown("[log] [recall] the embedder is working again model=m failures=7 minutes=12"),
+    ).not.toBeNull();
+  });
+});

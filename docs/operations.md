@@ -46,6 +46,13 @@ model step, subagents and wake-ups, with the heartbeat noise hidden
 <name or handle>`, which follows one conversation's turns, steps, sends and
 wake-ups.
 
+Hidden with the noise is trouble the daemon is already handling: a trigger
+check that failed and will be retried (it shows from the fifth failure in a
+row, when the operator is alerted), a site asking for fewer requests, and a
+memory restart held back until a running turn ends. What stays visible is
+what did not resolve: the alert-level failure, the restart that happened,
+recall that cannot run.
+
 Turn debug logging on with `EDMUND_LOG_LEVEL=debug` in `.env`, or
 `scripts/launchd/service.sh debug on`, which edits the tracked plist template
 and reinstalls; remember to turn it off before committing.
@@ -94,7 +101,8 @@ State is in `data/state.db`. Do not edit it by hand while the daemon runs.
 
 `[alerts].operator_handle` receives iMessages that bypass the model: an outbox
 stuck for ten minutes, a healer failing repeatedly, a data trigger failing five
-times in a row, a lock held silently past its lease, the daily credits
+times in a row, the recall embedder failing for five minutes, a runtime crash
+found at the next boot, a lock held silently past its lease, the daily credits
 liability check. They are deduplicated per signature within
 `min_interval_minutes`. The dashboard Alerts page lists and mutes them.
 

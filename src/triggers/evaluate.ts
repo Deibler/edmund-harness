@@ -108,12 +108,42 @@ export async function evaluateTrigger(
 
 // ─── Probes ───────────────────────────────────────────────────────────
 
-/** A response that may clear on its own: a timeout or dropped connection, a
- *  server-side failure, or a rate limit. 4xx says the request itself is wrong
- *  and will be exactly as wrong a moment later. */
+/**
+ * The far end asked for fewer requests (HTTP 429). Nothing is wrong with the
+ * trigger, so this is not a failed check, and the answer is to come back
+ * later. The probe used to retry three seconds after a 429 and count the pair
+ * as a failure: on 2026-11-25 three checks of one shop ran back to back, the
+ * shop said 429, each was asked again at once, and two triggers were pushed
+ * from a four-hour check to an eight-hour one over a six-second limit.
+ */
+export class RateLimitedError extends Error {
+  readonly status = 429;
+  constructor(
+    readonly url: string,
+    /** How long the server said to wait, when it said. */
+    readonly retryAfterMs: number | null,
+  ) {
+    super(`HTTP 429 from ${url}`);
+    this.name = "RateLimitedError";
+  }
+}
+
+/** A Retry-After header: a number of seconds, or a date. */
+export function parseRetryAfter(value: string | null, nowMs = Date.now()): number | null {
+  if (!value) return null;
+  const seconds = Number(value.trim());
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - nowMs);
+}
+
+/** A response that may clear on its own in a moment: a timeout or dropped
+ *  connection, or a server-side failure. 4xx says the request itself is wrong
+ *  and will be exactly as wrong a moment later, and a rate limit says to ask
+ *  less, which asking again is not. */
 function isTransientProbeError(err: unknown): boolean {
   const status = (err as { status?: number } | null)?.status;
-  if (typeof status === "number") return status >= 500 || status === 429;
+  if (typeof status === "number") return status >= 500;
   return true; // thrown by fetch itself: timeout, DNS, refused, reset
 }
 
@@ -152,6 +182,9 @@ export async function probeUrl(
       ...(method === "POST" && opts?.body !== undefined ? { body: opts.body } : {}),
       signal: AbortSignal.timeout(12_000),
     });
+    if (res.status === 429) {
+      throw new RateLimitedError(url, parseRetryAfter(res.headers.get("retry-after")));
+    }
     if (!res.ok) {
       const err = new Error(`HTTP ${res.status} from ${url}`);
       (err as Error & { status: number }).status = res.status;

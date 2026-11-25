@@ -1,6 +1,9 @@
-import { log } from "../util/log.ts";
-import { type ProbeRunner, evaluateTrigger } from "./evaluate.ts";
+import { humanMs, log } from "../util/log.ts";
+import { type ProbeRunner, RateLimitedError, evaluateTrigger } from "./evaluate.ts";
 import type { DataTrigger, DataTriggerStore } from "./store.ts";
+import { PERSISTENT_FAILURE_ALERT_AT, PERSISTENT_FAILURE_DISARM_AT } from "./thresholds.ts";
+
+export { PERSISTENT_FAILURE_ALERT_AT, PERSISTENT_FAILURE_DISARM_AT };
 
 /**
  * Polls armed data triggers and fires a system event into the owning
@@ -26,22 +29,6 @@ export type DataTriggerWatcherOpts = {
   onAutoDisarm?: (t: DataTrigger, error: string, failures: number) => void;
 };
 
-/** Escalate to the operator at exactly this many consecutive failures. */
-export const PERSISTENT_FAILURE_ALERT_AT = 5;
-
-/**
- * Give up at this many consecutive failures and disarm.
- *
- * The alert at 5 assumed someone would then repair or cancel the trigger.
- * Nobody does — the alert is one line in a busy thread, and the backoff
- * floor below means the corpse keeps probing hourly regardless. Three
- * kitchen triggers reached 100+ consecutive failures over four days, each
- * pointed at a `trycloudflare.com` hostname that had been regenerated,
- * i.e. at a URL that could never come back. Past a day of solid failure
- * the endpoint is gone, not flaky, and retrying is pure noise.
- */
-export const PERSISTENT_FAILURE_DISARM_AT = 24;
-
 /** Backoff ceiling — a failing trigger is retried at most hourly. */
 const MAX_FAILURE_BACKOFF_MS = 60 * 60 * 1000;
 
@@ -57,9 +44,38 @@ export function effectiveIntervalMs(t: DataTrigger): number {
   return Math.min(backoff, Math.max(t.checkIntervalMs, MAX_FAILURE_BACKOFF_MS));
 }
 
+/** How long a host is left alone after a 429 that did not say. */
+const RATE_LIMIT_DEFAULT_WAIT_MS = 2 * 60_000;
+/** Bounds on what a Retry-After may ask of us: at least a tick's worth of
+ *  quiet, and never so long that the trigger is as good as disarmed. */
+const RATE_LIMIT_MIN_WAIT_MS = 30_000;
+const RATE_LIMIT_MAX_WAIT_MS = 60 * 60_000;
+/** After a host rate limits us, its triggers are checked one per tick for
+ *  this long instead of all of them back to back. */
+const CAREFUL_FOR_MS = 60 * 60_000;
+/** A trigger rate limited this many times in a row is failing, whatever the
+ *  status code says, and goes down the ordinary failure path. */
+export const RATE_LIMIT_IS_FAILURE_AT = 3;
+
+/** The host a trigger's probe talks to, when it talks to one. */
+function probeHost(t: DataTrigger): string | null {
+  if (t.source.kind !== "url") return null;
+  try {
+    return new URL(t.source.url).host;
+  } catch {
+    return null;
+  }
+}
+
 export class DataTriggerWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  /** Host -> when it may be asked again. In memory: a restart forgets it,
+   *  and the worst that follows is one more 429. */
+  private readonly quietUntil = new Map<string, number>();
+  private readonly carefulUntil = new Map<string, number>();
+  /** Trigger id -> rate limits in a row. */
+  private readonly rateLimited = new Map<string, number>();
 
   constructor(private opts: DataTriggerWatcherOpts) {}
 
@@ -82,11 +98,29 @@ export class DataTriggerWatcher {
       const expired = this.opts.store.expireSweep(nowMs);
       if (expired > 0) log.info("trigger", `expired ${expired} past-deadline trigger(s)`);
 
-      for (const t of this.opts.store.listArmed()) {
+      // Longest-unchecked first, so that when a host is down to one check a
+      // tick the same trigger does not take the turn every time.
+      const armed = [...this.opts.store.listArmed()].sort(
+        (a, b) => a.lastCheckedMs - b.lastCheckedMs,
+      );
+      for (const t of armed) {
         if (nowMs - t.lastCheckedMs < effectiveIntervalMs(t)) continue;
+        const host = probeHost(t);
+        // A host that asked for quiet gets it. The trigger stays due and is
+        // checked on the first tick after.
+        if (host && (this.quietUntil.get(host) ?? 0) > nowMs) continue;
+        if (host && (this.carefulUntil.get(host) ?? 0) > nowMs) {
+          // One check of this host per tick: the rest of its triggers wait.
+          this.quietUntil.set(host, nowMs + 1);
+        }
         try {
           await this.evaluate(t, nowMs);
+          this.rateLimited.delete(t.id);
         } catch (err) {
+          if (err instanceof RateLimitedError && host && this.comeBackLater(t, host, err, nowMs)) {
+            continue;
+          }
+          this.rateLimited.delete(t.id);
           // A failing probe/predicate must not kill the loop or other
           // triggers. The error lands on the trigger row so the model can
           // see and repair it via list_triggers; repeat failures back off
@@ -120,6 +154,33 @@ export class DataTriggerWatcher {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /**
+   * A rate limit: leave the host alone for as long as it asked, and count
+   * nothing against the trigger. False once the same trigger has been turned
+   * away RATE_LIMIT_IS_FAILURE_AT times running, which is a failure.
+   */
+  private comeBackLater(
+    t: DataTrigger,
+    host: string,
+    err: RateLimitedError,
+    nowMs: number,
+  ): boolean {
+    const times = (this.rateLimited.get(t.id) ?? 0) + 1;
+    if (times >= RATE_LIMIT_IS_FAILURE_AT) return false;
+    this.rateLimited.set(t.id, times);
+    const wait = Math.min(
+      RATE_LIMIT_MAX_WAIT_MS,
+      Math.max(RATE_LIMIT_MIN_WAIT_MS, err.retryAfterMs ?? RATE_LIMIT_DEFAULT_WAIT_MS),
+    );
+    this.quietUntil.set(host, nowMs + wait);
+    this.carefulUntil.set(host, nowMs + wait + CAREFUL_FOR_MS);
+    log.info("trigger", `rate limited by ${host}; its checks wait ${humanMs(wait)}`, {
+      id: t.id,
+      name: t.name,
+    });
+    return true;
   }
 
   private async evaluate(t: DataTrigger, nowMs: number): Promise<void> {

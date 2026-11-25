@@ -1,0 +1,5 @@
+---
+"edmund-harness": patch
+---
+
+A site that asks for fewer requests is given them, and `edmund logs` stops reporting trouble that is being handled. A trigger check answered with HTTP 429 used to be asked again three seconds later and then counted as a failed check, which doubled the trigger's interval: three checks of one shop, run back to back, pushed two restock watches from every four hours to every eight over a six-second limit. Now a 429 is not retried, the host is left alone for as long as its `Retry-After` says (two minutes when it does not say), nothing is counted against the trigger, and for the next hour that host's triggers are checked one a tick instead of all at once. A trigger turned away three times running is still a failure. In the default log view, a failed trigger check is hidden until the fifth in a row (when the operator is alerted), and so is a memory restart that is only being held until a turn ends, which is now a warning rather than an error. Recall being broken is no longer hidden with recall's progress lines.
