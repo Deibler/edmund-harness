@@ -302,8 +302,10 @@ export class ResourceGovernor {
         this.options.restartOnHardLimit
       ) {
         if (busy) {
+          // A warning, not an error: nothing is wrong yet. The usual cause is
+          // a tool in a running turn (a render, a build) that ends with it.
           action = "hard limit restart deferred until active turns and calls finish";
-          this.deps.log("error", `[resources] ${action}`);
+          this.deps.log("warn", `[resources] ${action}`);
         } else {
           restartReason =
             `managed memory remained at ${Math.round(managed.footprintBytes / MIB)} MiB ` +

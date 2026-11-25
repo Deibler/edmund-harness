@@ -5,12 +5,18 @@ import { join } from "node:path";
 import type { Config } from "../src/config/config.ts";
 import type { ToolContext } from "../src/mcp/context.ts";
 import { triggerTools } from "../src/mcp/tools/triggers.ts";
-import { evaluateTrigger, probeUrl } from "../src/triggers/evaluate.ts";
+import {
+  RateLimitedError,
+  evaluateTrigger,
+  parseRetryAfter,
+  probeUrl,
+} from "../src/triggers/evaluate.ts";
 import { DataTriggerStore, type TriggerSource } from "../src/triggers/store.ts";
 import {
   DataTriggerWatcher,
   PERSISTENT_FAILURE_ALERT_AT,
   PERSISTENT_FAILURE_DISARM_AT,
+  RATE_LIMIT_IS_FAILURE_AT,
   buildFireEvent,
   effectiveIntervalMs,
 } from "../src/triggers/watcher.ts";
@@ -124,6 +130,160 @@ describe("probeUrl", () => {
     } finally {
       server.stop(true);
     }
+  });
+});
+
+describe("probeUrl and a rate limit", () => {
+  test("a 429 is not asked again, and carries how long the server said to wait", async () => {
+    // 2026-11-25: a shop answered 429 and the probe asked again 3 s later.
+    let hits = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits += 1;
+        return new Response("slow down", { status: 429, headers: { "Retry-After": "7" } });
+      },
+    });
+    try {
+      const failure = await probeUrl(`http://127.0.0.1:${server.port}/p.js`, undefined, {
+        fetchImpl: plainFetch,
+      }).catch((err) => err);
+      expect(failure).toBeInstanceOf(RateLimitedError);
+      expect((failure as RateLimitedError).retryAfterMs).toBe(7000);
+      expect((failure as RateLimitedError).message).toContain("HTTP 429");
+      expect(hits).toBe(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("Retry-After reads as seconds or as a date, and may be absent", () => {
+    const now = Date.parse("2026-11-25T20:00:00Z");
+    expect(parseRetryAfter("120", now)).toBe(120_000);
+    expect(parseRetryAfter("Wed, 25 Nov 2026 20:05:00 GMT", now)).toBe(300_000);
+    expect(parseRetryAfter("Wed, 25 Nov 2026 19:00:00 GMT", now)).toBe(0);
+    expect(parseRetryAfter(null, now)).toBeNull();
+    expect(parseRetryAfter("soon", now)).toBeNull();
+  });
+});
+
+describe("DataTriggerWatcher and a host that asks for fewer requests", () => {
+  let dir: string;
+  let store: DataTriggerStore;
+  const SHOP = "https://shop.example.test";
+  const T0 = 1_000_000;
+  const MIN = 60_000;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "trg-rate-"));
+    store = new DataTriggerStore(dir);
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const arm = (url: string) =>
+    store.create({
+      sessionKey: KEY,
+      name: `watch ${url}`,
+      brief: "say when it is back in stock",
+      source: { kind: "url", url },
+      predicate: "return { fire: false, summary: 'no' };",
+      oneShot: false,
+      checkIntervalMs: 0,
+      cooldownMs: 0,
+      expiresMs: null,
+    });
+
+  /** A watcher whose probe answers 429 while `limited` says so, and records every call. */
+  function watch(
+    limited: (url: string, call: number) => boolean,
+    retryAfterMs: number | null = MIN,
+  ) {
+    const calls: string[] = [];
+    const w = new DataTriggerWatcher({
+      store,
+      intervalMs: MIN,
+      fire: () => {},
+      probe: async (source) => {
+        const url = source.kind === "url" ? source.url : "";
+        calls.push(url);
+        if (limited(url, calls.length)) throw new RateLimitedError(url, retryAfterMs);
+        return { ok: true };
+      },
+    });
+    return { w, calls };
+  }
+
+  test("a rate limit counts nothing against the trigger", async () => {
+    const t = arm(`${SHOP}/a.js`);
+    const { w } = watch(() => true);
+    await w.tick(T0);
+    const after = store.get(t.id)!;
+    expect(after.consecutiveFailures).toBe(0);
+    expect(after.lastError).toBeNull();
+    // Still due: it was never checked, only turned away.
+    expect(after.lastCheckedMs).toBe(0);
+    expect(effectiveIntervalMs(after)).toBe(0);
+  });
+
+  test("the host is left alone for as long as it asked, then checked again", async () => {
+    const t = arm(`${SHOP}/a.js`);
+    const { w, calls } = watch((_url, call) => call === 1, 5 * MIN);
+    await w.tick(T0);
+    await w.tick(T0 + MIN);
+    await w.tick(T0 + 4 * MIN);
+    expect(calls.length).toBe(1);
+    await w.tick(T0 + 5 * MIN + 1);
+    expect(calls.length).toBe(2);
+    expect(store.get(t.id)!.lastCheckedMs).toBe(T0 + 5 * MIN + 1);
+    expect(store.get(t.id)!.consecutiveFailures).toBe(0);
+  });
+
+  test("one 429 quiets every trigger on that host, and other hosts carry on", async () => {
+    arm(`${SHOP}/a.js`);
+    arm(`${SHOP}/b.js`);
+    arm(`${SHOP}/c.js`);
+    arm("https://weather.example.test/alerts");
+    const { w, calls } = watch((url) => url.startsWith(SHOP));
+    await w.tick(T0);
+    expect(calls.filter((u) => u.startsWith(SHOP)).length).toBe(1);
+    expect(calls.filter((u) => u.includes("weather")).length).toBe(1);
+  });
+
+  test("afterwards that host gets one check a tick, not all of them back to back", async () => {
+    const ids = [arm(`${SHOP}/a.js`), arm(`${SHOP}/b.js`), arm(`${SHOP}/c.js`)].map((t) => t.id);
+    const { w, calls } = watch((_url, call) => call === 1);
+    await w.tick(T0);
+    expect(calls.length).toBe(1);
+    const checked = () => ids.filter((id) => store.get(id)!.lastCheckedMs > 0).length;
+    await w.tick(T0 + 2 * MIN);
+    expect(checked()).toBe(1);
+    await w.tick(T0 + 3 * MIN);
+    expect(checked()).toBe(2);
+    await w.tick(T0 + 4 * MIN);
+    expect(checked()).toBe(3);
+  });
+
+  test("a 429 that did not say how long is given two minutes", async () => {
+    arm(`${SHOP}/a.js`);
+    const { w, calls } = watch((_url, call) => call === 1, null);
+    await w.tick(T0);
+    await w.tick(T0 + MIN);
+    expect(calls.length).toBe(1);
+    await w.tick(T0 + 2 * MIN + 1);
+    expect(calls.length).toBe(2);
+  });
+
+  test("turned away again and again, it is a failure like any other", async () => {
+    const t = arm(`${SHOP}/a.js`);
+    const { w } = watch(() => true);
+    for (let i = 0; i < RATE_LIMIT_IS_FAILURE_AT; i++) await w.tick(T0 + i * 2 * MIN);
+    const after = store.get(t.id)!;
+    expect(after.consecutiveFailures).toBe(1);
+    expect(after.lastError).toContain("HTTP 429");
   });
 });
 
