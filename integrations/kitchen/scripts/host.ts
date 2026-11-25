@@ -21,6 +21,13 @@ import { prepareDataFolder } from "../../../src/util/data-migrate.ts";
 import { defaultLogsDir } from "../../../src/util/log-files.ts";
 import { installChannelSink } from "../../../src/util/log-sink.ts";
 import { mountFor } from "../../../src/web/mounts.ts";
+import {
+  RELAY_HOST_HEADER,
+  RELAY_KEY_HEADER,
+  announceRouter,
+  hostDecision,
+  publicHostOf,
+} from "../../../src/web/public-hosts.ts";
 import { baseDir } from "../src/accounts.ts";
 import {
   type HostStatus,
@@ -46,6 +53,11 @@ const origin =
     ? process.env.KITCHEN_SITE_ORIGIN || null
     : siteOrigin();
 const routerPort = Number(process.env.KITCHEN_HOST_PORT) || hostPort();
+/** The public name for everything that is not a kitchen page ([shelf] origin). */
+const artifactsOrigin =
+  process.env.EDMUND_ARTIFACTS_ORIGIN !== undefined
+    ? process.env.EDMUND_ARTIFACTS_ORIGIN || null
+    : config?.shelf?.origin?.trim() || null;
 /** Edmund's shelf (src/shelf/): permanent links for what he hands people,
  *  served under this host because it is the one named tunnel on the machine. */
 const shelfDir = process.env.EDMUND_SHELF_DIR || join(ROOT, "data", "shelf");
@@ -193,6 +205,10 @@ async function check(h: Hosted): Promise<void> {
 
 /* ── the router ──────────────────────────────────────────────────────────── */
 
+// Where the portal's listener finds this router, and the key that proves a
+// request came from it.
+const relay = announceRouter(mountsDir, routerPort);
+
 Bun.serve({
   hostname: "127.0.0.1",
   port: routerPort,
@@ -200,27 +216,71 @@ Bun.serve({
   // can be slower than that while its process is busy, and the person sees
   // a page that never loads.
   idleTimeout: 60,
-  fetch: withAccessLog("public-router", async (req: Request) => {
-    const url = new URL(req.url);
-    const shelf = serveShelf(req, shelfDir);
-    if (shelf) return shelf;
-    if (url.pathname === "/i" || url.pathname.startsWith("/i/")) {
-      ideations ??= new IdeationStore(mountsDir);
-      const page = serveIdeation(req, mountsDir, ideations);
-      if (page) return page;
-    }
-    const mounted = mountFor(mountsDir, url.pathname);
-    if (mounted)
-      return forward(req, url, mounted, "This page is restarting. Try again in a minute.");
-    const h = route(url, current);
-    if (!h) return new Response("Not found", { status: 404 });
-    return forward(req, url, h.port, "This kitchen page is restarting. Try again in a minute.");
-  }),
+  fetch: withAccessLog(
+    "public-router",
+    async (req: Request) => {
+      const url = new URL(req.url);
+      const place = placeOf(url);
+      // Each public name serves only its own (src/web/public-hosts.ts).
+      const decision = hostDecision({
+        host: publicHostOf(req, relay.relayKey).host,
+        method: req.method,
+        accept: req.headers.get("accept"),
+        surface: place.surface,
+        pathAndQuery: url.pathname + url.search,
+        kitchenOrigin: origin,
+        artifactsOrigin,
+      });
+      if (decision.action === "redirect") return Response.redirect(decision.to, 307);
+      if (decision.action === "refuse") return new Response("Not found", { status: 404 });
+
+      // The order is the one placeOf decides in: the shelf, a built page, a
+      // mount, and only then a household's site.
+      const shelf = serveShelf(req, shelfDir);
+      if (shelf) return shelf;
+      if (place.ideation) {
+        ideations ??= new IdeationStore(mountsDir);
+        const page = serveIdeation(req, mountsDir, ideations);
+        if (page) return page;
+      }
+      if (place.mounted)
+        return forward(req, url, place.mounted, "This page is restarting. Try again in a minute.");
+      if (!place.site) return new Response("Not found", { status: 404 });
+      return forward(
+        req,
+        url,
+        place.site.port,
+        "This kitchen page is restarting. Try again in a minute.",
+      );
+    },
+    { relayed: (req) => publicHostOf(req, relay.relayKey).relayed },
+  ),
 });
+
+/**
+ * Whose a path is. The shelf, a built page and a mount come first, and a path
+ * that is one of those is never looked up as a household's site: a mount
+ * could otherwise be shadowed by a kitchen that happens to share its name.
+ */
+function placeOf(url: URL) {
+  const ideation = url.pathname === "/i" || url.pathname.startsWith("/i/");
+  const mounted = mountFor(mountsDir, url.pathname);
+  const artifact = url.pathname.startsWith("/shelf/") || ideation || mounted !== null;
+  const site = artifact ? null : route(url, current);
+  const surface: "artifact" | "kitchen" | "none" = artifact
+    ? "artifact"
+    : site
+      ? "kitchen"
+      : "none";
+  return { ideation, mounted, site, surface };
+}
 
 async function forward(req: Request, url: URL, port: number, down: string): Promise<Response> {
   const headers = new Headers(req.headers);
   headers.delete("host");
+  // The key stays between the two harness servers; a mounted page never sees it.
+  headers.delete(RELAY_KEY_HEADER);
+  headers.delete(RELAY_HOST_HEADER);
   try {
     const res = await fetch(`http://127.0.0.1:${port}${url.pathname}${url.search}`, {
       method: req.method,

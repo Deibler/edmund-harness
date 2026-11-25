@@ -234,6 +234,14 @@ function watchClient(o: Observed, now: number): void {
 export function withAccessLog<S, R extends Response | undefined>(
   server: string,
   handler: (req: Request, srv: S) => MaybePromise<R>,
+  options: {
+    /**
+     * True for a request another harness server handed over, having recorded
+     * it at the door: it is filed here as `relayed`, and is not a second
+     * visitor to count, watch or flag.
+     */
+    relayed?: (req: Request) => boolean;
+  } = {},
 ): (req: Request, srv: S) => Promise<R> {
   return async function accessLogged(this: unknown, req: Request, srv: S): Promise<R> {
     const started = performance.now();
@@ -255,7 +263,9 @@ export function withAccessLog<S, R extends Response | undefined>(
         path = safePath(url.pathname);
         address = url.pathname + url.search;
       } catch {}
-      const caller = callerOf(req, srv);
+      const relayed = options.relayed?.(req) ?? false;
+      const seen = callerOf(req, srv);
+      const caller: { ip?: string; via?: string } = relayed ? { ip: seen.ip } : seen;
       const userAgent = req.headers.get("user-agent");
       const client = classifyClient(userAgent);
       // The query is read here and nowhere kept: only the names of what it matched.
@@ -273,6 +283,7 @@ export function withAccessLog<S, R extends Response | undefined>(
         client: client.name ? `${client.kind}:${client.name}` : client.kind,
         ua: (userAgent ?? "").slice(0, 120) || undefined,
         ...(probes.length > 0 ? { probes } : {}),
+        ...(relayed ? { relayed: true } : {}),
         ...(failure ? { err: failure } : {}),
       };
       const line = `${server} ${req.method} ${path} ${status}`;
@@ -283,27 +294,32 @@ export function withAccessLog<S, R extends Response | undefined>(
         // mistake, not a fault: only a failure of the server is a warning.
         log.event("net-in", "net-in", line, fields, status >= 500 ? "warn" : "info");
       }
-      if (status === 401 || status === 403 || status === 429) {
-        log.event("security", "net-in", `${line} denied`, fields);
+      // For a relayed request, the server that took it from outside has
+      // already filed what follows. (Not a `return`: this is a `finally`, and
+      // returning here would replace the handler's answer.)
+      if (!relayed) {
+        if (status === 401 || status === 403 || status === 429) {
+          log.event("security", "net-in", `${line} denied`, fields);
+        }
+        if (probes.length > 0) {
+          log.event("security", "inbound", `probe ${probes.join(",")}: ${line}`, {
+            ...fields,
+            kind: "probe",
+          });
+        }
+        watchClient(
+          {
+            server,
+            client: caller.via ?? caller.ip ?? "?",
+            path,
+            status,
+            probes,
+            isPublic: caller.via !== undefined,
+            fields,
+          },
+          now,
+        );
       }
-      if (probes.length > 0) {
-        log.event("security", "inbound", `probe ${probes.join(",")}: ${line}`, {
-          ...fields,
-          kind: "probe",
-        });
-      }
-      watchClient(
-        {
-          server,
-          client: caller.via ?? caller.ip ?? "?",
-          path,
-          status,
-          probes,
-          isPublic: caller.via !== undefined,
-          fields,
-        },
-        now,
-      );
     }
   };
 }

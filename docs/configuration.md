@@ -572,7 +572,9 @@ transcript. A hosted video model is used only when `analyze_video` names one.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `origin` | `""` | Public URL of the kitchen host's named tunnel. Files are served at `<origin>/shelf/<token>/`. Empty = no shelf |
+| `origin` | `""` | The public name for everything the assistant hands people that is not a kitchen page: shelf files at `<origin>/shelf/<token>/`, the pages it builds, and whatever is mounted on the public router. Empty = no shelf. It may be the kitchen's name (`[kitchen] site_origin`), or a second one; see below |
+
+With two names, each serves only its own: the kitchen's name serves household recipe and inventory pages, and this one serves the rest. A person who opens an old link at the kitchen's name is redirected; a program (a webhook, a link preview) is answered where it asked. The second name can be the portal's (`[dashboard] external_url`): the portal's listener hands the public router any request for a shelf link, a built page or a mount, so no extra tunnel route is needed.
 
 ### The Claude CLI
 

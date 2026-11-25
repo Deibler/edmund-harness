@@ -29,6 +29,7 @@ import { SpendLedger } from "../../src/spend/ledger.ts";
 import { withAccessLog } from "../../src/util/access-log.ts";
 import { prepareDataFolder } from "../../src/util/data-migrate.ts";
 import { installLogSink } from "../../src/util/log-sink.ts";
+import { isArtifactPath, readRouterAddress, relayToRouter } from "../../src/web/public-hosts.ts";
 import { loadOrCreateSecret } from "./auth.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { originGuard, securityHeaders } from "./middleware/csrf.ts";
@@ -248,7 +249,15 @@ async function main() {
   const publicServer = Bun.serve({
     hostname: "127.0.0.1",
     port: config.dashboard.public_port,
-    fetch: withAccessLog("portal", pub.fetch),
+    // A shelf link, a built page or a mount asked for at the portal's name
+    // belongs to the public router: it is handed over before any of the
+    // portal's own middleware, so the answer is the router's, untouched.
+    fetch: withAccessLog("portal", (req: Request, srv: unknown) => {
+      const router = isArtifactPath(resolve(config.paths.data_dir), new URL(req.url).pathname)
+        ? readRouterAddress(resolve(config.paths.data_dir))
+        : null;
+      return router ? relayToRouter(req, router) : pub.fetch(req, srv as never);
+    }),
     idleTimeout: 0,
   });
   console.log(

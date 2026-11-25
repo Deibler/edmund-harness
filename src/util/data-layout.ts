@@ -119,6 +119,11 @@ export const DATA_LAYOUT: DataEntry[] = [
   ),
   state("run/pool-stats.json", "src/main.ts", "The worker pool, for the dashboard."),
   state(
+    "run/public-router.json",
+    "src/web/public-hosts.ts",
+    "Where the public router listens, and the key the portal's listener relays with.",
+  ),
+  state(
     "run/resource-status.json",
     "src/boot/resource-governor.ts",
     "The latest memory sample, for the dashboard.",
