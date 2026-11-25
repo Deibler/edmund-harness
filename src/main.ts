@@ -497,6 +497,8 @@ async function main() {
       return true;
     },
     chatGuidsOf: (sessionKey) => chatGuidsForSession(sessionKey, chatDb, contacts),
+    configPath: resolve("./config.toml"),
+    logsDir: resolve(config.paths.logs_dir),
   });
 
   const recall = wireRecall({ config, state, chatDb, contacts });
@@ -614,6 +616,7 @@ async function main() {
     onOpened: (opened) => void watchRuntime.doorOpened(opened),
   });
   exposure.start();
+  watchRuntime.setExposureSampler(() => exposure.sample());
 
   // A scan is the internet's weather and is only recorded. A flood, or
   // someone refused again and again at a login, is worth being told about:
@@ -631,7 +634,9 @@ async function main() {
         attacksReadTo,
       )) {
         const kind = String(r.fields?.kind ?? "");
-        if (r.tag !== "inbound" || (kind !== "flood" && kind !== "brute-force")) continue;
+        // A login being guessed at is the security watch's to review and
+        // block (src/watch/inbound-watch.ts); one address flooding is still told here.
+        if (r.tag !== "inbound" || kind !== "flood") continue;
         void alert.notify({ category: `inbound-${kind}`, error: r.msg });
       }
     } catch {}

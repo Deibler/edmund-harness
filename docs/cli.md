@@ -112,6 +112,7 @@ edmund watch [status]
 edmund watch incidents
 edmund watch ok <id> | undo <id>
 edmund watch resume [chat]
+edmund watch drill
 edmund lockdown
 edmund lockdown off
 ```
@@ -123,7 +124,9 @@ raised again; `undo <id>` reverses it once. `resume` lets a paused chat take
 turns again. `lockdown` closes every quick tunnel and share, takes the shell
 from workers, messages nobody but the operator and turns the web tools off;
 `lockdown off` puts back what it unloaded. Both lockdown commands work with
-the daemon down ([the security watch](watch.md)).
+the daemon down ([the security watch](watch.md)). `drill` runs four staged
+attacks through the live watch and exits 1 if any was not raised and
+contained within a minute.
 
 ## Sessions
 

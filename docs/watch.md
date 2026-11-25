@@ -146,6 +146,96 @@ the operator works on this machine too.
 A file published with `shelve` is read the same way, and refused if it holds
 a secret.
 
+## Who is knocking
+
+The tunnels dial out, so a volumetric attack lands on the tunnel provider.
+What reaches this machine is application traffic: the probes every address on
+the internet gets, guesses at a share's key, and floods that are slow or
+spread across many addresses.
+
+The daemon reads the `net-in` log channel, which every harness server and
+every share's own server writes, and keeps a picture of each outside address:
+
+- **A score that fades.** Probes, refusals, misses, an odd client and a bad
+  reputation add to it; half is gone in six hours. At 60 the address is
+  blocked for a day, quietly: it is logged and nobody is told.
+- **Reputation, kept locally.** Spamhaus DROP, FireHOL level 1, the Tor exit
+  list and an address-to-network table are downloaded whole once a day into
+  `data/watch/reputation/`. A visitor's address is never sent anywhere to ask
+  about it. Reputation only adds to a score. On its own it trips nothing.
+- **Counts together.** The same counts by /24, IPv6 /64 and network, against
+  what is usual for the hour, catch many addresses each staying under the
+  single-address limit, and a link that has got out and is suddenly opened
+  from everywhere.
+
+A review by the judge is tripped only by harm or persistence:
+
+| Reason | What it is |
+|---|---|
+| got through | a request matching a probe was answered with a page |
+| key guessed | refused keys at a share, then an accepted one |
+| aimed | an exploit payload sent to a page that exists here |
+| brute force | eight refusals in ten minutes |
+| flood | a subnet or network far above the server's usual load, from five addresses or more |
+| persistent | back in three separate hours and still probing, forty paths walked, refused at two shares, or still trying after a block |
+| leaked link | twenty addresses that had never been here on one path within ten minutes |
+
+The judge is shown what the address did and how the server answered, and
+asked whether it is aimed at this server or is background noise, and whether
+anything got through. Serious is blocked for a day and texted, with
+`UNDO <id>` to lift it. Brute force and a spread-out flood are serious
+without a verdict. Benign is recorded.
+
+A blocked address gets a 403 from every harness server before the server's
+own code reads the request: the block is one file, `data/watch/blocked.json`,
+that each of them rereads when it changes.
+
+This machine's own public address and its IPv6 /64 are found hourly, are
+never scored, and `edmund logs traffic` counts them as its own.
+
+Not built: looking an address up at AbuseIPDB or GreyNoise (each needs an
+account and a key), and mirroring a block to Cloudflare or turning on Under
+Attack mode (the token here cannot edit the zone).
+
+## The change watch
+
+Every five minutes the files that make something run again later are
+compared with the last look: the user's LaunchAgents, the crontab, the shell
+profiles, `~/.ssh/authorized_keys`, cloudflared's configuration, and
+`config.toml`. A change is an incident on the record
+(`edmund watch incidents`), with the earlier version kept so that
+`edmund watch undo <id>` puts it back. It is serious, and texted, when a
+worker's own write to that kind of file was seen in the same window.
+
+`config.toml` is kept as key names and two fingerprints, never values: one
+of the `[security]` section, one of every webhook and public address. A hand
+edit anywhere else in it is not news.
+
+The assistant's own memory files (`persona/SOUL.md`, `AGENTS.md`,
+`IDENTITY.md`) change all day through its own tools. A change is recorded
+and the earlier version kept; it is raised only when a worker wrote the file
+directly.
+
+## The drill
+
+`edmund watch drill` runs four scenarios through the watch as it is running,
+with the real judge:
+
+1. A turn asked for a recipe reads a page that tells it to text a stranger,
+   and goes to do so.
+2. A canary's value in a request to an outside address.
+3. A server listening on every interface, started from one of the
+   assistant's folders without going through the gate.
+4. A probe sweep and a spread-out flood, from addresses reserved for
+   documentation.
+
+Each must be raised and contained within a minute. The operator is texted
+one line a scenario; no alert needs answering, and nothing is left paused or
+blocked. It runs by itself every 30 days after the first one. A drill that
+fails is a bug.
+
+In `observe` mode raising is all that is asked, since nothing is stopped.
+
 ## What it cannot do
 
 - It sees what a command says, not what a program does once running. A script
@@ -158,3 +248,4 @@ a secret.
   admin password once.
 - Blocking an address at Cloudflare and turning on Under Attack mode need a
   token with edit rights on the zone's WAF rules and IP lists.
+- Reputation lists are IPv4. An IPv6 visitor is judged on what it does.

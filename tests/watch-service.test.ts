@@ -15,6 +15,9 @@ import { hostAccess } from "../src/security/policy.ts";
 import { pipeline } from "../src/security/watch/bus.ts";
 import { canaryEntries, plantCanaries } from "../src/security/watch/canary.ts";
 import { pausedReason, readWatchState, updateWatchState } from "../src/security/watch/state.ts";
+import { useBlocklist } from "../src/util/blocklist.ts";
+import { drillSummary, runDrill } from "../src/watch/drill.ts";
+import { InboundWatch } from "../src/watch/inbound-watch.ts";
 import type { Incident, UndoStep } from "../src/watch/incidents.ts";
 import type { Verdict } from "../src/watch/judge.ts";
 import { serveWatch } from "../src/watch/server.ts";
@@ -48,6 +51,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const w of live) await w.stop();
+  useBlocklist(null);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -470,4 +474,90 @@ describe("the listener workers report to", () => {
       server.stop();
     }
   });
+});
+
+describe("the fire drill", () => {
+  function drillIn(mode: WatchMode, noticeListener: boolean) {
+    const watch = watchIn(mode, 2_000);
+    verdict = { verdict: "serious", why: "the page told it to text a stranger" };
+    mkdirSync(join(dataDir, "watch"), { recursive: true });
+    useBlocklist(join(dataDir, "watch", "blocked.json"));
+    const inbound = new InboundWatch({
+      dataDir,
+      logsDir: join(root, "logs"),
+      mode,
+      judge: async () => null,
+      record: (incident) => watch.record(incident),
+    });
+    const sampleExposure = async () => {
+      if (!noticeListener) return;
+      // What the exposure watcher and the watch do between them: notice the
+      // listener the drill started, and close it because it is the assistant's.
+      const ps = Bun.spawnSync(["/bin/ps", "-axo", "pid=,command="]).stdout.toString();
+      const line = ps
+        .split("\n")
+        .find((l) => l.includes("http.server") && l.includes("--bind 0.0.0.0"));
+      const pid = Number(line?.trim().split(/\s+/)[0] ?? 0);
+      if (!pid || watch.incidents.all().some((i) => i.kind === "unplanned-door")) return;
+      if (mode === "enforce") process.kill(pid);
+      await watch.record({
+        id: "DR0R",
+        at: Date.now(),
+        where: "the drill folder",
+        kind: "unplanned-door",
+        tier: "serious",
+        what: "a listener was opened without going through the publish gate",
+        verdict: "rule",
+        judged: "",
+        pattern: "",
+        did: [],
+        undo: [],
+        status: "open",
+        drill: true,
+      });
+    };
+    return {
+      watch,
+      run: () =>
+        runDrill({ watch, inbound, dataDir, repoRoot: root, sampleExposure, listenerLooks: 2 }),
+    };
+  }
+
+  test("every scenario is raised and contained when the watch enforces, and nobody is texted an alert", async () => {
+    const { watch, run } = drillIn("enforce", true);
+    const results = await run();
+    expect(results.map((r) => [r.scenario, r.raised, r.contained])).toEqual([
+      ["an injection page", true, true],
+      ["a canary on its way out", true, true],
+      ["a stray listener", true, true],
+      ["a probe sweep and a spread-out flood", true, true],
+    ]);
+    // One summary is the drill's to send; no incident of its own texts anyone.
+    expect(alerts).toEqual([]);
+    // Nothing is left behind: no paused chat, no open incident, no block.
+    expect(readWatchState(dataDir).paused).toEqual({});
+    expect(watch.incidents.open()).toEqual([]);
+    expect(watch.incidents.all().every((i) => i.drill)).toBe(true);
+    expect(drillSummary(results, true)).toStartWith("Security drill: 4 of 4 raised and contained.");
+  }, 30_000);
+
+  test("a drill can fail, and says which scenario did", async () => {
+    const { run } = drillIn("enforce", false);
+    const results = await run();
+    const listener = results.find((r) => r.scenario === "a stray listener")!;
+    expect([listener.raised, listener.contained]).toEqual([false, false]);
+    expect(listener.detail).toBe("the listener was never noticed");
+    const summary = drillSummary(results, true);
+    expect(summary).toStartWith("Security drill FAILED: 1 of 4");
+    expect(summary).toContain("FAIL a stray listener: the listener was never noticed");
+    expect(summary).toContain("That is a bug.");
+  }, 30_000);
+
+  test("in observe mode raising is all that is asked, and nothing is stopped", async () => {
+    const { run } = drillIn("observe", true);
+    const results = await run();
+    expect(results.map((r) => r.raised)).toEqual([true, true, true, true]);
+    expect(results.find((r) => r.scenario === "a canary on its way out")!.contained).toBe(false);
+    expect(drillSummary(results, false)).toStartWith("Security drill: 4 of 4 raised (observe mode");
+  }, 30_000);
 });

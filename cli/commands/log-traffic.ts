@@ -6,11 +6,13 @@
  * clients that scanned, flooded or were refused over and over; the hours
  * that stand out; and what on this machine is reachable from outside.
  */
+import { resolve } from "node:path";
 import type { ChannelRecord } from "../../src/util/log-files.ts";
 import { readChannel } from "../../src/util/log-files.ts";
+import { type Self, isSelf, readSelf } from "../../src/watch/inbound-watch.ts";
 import type { Parsed } from "../args.ts";
 import { getString, hasFlag } from "../args.ts";
-import { LOGS_DIR } from "../services/paths.ts";
+import { LOGS_DIR, REPO } from "../services/paths.ts";
 import { color, fail, info, print, table } from "../ui.ts";
 import { parseSpan } from "./log-channels.ts";
 
@@ -22,6 +24,8 @@ const top = (t: Tally, n: number): [string, number][] =>
 export type TrafficSummary = {
   requests: number;
   fromOutside: number;
+  /** Requests that came in through a tunnel from this machine's own public address. */
+  fromSelf: number;
   byServer: [string, number][];
   byHost: [string, number][];
   byClientKind: [string, number][];
@@ -47,6 +51,7 @@ export type TrafficSummary = {
 export function summarizeTraffic(
   netIn: ChannelRecord[],
   security: ChannelRecord[],
+  self: Self = { v4: [], v6: [] },
 ): TrafficSummary {
   const byServer: Tally = new Map();
   const byHost: Tally = new Map();
@@ -58,6 +63,7 @@ export function summarizeTraffic(
   const clients = new Map<string, TrafficSummary["clients"][number]>();
   let requests = 0;
   let fromOutside = 0;
+  let fromSelf = 0;
   for (const r of netIn) {
     const f = r.fields ?? {};
     const n = typeof f.count === "number" ? f.count : 1;
@@ -66,6 +72,12 @@ export function summarizeTraffic(
     bump(byStatus, `${String(f.status ?? "?")[0]}xx`, n);
     const client = (f.via as string | undefined) ?? null;
     if (!client) continue;
+    // The operator opening their own pages from home arrives through the
+    // tunnel like anyone else. It is counted, and it is not a visitor.
+    if (isSelf(self, client)) {
+      fromSelf += n;
+      continue;
+    }
     fromOutside += n;
     if (f.host) bump(byHost, String(f.host), n);
     const kind = String(f.client ?? "unknown").split(":")[0]!;
@@ -124,6 +136,7 @@ export function summarizeTraffic(
   return {
     requests,
     fromOutside,
+    fromSelf,
     byServer: top(byServer, 10),
     byHost: top(byHost, 10),
     byClientKind: top(byKind, 6),
@@ -160,6 +173,7 @@ export function trafficCommand(p: Parsed): void {
     readChannel(LOGS_DIR, "security", Math.min(since, Date.now() - 26 * 3_600_000)).filter(
       (r) => r.tag === "exposure" || Date.parse(r.ts) >= since,
     ),
+    readSelf(process.env.EDMUND_DATA_DIR ?? resolve(REPO, "data")),
   );
   if (hasFlag(p, "json")) {
     print(JSON.stringify(summary, null, 2));
@@ -167,9 +181,10 @@ export function trafficCommand(p: Parsed): void {
   }
   const list = (pairs: [string, number][]) =>
     pairs.map(([k, n]) => `${k} ${n}`).join(", ") || "none";
+  const own = summary.fromSelf > 0 ? `, ${summary.fromSelf} from this machine's own address` : "";
   print(
     color.bold(
-      `Last ${sinceText}: ${summary.requests} requests answered, ${summary.fromOutside} from outside`,
+      `Last ${sinceText}: ${summary.requests} requests answered, ${summary.fromOutside} from outside${own}`,
     ),
   );
   print(`by server     ${list(summary.byServer)}`);

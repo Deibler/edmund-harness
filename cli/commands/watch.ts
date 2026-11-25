@@ -7,6 +7,7 @@
  *   edmund watch ok <id>         it was fine: reverse what was done and do not raise it again
  *   edmund watch undo <id>       reverse what was done, this once
  *   edmund watch resume [chat]   let a paused chat (or every paused chat) take turns again
+ *   edmund watch drill           run the fire drill now: four scenarios through the live watch
  *   edmund lockdown              close every quick tunnel and share, take the shell from
  *                                workers, message nobody but the operator, turn the web off
  *   edmund lockdown off          put all of that back
@@ -129,6 +130,42 @@ export async function watchCommand(p: Parsed): Promise<void> {
     return;
   }
 
+  if (sub === "drill") {
+    info(
+      "running four scenarios through the live watch; the stray listener can take half a minute…",
+    );
+    const res = (await askWatch(address, "drill", { by: "the command line" }, 180_000)) as {
+      ok: boolean;
+      mode: string;
+      results: {
+        scenario: string;
+        raised: boolean;
+        contained: boolean;
+        ms: number;
+        detail: string;
+      }[];
+    } | null;
+    if (!res?.ok) return fail("the daemon's watch is not answering.");
+    const enforcing = res.mode === "enforce";
+    let failed = 0;
+    for (const r of res.results) {
+      const good = r.raised && (r.contained || !enforcing) && r.ms <= 60_000;
+      if (!good) failed++;
+      print(
+        `  ${good ? color.green("ok  ") : color.red("FAIL")} ${r.scenario}: ${r.detail} (${(r.ms / 1000).toFixed(1)} s)`,
+      );
+    }
+    if (!enforcing) info("observe mode: raised is all that is asked of it; nothing is stopped.");
+    if (failed > 0) {
+      fail(`${failed} of ${res.results.length} failed. A drill that fails is a bug.`);
+      process.exitCode = 1;
+    } else
+      ok(
+        `${res.results.length} of ${res.results.length} passed. The operator was texted the result.`,
+      );
+    return;
+  }
+
   if (sub === "resume") {
     const targets = arg ? [arg] : Object.keys(state.paused);
     if (targets.length === 0) {
@@ -143,7 +180,7 @@ export async function watchCommand(p: Parsed): Promise<void> {
     return;
   }
 
-  fail("usage: edmund watch [status | incidents | ok <id> | undo <id> | resume [chat]]");
+  fail("usage: edmund watch [status | incidents | ok <id> | undo <id> | resume [chat] | drill]");
   process.exitCode = 2;
 }
 

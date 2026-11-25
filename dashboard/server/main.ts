@@ -27,6 +27,7 @@ import { ContactBook } from "../../src/sessions/contacts.ts";
 import { StateStore } from "../../src/sessions/store.ts";
 import { SpendLedger } from "../../src/spend/ledger.ts";
 import { withAccessLog } from "../../src/util/access-log.ts";
+import { useBlocklist } from "../../src/util/blocklist.ts";
 import { prepareDataFolder } from "../../src/util/data-migrate.ts";
 import { installLogSink } from "../../src/util/log-sink.ts";
 import { isArtifactPath, readRouterAddress, relayToRouter } from "../../src/web/public-hosts.ts";
@@ -80,6 +81,9 @@ async function main() {
   // Dashboard has its own log sink so daemon.log stays clean. Prefix makes
   // dashboard-originated lines easy to grep out later if needed.
   prepareDataFolder(resolve(config.paths.data_dir));
+  // Addresses the security watch blocked are refused by the access log,
+  // before a route sees them (src/util/blocklist.ts).
+  useBlocklist(resolve(config.paths.data_dir, "watch", "blocked.json"));
   process.env.EDMUND_LOGS_DIR = resolve(config.paths.logs_dir);
   installLogSink(resolve(config.paths.logs_dir), "[dash] ", "dashboard.log", {
     rotate: true,

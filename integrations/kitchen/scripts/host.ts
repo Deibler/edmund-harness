@@ -17,6 +17,7 @@ import { serveIdeation } from "../../../src/ideation/serve.ts";
 import { IdeationStore } from "../../../src/ideation/store.ts";
 import { serveShelf } from "../../../src/shelf/serve.ts";
 import { withAccessLog } from "../../../src/util/access-log.ts";
+import { useBlocklist } from "../../../src/util/blocklist.ts";
 import { prepareDataFolder } from "../../../src/util/data-migrate.ts";
 import { defaultLogsDir } from "../../../src/util/log-files.ts";
 import { installChannelSink } from "../../../src/util/log-sink.ts";
@@ -208,6 +209,8 @@ async function check(h: Hosted): Promise<void> {
 // Where the portal's listener finds this router, and the key that proves a
 // request came from it.
 const relay = announceRouter(mountsDir, routerPort);
+// Addresses the security watch blocked are refused at this door too.
+useBlocklist(join(mountsDir, "watch", "blocked.json"));
 
 Bun.serve({
   hostname: "127.0.0.1",

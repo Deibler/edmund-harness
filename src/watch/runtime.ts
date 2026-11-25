@@ -26,7 +26,11 @@ import { isRegisteredTarget } from "../security/watch/gate.ts";
 import { readWatchState, updateWatchState, watchDir } from "../security/watch/state.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { chatIdFromKey, isGroupSession } from "../sessions/key.ts";
+import { currentBlocks, unblock, useBlocklist } from "../util/blocklist.ts";
 import { log } from "../util/log.ts";
+import { ChangeWatch } from "./changes.ts";
+import { DRILL_FOLDER, drillSummary, lastDrillAt, runDrill } from "./drill.ts";
+import { InboundWatch } from "./inbound-watch.ts";
 import {
   type Incident,
   type UndoStep,
@@ -50,6 +54,10 @@ export type WatchRuntimeDeps = {
   interruptTurn: (session: string, reason: string) => boolean;
   /** The chat guids of a session, for reading what was last said in it. */
   chatGuidsOf: (session: string) => string[];
+  /** config.toml, whose shape the change watch keeps an eye on. */
+  configPath: string;
+  /** Where the servers' request logs are. */
+  logsDir: string;
 };
 
 export type WatchRuntime = {
@@ -66,6 +74,8 @@ export type WatchRuntime = {
   /** A tunnel or listener appeared that was not there half a minute ago. */
   doorOpened: (opened: { tunnel?: Tunnel; listener?: Listener }) => Promise<void>;
   lockdown: LockdownDeps;
+  /** Give the drill a way to read what is exposed now, without waiting for the timer. */
+  setExposureSampler: (sample: () => Promise<void>) => void;
   stop: () => Promise<void>;
 };
 
@@ -186,10 +196,9 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
         return `${out.ok ? "restarted" : "could not restart"} ${step.detail}`;
       }
       case "unblock":
-        updateWatchState(dataDir, (s) => {
-          delete s.paused[`ip:${step.target}`];
-        });
-        return `unblocked ${step.target}`;
+        return unblock(step.target)
+          ? `unblocked ${step.target}`
+          : `${step.target} was no longer blocked`;
     }
   };
 
@@ -272,6 +281,7 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
       did: [],
       undo: [],
       status: "open",
+      ...(cwd.includes(`/${DRILL_FOLDER}`) ? { drill: true as const } : {}),
     };
     if (assistants && mode === "enforce") {
       const command = runShell(["/bin/ps", "-o", "command=", "-p", String(pid)]).out;
@@ -285,10 +295,37 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
   };
 
   if (mode === "off") {
-    return { watch, server: null, operatorSaid, doorOpened, lockdown, stop: async () => {} };
+    return {
+      watch,
+      server: null,
+      operatorSaid,
+      doorOpened,
+      lockdown,
+      setExposureSampler: () => {},
+      stop: async () => {},
+    };
   }
 
   watch.start();
+  const changes = new ChangeWatch({
+    dataDir,
+    repoRoot,
+    configPath: deps.configPath,
+    workerTouched: (what) => watch.workerTouched(what),
+    record: (incident) => watch.record(incident),
+  });
+  changes.start();
+  // Who is knocking: every server's request log, scored, and reviewed only on harm or persistence.
+  useBlocklist(join(watchDir(dataDir), "blocked.json"));
+  const inbound = new InboundWatch({
+    dataDir,
+    logsDir: deps.logsDir,
+    mode,
+    judge: (record, flagged) =>
+      askJudge("inbound", record, flagged, { model: config.watch.judge_model, timeoutMs: 45_000 }),
+    record: (incident) => watch.record(incident),
+  });
+  inbound.start();
   const server = serveWatch(watch, dataDir, async (action, body) => {
     switch (action) {
       case "status": {
@@ -297,6 +334,11 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
           ok: true,
           mode,
           counts: watch.counts,
+          inbound: {
+            ...inbound.counts,
+            tracked: inbound.inbound.size(),
+            blocked_now: Object.keys(currentBlocks()).length,
+          },
           slowest_ms: Math.round(server.slowest()),
           lockdown: state.lockdown,
           paused: state.paused,
@@ -332,11 +374,44 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
       case "reload":
         watch.reloadSecrets();
         return { ok: true };
+      case "drill":
+        return { ok: true, mode, results: await drill(String(body.by ?? "the command line")) };
       default:
         return { ok: false, error: `unknown action ${action}` };
     }
   });
   log.info("watch", "listening for worker tool calls", { port: server.address.port });
+
+  let sampleExposure: () => Promise<void> = async () => {};
+  let drilling = false;
+  /** Run the fire drill and text the operator the result. One at a time. */
+  const drill = async (by: string) => {
+    if (drilling) return [];
+    drilling = true;
+    try {
+      const results = await runDrill({ watch, inbound, dataDir, repoRoot, sampleExposure });
+      await deps.alert
+        .sendText({
+          category: "security",
+          signature: `drill:${Date.now()}`,
+          text: drillSummary(results, mode === "enforce"),
+        })
+        .catch(() => false);
+      log.info("watch", "drill finished", { by, scenarios: results.length });
+      return results;
+    } finally {
+      drilling = false;
+    }
+  };
+  // Once a month, on its own, at a moment the machine is not locked down.
+  const MONTH_MS = 30 * 24 * 3_600_000;
+  const drillTimer = setInterval(() => {
+    const last = lastDrillAt(dataDir);
+    if (last > 0 && Date.now() - last >= MONTH_MS && !readWatchState(dataDir).lockdown) {
+      void drill("the monthly schedule");
+    }
+  }, 6 * 3_600_000);
+  drillTimer.unref?.();
 
   return {
     watch,
@@ -344,7 +419,13 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
     operatorSaid,
     doorOpened,
     lockdown,
+    setExposureSampler: (sample) => {
+      sampleExposure = sample;
+    },
     stop: async () => {
+      clearInterval(drillTimer);
+      changes.stop();
+      inbound.stop();
       server.stop();
       await watch.stop();
     },

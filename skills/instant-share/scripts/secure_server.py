@@ -466,6 +466,43 @@ def harness_log_request(handler, path, status):
         pass
 
 
+_harness_blocks = {"mtime": -1.0, "blocks": {}}
+
+
+def harness_blocked(handler):
+    """True when the security watch has blocked the address this request came from.
+
+    The same file the harness's own servers read (src/util/blocklist.ts): an
+    address or its /24 (or /64), each with the time the block ends. Never
+    raises: a blocklist that cannot be read blocks nobody.
+    """
+    try:
+        data = os.environ.get("EDMUND_DATA_DIR") or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "data"
+        )
+        path = os.path.join(data, "watch", "blocked.json")
+        mtime = os.path.getmtime(path)
+        if mtime != _harness_blocks["mtime"]:
+            with open(path) as f:
+                _harness_blocks["blocks"] = json.load(f)
+            _harness_blocks["mtime"] = mtime
+        headers = getattr(handler, "headers", None) or {}
+        forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        ip = headers.get("cf-connecting-ip") or forwarded or handler.client_address[0]
+        if ":" in ip:
+            subnet = ":".join(ip.split(":")[:4]) + "::/64"
+        else:
+            subnet = ".".join(ip.split(".")[:3]) + ".0/24"
+        now_ms = time.time() * 1000
+        for key in (ip, subnet):
+            entry = _harness_blocks["blocks"].get(key)
+            if entry and entry.get("until", 0) > now_ms:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 class SecureArtifactHandler(http.server.BaseHTTPRequestHandler):
     AUTH_TOKEN = None
     ARTIFACT_ROOT = None
@@ -764,7 +801,12 @@ class SecureArtifactHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query)
-        
+
+        if harness_blocked(self):
+            self.log_request_entry(parsed.path, 403)
+            self.send_html(403, "Forbidden")
+            return
+
         if not self.validate_token(query):
             self.log_request_entry(parsed.path, 403)
             self.send_html(403, "<html><body><h1>403 Forbidden</h1><p>Invalid or missing access token</p></body></html>")
@@ -848,8 +890,10 @@ class SecureArtifactHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query)
-        
-        if not self.validate_token(query):
+
+        if harness_blocked(self) or not self.validate_token(query):
+            # Recorded: a key guessed by POST was refused here and left no trace.
+            self.log_request_entry(parsed.path, 403)
             self.send_html(403, "Forbidden")
             return
         

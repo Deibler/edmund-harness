@@ -28,7 +28,11 @@
  * there, is refused again and again, or sends hundreds of requests a minute
  * gets one line in the `security` channel saying so (`scan`, `brute-force`,
  * `flood`), not one per request.
+ *
+ * And an address the security watch has blocked is answered 403 here,
+ * before the server's handler runs, and recorded with `blocked`.
  */
+import { blockedReason } from "./blocklist.ts";
 import { classifyClient, threatSignals } from "./inbound-signals.ts";
 import { safePath } from "./log-instrument.ts";
 import { log } from "./log.ts";
@@ -247,7 +251,19 @@ export function withAccessLog<S, R extends Response | undefined>(
     const started = performance.now();
     let status = 500;
     let failure: string | undefined;
+    let blocked = false;
     try {
+      // An address the security watch blocked is refused here, before the
+      // server's own code reads anything it sent (util/blocklist.ts). A
+      // request another harness server handed over was checked at the door.
+      if (!(options.relayed?.(req) ?? false)) {
+        const who = callerOf(req, srv);
+        if (blockedReason(who.via ?? who.ip) !== null) {
+          blocked = true;
+          status = 403;
+          return new Response("Forbidden", { status: 403 }) as R;
+        }
+      }
       const response = await handler.call(this, req, srv);
       // No response from a fetch handler means the connection became a WebSocket.
       status = response instanceof Response ? response.status : 101;
@@ -284,6 +300,7 @@ export function withAccessLog<S, R extends Response | undefined>(
         ua: (userAgent ?? "").slice(0, 120) || undefined,
         ...(probes.length > 0 ? { probes } : {}),
         ...(relayed ? { relayed: true } : {}),
+        ...(blocked ? { blocked: true } : {}),
         ...(failure ? { err: failure } : {}),
       };
       const line = `${server} ${req.method} ${path} ${status}`;
@@ -297,7 +314,9 @@ export function withAccessLog<S, R extends Response | undefined>(
       // For a relayed request, the server that took it from outside has
       // already filed what follows. (Not a `return`: this is a `finally`, and
       // returning here would replace the handler's answer.)
-      if (!relayed) {
+      // A blocked address was refused by rule, not by the server: its
+      // refusals are not a login being guessed at, and are not counted as one.
+      if (!relayed && !blocked) {
         if (status === 401 || status === 403 || status === 429) {
           log.event("security", "net-in", `${line} denied`, fields);
         }

@@ -108,6 +108,8 @@ export class Watch {
   private readonly lastTouched = new Map<string, number>();
   private readonly benignUntil = new Map<string, number>();
   private readonly silent = new Map<string, number[]>();
+  /** When a worker last wrote to each kind of persistent file. */
+  private readonly persisted = new Map<string, number>();
   private readonly background = new Set<Promise<void>>();
   private stopListening: (() => void) | null = null;
   private readonly now: () => number;
@@ -248,6 +250,9 @@ export class Watch {
       return ALLOW;
     }
     this.counts.trips += trips.length;
+    for (const trip of trips) {
+      if (trip.kind === "persistence") this.persisted.set(trip.target, this.now());
+    }
     const decision = await this.decide(flight, trips);
     if (decision.allow) this.rememberDestinations(meaning);
     return decision;
@@ -510,6 +515,8 @@ export class Watch {
       did: [],
       undo: [],
       status: "open",
+      // A chat that cannot exist: the fire drill's (drill.ts).
+      ...(flight.session.startsWith("drill:") ? { drill: true as const } : {}),
     };
     if (trip.action !== "watch" && enforcing) incident.did.push("refused the call");
     if (contain && enforcing) {
@@ -544,7 +551,8 @@ export class Watch {
       },
       incident.tier === "serious" ? "error" : "warn",
     );
-    if (incident.tier !== "serious") return;
+    // A drill reports once, as a whole, when it is over.
+    if (incident.tier !== "serious" || incident.drill) return;
     try {
       await this.deps.notify(incident, alertText(incident, this.deps.mode !== "enforce"));
     } catch (err) {
@@ -646,6 +654,11 @@ export class Watch {
         status: "open",
       }),
     );
+  }
+
+  /** True when a worker wrote to this kind of persistent file within the window. */
+  workerTouched(what: string, withinMs = 6 * 60_000): boolean {
+    return this.now() - (this.persisted.get(what) ?? 0) < withinMs;
   }
 
   // --- the operator's answer ---------------------------------------------------------------
