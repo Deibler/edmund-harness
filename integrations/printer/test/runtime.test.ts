@@ -33,6 +33,29 @@ describe("what can move the printer, structurally", () => {
     );
   });
 
+  // The daemon closes the link and then the store behind it. A report that
+  // arrived in between reached the closed store, and that unhandled error ended
+  // the shutdown early, before the workers were stopped.
+  test("a closed link hands on nothing that arrives late", () => {
+    let reports = 0;
+    const link = new PrinterLink({
+      host: "127.0.0.1",
+      accessCode: "x",
+      serial: "x",
+      onState: () => {
+        reports += 1;
+      },
+    });
+    const arrive = (link as unknown as { onMessage(payload: string): void }).onMessage.bind(link);
+    const report = JSON.stringify({ print: { command: "push_status", gcode_state: "RUNNING" } });
+
+    arrive(report);
+    expect(reports).toBe(1);
+    link.close();
+    arrive(report);
+    expect(reports).toBe(1);
+  });
+
   test("print, cancel and resume are sent only by the daemon's runtime", () => {
     for (const f of sources()) {
       const s = read(f);

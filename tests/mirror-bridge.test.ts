@@ -114,6 +114,45 @@ describe("MirrorBridge v2", () => {
       server.stop(true);
     }
   });
+
+  // An exception thrown on a timer is uncaught, and an uncaught exception ends
+  // the daemon. One did, 44 times in 26 minutes, and each restart replayed the
+  // turns it had interrupted.
+  test("a sweep that throws stays inside its timer", () => {
+    const dir = mkdtempSync(join(tmpdir(), "edmund-mirror-bridge-"));
+    dirs.push(dir);
+    const store = new MirrorStore(dir);
+    let sweeps = 0;
+    store.pruneExpired = () => {
+      sweeps += 1;
+      throw new Error("the store refused the sweep");
+    };
+
+    const ticks: Array<() => unknown> = [];
+    const realSetInterval = globalThis.setInterval;
+    globalThis.setInterval = ((handler: () => unknown) => {
+      ticks.push(handler);
+      return realSetInterval(() => {}, 2 ** 30);
+    }) as typeof setInterval;
+    const config = { mirror: { host: "127.0.0.1", port: 1, token: "unused" } } as Config;
+    const bridge = new MirrorBridge(config, store, {});
+    try {
+      bridge.start();
+    } finally {
+      globalThis.setInterval = realSetInterval;
+    }
+
+    try {
+      expect(() => {
+        for (const tick of ticks) tick();
+      }).not.toThrow();
+      // Proof the sweep ran: a bridge that stopped sweeping would pass the line above.
+      expect(sweeps).toBe(1);
+    } finally {
+      bridge.stop();
+      store.close();
+    }
+  });
 });
 
 async function until(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {

@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { trackTurnWorker } from "../recovery/turn-workers.ts";
 import { DEBUG, humanCost, humanCount, humanMs, log, shortSession, snippet } from "../util/log.ts";
 import {
   COMPACT_INSTRUCTIONS,
@@ -362,6 +363,7 @@ export class Worker {
       cwd: args.cwd,
       detached: true,
     });
+    trackTurnWorker(this.proc, args.sessionKey);
 
     this.proc.stdout.on("data", (chunk: Buffer) => {
       this.pending?.armIdle();

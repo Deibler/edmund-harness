@@ -23,7 +23,7 @@ import {
  * snapshot, so old queued deltas become harmless duplicates.
  */
 
-const MAX_OUTBOX_ROWS = 2_000;
+export const MAX_OUTBOX_ROWS = 2_000;
 const MAX_AUDIT_ROWS = 5_000;
 
 export type MirrorContentInput = MirrorComponentSpec & {
@@ -660,7 +660,24 @@ export class MirrorStore {
       this.db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM mirror_outbox_v2").get()
         ?.count ?? 0;
     if (count >= MAX_OUTBOX_ROWS) {
-      throw new Error(`mirror outbox is full (${MAX_OUTBOX_ROWS}); wait for the Pi to reconnect`);
+      // A frame that carries a revision is a state delta, and a reconnect
+      // begins with a snapshot at the current revision, which supersedes every
+      // one of them. They never expire, so with the Pi away they are the rows
+      // that fill the outbox; the oldest give way. Commands carry no revision
+      // and nothing replaces them, so they are left to their own expiry.
+      const overflow = count - MAX_OUTBOX_ROWS + 1;
+      const evicted = this.db
+        .query(
+          `DELETE FROM mirror_outbox_v2 WHERE message_id IN (
+             SELECT message_id FROM mirror_outbox_v2
+             WHERE revision IS NOT NULL
+             ORDER BY revision
+             LIMIT ?)`,
+        )
+        .run(overflow).changes;
+      if (evicted < overflow) {
+        throw new Error(`mirror outbox is full (${MAX_OUTBOX_ROWS}) of undelivered commands`);
+      }
     }
     this.db
       .query(
