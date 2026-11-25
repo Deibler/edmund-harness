@@ -437,12 +437,18 @@ describe("configReader", () => {
 
   test("a file that has not changed is not parsed again", () => {
     write('enabled = true\napps = ["Notes"]');
+    // A modification time on a whole second, which utimes can put back
+    // exactly. Reading the time and restoring it worked only while the
+    // runtime rounded it: Bun 1.3.9 reports whole milliseconds, 1.4.5 reports
+    // 1795633188992.4387, and a Date cannot hold the fraction.
+    const at = new Date(Math.floor(Date.now() / 1000) * 1000 - 5000);
+    utimesSync(path, at, at);
     const read = configReader(path);
     expect(read().computer_use.apps).toEqual(["Notes"]);
-    const before = statSync(path);
     // The same length and modification time: only a re-parse could notice.
     writeFileSync(path, readFileSync(path, "utf8").replace('"Notes"', '"Maps!"'));
-    utimesSync(path, before.atime, before.mtime);
+    utimesSync(path, at, at);
+    expect(statSync(path).mtimeMs).toBe(at.getTime());
     expect(read().computer_use.apps).toEqual(["Notes"]);
   });
 

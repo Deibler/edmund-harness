@@ -126,7 +126,15 @@ The embedder is a child process now (`src/memory/transformers-embed-child.ts`).
 Anything that needs a package or a native addon off the main thread goes in a
 process too; `tests/worker-thread-imports.test.ts` fails if a worker thread
 loads one. `scripts/bun-worker-churn/check.ts` tests a Bun before the daemon
-moves to it.
+moves to it. The daemon moved to 1.4.5 on 2026-11-25; CI is pinned to match.
+
+A Homebrew upgrade moves the binary to a new path. That does not cost the
+daemon its privacy grants (Full Disk Access for `chat.db`, Accessibility,
+Automation): launchd starts it through `/bin/bash`, which holds them, and a
+1.4.5 binary at a path nothing had ever granted read `chat.db` under launchd
+(measured 2026-11-25). Grants made to the `bun` path itself are keyed to the
+versioned Cellar path and do not follow an upgrade, which matters only for a
+`bun` started outside launchd and outside a terminal that has its own.
 
 Two things about runtime crashes. The report is in `data/launchd.err.log`,
 not `daemon.log`; the boot after one now logs `[boot] the previous run ended

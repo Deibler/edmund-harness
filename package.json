@@ -23,7 +23,7 @@
   },
   "author": "Hunter Deibler",
   "engines": {
-    "bun": ">=1.2"
+    "bun": ">=1.4.5"
   },
   "os": [
     "darwin"
