@@ -24,6 +24,7 @@ import {
 } from "./boot/resource-governor.ts";
 import { crashesSinceLastBoot, describeUptime } from "./boot/runtime-crash.ts";
 import { missingStorage } from "./boot/storage.ts";
+import { Telemetry } from "./boot/telemetry.ts";
 import { wireRecall } from "./boot/wire-recall.ts";
 import { wireRecovery } from "./boot/wire-recovery.ts";
 import { startCallRuntime } from "./calls/runtime.ts";
@@ -113,6 +114,8 @@ import { StateStore } from "./sessions/store.ts";
 import { defaultProbe } from "./triggers/evaluate.ts";
 import { DataTriggerStore } from "./triggers/store.ts";
 import { DataTriggerWatcher } from "./triggers/watcher.ts";
+import { runLogJanitor } from "./util/log-files.ts";
+import { withoutProcessLog } from "./util/log-instrument.ts";
 import { installLogSink } from "./util/log-sink.ts";
 import { log } from "./util/log.ts";
 
@@ -134,7 +137,13 @@ async function main() {
   // Build the integration registry from [integrations] before anything asks
   // for tools or runtimes.
   initRegistryFromConfig(config);
-  const logPath = installLogSink(config.paths.data_dir);
+  // Under launchd the terminal is a file: printing there as well wrote every
+  // line twice. With a terminal attached (`bun src/main.ts`) lines still print.
+  const logPath = installLogSink(config.paths.data_dir, "", "daemon.log", {
+    echo: "tty",
+    rotate: true,
+    retentionDays: config.logs.retention_days,
+  });
   console.log(`[edmund-harness] logging to ${logPath}`);
   // Before the control socket is served and before catch-up replays anything:
   // a worker the last daemon left running would deliver the same turn again.
@@ -520,7 +529,8 @@ async function main() {
       restartOnHardLimit: config.resources.restart_on_hard_limit,
     },
     {
-      collectProcesses: collectProcessTable,
+      // Every 15 s: not worth a `proc` record each.
+      collectProcesses: () => withoutProcessLog(() => collectProcessTable()),
       getWorkerPids: () =>
         (getWorkerPoolStats()?.workers ?? [])
           .map((worker) => worker.pid)
@@ -544,6 +554,49 @@ async function main() {
     },
   );
   resourceGovernor.start();
+
+  // What the machine and the process tree looked like, once a minute, on
+  // record: see boot/telemetry.ts.
+  const telemetry = new Telemetry({
+    dataDir: resolve(config.paths.data_dir),
+    intervalMs: config.logs.resource_sample_seconds * 1000,
+    getWorkerPids: () =>
+      (getWorkerPoolStats()?.workers ?? [])
+        .map((worker) => worker.pid)
+        .filter((pid): pid is number => pid !== null),
+  });
+  telemetry.start();
+
+  // Keep the logs within [logs]: file what rotation moved aside, compress
+  // days that are over, drop what is past retention. A minute after boot so
+  // the first pass, which meets whatever the last run left, is not in its way.
+  const logPolicy = {
+    retentionDays: config.logs.retention_days,
+    compressAfterDays: config.logs.compress_after_days,
+    maxTotalMb: config.logs.max_total_mb,
+    captureMaxMb: config.logs.capture_max_mb,
+  };
+  const tidyLogs = () =>
+    void runLogJanitor(resolve(config.paths.data_dir), logPolicy)
+      .then((report) => {
+        const did =
+          report.settled.files + report.compressed + report.removed + report.captured.length;
+        if (did > 0 || report.errors.length > 0) {
+          log.info("log", "logs tidied", {
+            filed: report.settled.files,
+            compressed: report.compressed,
+            removed: report.removed,
+            removed_mb: Math.round(report.removedBytes / (1024 * 1024)),
+            emptied: report.captured.join(",") || undefined,
+            errors: report.errors.length ? report.errors.join("; ") : undefined,
+          });
+        }
+      })
+      .catch((err) => log.warn("log", "log tidy failed", { err: (err as Error).message }));
+  const firstTidy = setTimeout(tidyLogs, 60_000);
+  firstTidy.unref?.();
+  const logTidyTimer = setInterval(tidyLogs, 3_600_000);
+  logTidyTimer.unref?.();
 
   // A stopped main thread is a call nobody is on: see boot/loop-lag.ts.
   const loopLag = new LoopLagMonitor({
@@ -1292,6 +1345,9 @@ async function main() {
     clearInterval(outcomeSweep);
     clearInterval(poolStatsTimer);
     resourceGovernor.stop();
+    telemetry.stop();
+    clearTimeout(firstTidy);
+    clearInterval(logTidyTimer);
     loopLag.stop();
     // Integration runtimes own their own teardown (watchers, bridges, stores,
     // speech sidecars). Failures are isolated per-integration so one hung

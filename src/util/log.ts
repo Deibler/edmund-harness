@@ -1,16 +1,23 @@
 /**
  * Structured logger with DEBUG gating.
  *
- * Thin wrapper over console so the log-sink (log-sink.ts) still
- * captures output into data/daemon.log. Format is
- *   [tag] message key=val key=val ...
- * which is greppable (`rg '\[tool\]'`) and easy to scan.
+ * A line is `[tag] message key=val key=val ...`, greppable
+ * (`rg '\[tool\]'`) and easy to scan. In a process that logs to files
+ * (log-sink.ts) it goes to data/daemon.log as that text and to the tag's
+ * channel under data/logs/ as a record with the fields intact; anywhere
+ * else it is printed.
+ *
+ * `log.event` writes to a channel only: for things worth having on record
+ * that would bury the operational log, such as every outbound request.
  *
  * DEBUG is on when EDMUND_LOG_LEVEL=debug OR DEBUG=1. When off,
  * `log.debug(...)` is a no-op. Turn it on at boot with
  *   EDMUND_LOG_LEVEL=debug bun src/main.ts
  * or persistently via the launchd plist / service.sh.
  */
+
+import type { Channel } from "./log-channels.ts";
+import { type Level, isSecretField, sinkInstalled, sinkWrite } from "./log-sink.ts";
 
 export const DEBUG =
   process.env.EDMUND_LOG_LEVEL === "debug" ||
@@ -19,11 +26,13 @@ export const DEBUG =
 
 export type Fields = Record<string, unknown>;
 
-const SECRET_KEY = /key|token|secret|password|authorization/i;
 const MAX_VALUE_LEN = 240;
 
 function fmtValue(key: string, v: unknown): string {
-  if (SECRET_KEY.test(key)) return "***";
+  // A field is hidden when it is named like a credential and holds one. The
+  // name alone used to decide, which hid every `tokens=` count ever logged
+  // (25,510 lines by 2026-11-25) and the session in `key=imessage:…`.
+  if (isSecretField(key, v)) return "***";
   if (v === null) return "null";
   if (v === undefined) return "";
   if (typeof v === "string") {
@@ -60,19 +69,44 @@ function needsQuote(s: string): boolean {
   return s.length === 0 || /[\s"=]/.test(s);
 }
 
+function emit(level: Level, tag: string, msg: string, fields: Fields | undefined): void {
+  const text = `[${tag}] ${level === "debug" ? "[debug] " : ""}${msg}${fmtFields(fields)}`;
+  if (sinkInstalled()) {
+    sinkWrite({ level, tag, msg, fields, text });
+    return;
+  }
+  if (level === "warn") console.warn(text);
+  else if (level === "error") console.error(text);
+  else console.log(text);
+}
+
 export const log = {
   info(tag: string, msg: string, fields?: Fields): void {
-    console.log(`[${tag}] ${msg}${fmtFields(fields)}`);
+    emit("info", tag, msg, fields);
   },
   warn(tag: string, msg: string, fields?: Fields): void {
-    console.warn(`[${tag}] ${msg}${fmtFields(fields)}`);
+    emit("warn", tag, msg, fields);
   },
   error(tag: string, msg: string, fields?: Fields): void {
-    console.error(`[${tag}] ${msg}${fmtFields(fields)}`);
+    emit("error", tag, msg, fields);
   },
   debug(tag: string, msg: string, fields?: Fields): void {
     if (!DEBUG) return;
-    console.log(`[${tag}] [debug] ${msg}${fmtFields(fields)}`);
+    emit("debug", tag, msg, fields);
+  },
+  /**
+   * A record for one channel that does not appear in the operational log.
+   * Does nothing in a process that has no data folder to write to.
+   */
+  event(
+    channel: Channel,
+    tag: string,
+    msg: string,
+    fields?: Fields,
+    level: Exclude<Level, "debug"> = "info",
+  ): void {
+    if (!sinkInstalled()) return;
+    sinkWrite({ level, channel, tag, msg, fields, text: null });
   },
 };
 

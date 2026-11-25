@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONTROL_SENTINELS } from "../channels/sanitize-outbound.ts";
 import type { ChatDb } from "../imessage/db.ts";
 import { decodeMessageText } from "../imessage/decode.ts";
+import { readOpsLog } from "../util/log-files.ts";
 
 /**
  * The weekly review: a handful of numbers from the systems of record and a
@@ -228,9 +229,11 @@ export function buildWeeklyReview(deps: {
   const groupShare = Math.min(groups.length, Math.floor(deps.sample / 2));
   const sample = [...pick(dms, deps.sample - groupShare), ...pick(groups, groupShare)].sort(byTime);
 
-  const logPath = join(deps.dataDir, "daemon.log");
-  const signals = existsSync(logPath)
-    ? countLogSignals(readFileSync(logPath, "utf8"), new Date(since).toISOString())
+  // The week's lines: the rotated days that hold them and today's file. This
+  // used to read the whole of daemon.log, 1.2 GB of it by November 2026.
+  const logText = readOpsLog(deps.dataDir, since);
+  const signals = logText
+    ? countLogSignals(logText, new Date(since).toISOString())
     : new Map<string, number>();
 
   const lines: string[] = [];

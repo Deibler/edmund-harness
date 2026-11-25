@@ -1,5 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { trackTurnWorker } from "../model/turn-workers.ts";
+import { recordBrowse } from "../util/browse-log.ts";
 import { DEBUG, humanCost, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import {
   COMPACT_INSTRUCTIONS,
@@ -837,6 +838,7 @@ export class Worker {
             id: tu.id,
             input_summary: summarizeToolInput(tu.input),
           });
+          recordBrowse(this.sessionKey, tu.name, tu.input);
           log.debug("claude-worker", "tool_use input-full", {
             session: this.sessionKey,
             name: tu.name,

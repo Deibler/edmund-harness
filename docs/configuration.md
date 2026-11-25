@@ -265,6 +265,18 @@ Which rich actions the model may use. On by default: `effects`,
 | `sustained_samples` | `3` | Samples over a limit before acting |
 | `restart_on_hard_limit` | `true` | SIGTERM self at the hard limit |
 
+### `[logs]`
+
+Where the files are and what each channel holds is in [operations](operations.md#logs).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `retention_days` | `30` | Days a channel file or a rotated day of `daemon.log` is kept |
+| `compress_after_days` | `2` | Days a file stays plain text before it is gzipped |
+| `max_total_mb` | `2048` | Cap on `data/logs` (the archive excluded); oldest days go first |
+| `capture_max_mb` | `20` | A log launchd or a tunnel appends to is archived and emptied past this size |
+| `resource_sample_seconds` | `60` | How often memory, CPU, GPU, disk and the process tree are recorded; `0` turns it off |
+
 ## Memory
 
 ### `[memory_recall]`

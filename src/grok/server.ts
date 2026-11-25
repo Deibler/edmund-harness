@@ -1,4 +1,5 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { withAccessLog } from "../util/access-log.ts";
 import { log } from "../util/log.ts";
 import {
   type ConnectorBot,
@@ -79,7 +80,7 @@ export function startGrokServer(opts: GrokServerOptions): { stop: () => void; po
     port: opts.port,
     // The slowest legitimate call is the answer timeout plus a turn's tail.
     idleTimeout: 60,
-    fetch: async (req) => {
+    fetch: withAccessLog("grok", async (req: Request) => {
       const url = new URL(req.url);
       const source = sourceOf(req);
 
@@ -172,7 +173,7 @@ export function startGrokServer(opts: GrokServerOptions): { stop: () => void; po
         closeMcp();
         return deny(500, "internal error");
       }
-    },
+    }),
   });
   // `server.port` rather than `opts.port`: port 0 asks the OS for a free one.
   const port = server.port ?? opts.port;

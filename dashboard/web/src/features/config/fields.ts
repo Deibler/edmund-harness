@@ -82,6 +82,23 @@ export const SECTIONS: Section[] = [
       { key: "restart_on_hard_limit", label: "Restart on sustained hard limit", kind: "bool" },
     ],
   },
+  {
+    key: "logs",
+    label: "Logs",
+    description:
+      "How long logs are kept, how large they may grow, and how often resources are sampled.",
+    fields: [
+      { key: "retention_days", label: "Keep for (days)", kind: "number" },
+      { key: "compress_after_days", label: "Compress after (days)", kind: "number" },
+      { key: "max_total_mb", label: "Size cap (MiB)", kind: "number" },
+      { key: "capture_max_mb", label: "Captured log size before archiving (MiB)", kind: "number" },
+      {
+        key: "resource_sample_seconds",
+        label: "Resource sample interval (seconds, 0 = off)",
+        kind: "number",
+      },
+    ],
+  },
 
   // ===== Behavior =====
   {

@@ -34,16 +34,15 @@ fight over the watcher.
 
 ## Logs
 
-`data/daemon.log` is one append only file for the daemon, the MCP servers
-(prefixed `mcp[<session>]`) and sub-agents (prefixed `agent[<id>]`). Each
-line is a timestamp, a level, a scope tag, and key value pairs. Values whose
-key looks like a secret are replaced with `***`.
+There are two kinds of log, written from the same events.
 
-Read it with `edmund logs`, which shows who each turn is for, one line per
-model step, subagents and wake-ups, with the heartbeat noise hidden
-(`--all` for every line). The useful habit is `edmund logs -f --session
-<name or handle>`, which follows one conversation's turns, steps, sends and
-wake-ups.
+**The operational log**, `data/daemon.log`, is every line in the order it
+happened: the daemon, the MCP servers (prefixed `mcp[<session>]`) and
+sub-agents (prefixed `agent[<id>]`). Each line is a timestamp, a level, a
+scope tag, and key value pairs. Read it with `edmund logs`, which shows who
+each turn is for, one line per model step, subagents and wake-ups, with the
+heartbeat noise hidden (`--all` for every line). The useful habit is
+`edmund logs -f --session <name or handle>`, which follows one conversation.
 
 Hidden with the noise is trouble the daemon is already handling: a trigger
 check that failed and will be retried (it shows from the fifth failure in a
@@ -52,17 +51,121 @@ memory restart held back until a running turn ends. What stays visible is
 what did not resolve: the alert-level failure, the restart that happened,
 recall that cannot run.
 
+**The channels**, `data/logs/<channel>/<day>.jsonl`, hold the same events
+filed by subject, one JSON record a line with its fields intact, plus the
+things that are recorded and never printed. `edmund logs channels` lists them
+with their sizes.
+
+| Channel | What it holds |
+|---|---|
+| `model` | Model turns: workers, the pool, tool use as the model asked for it, usage, compaction |
+| `tool` | Tool calls as the MCP servers ran them, including screen control |
+| `message` | Messages in and out: the watcher, the bridge, sends and their verification, SMS |
+| `cron` | Scheduled jobs: fires, skips, retries, wake-ups, refresh scripts, recovery sweeps |
+| `trigger` | Data triggers: armed, evaluated, fired |
+| `ghost` | Proactive work: the ghost's decisions and fires, ideation pages, announcements |
+| `agent` | Sub-agents and background jobs |
+| `memory` | Recall, the memory maintainers, archiving and consolidation, skill curation |
+| `call` | FaceTime calls, the transcriber, the turn detector, speech |
+| `integration` | Printer, mirror, radar, Grok, portal, dashboard, credits |
+| `security` | Inbound gating, guest tiers and caps, addressing decisions, refused sends and actions, and every 401, 403 and 429 a server answered |
+| `net-out` | Every HTTP request a harness process made: host, path, status, duration |
+| `net-in` | Every HTTP request a harness server answered: server, method, path, status, duration, caller |
+| `browse` | What the model opened on the web: pages, fetches, searches, addresses in shell commands |
+| `proc` | Every child process (command, pid, exit code or signal, duration) and the process tree as the system reports it |
+| `resource` | Memory, CPU, GPU, swap, disk and thermal state once a minute, with the largest processes |
+| `system` | Start-up, shutdown, alerts, process exits, and the logger's own notices |
+| `error` | A copy of every warning and error from every channel, and any exception that ended a process, with its stack |
+
+`net-out`, `net-in`, `browse`, `proc` and `resource` are channel only: they
+would bury the operational log, so they are not in it.
+
+### When something goes wrong
+
+Start from the error and widen:
+
+```bash
+edmund logs errors --since 2h          # every warning and error, from every process
+edmund logs trace model_turn_ab12cd    # one turn, across every channel, in order
+edmund logs trace sam --at 14:05       # one conversation, five minutes either side
+edmund logs resource --since 30m       # what the machine looked like
+edmund logs net-out --grep openrouter  # one upstream
+```
+
+Every record carries the conversation it belongs to and the turn (`turn
+start` in the `model` channel names it; a scheduled job's turn is the job's
+id). A trace gathers a turn's records from every channel: the message that
+started it, the recall, each tool call, each outbound request it caused, what
+it opened on the web, the send and its verification. It adds what belongs to
+no conversation and still explains one: the resource samples, server requests
+and errors in the same window. `--all` adds everything else in the window,
+`--json` prints the records as they are stored.
+
+### What is kept out
+
+Request and response bodies and headers are never recorded, and neither is
+the query string of a request in `net-out` or `net-in`. `browse` keeps a
+page's query, because it is often the page, with the values of parameters
+named like credentials hidden. A long opaque path segment (a share token, a signed id) is cut to six
+characters. A command line keeps the program and its first four arguments,
+each cut at 60 characters, with the value after a flag named like a
+credential hidden. A field is replaced with `***` when it is named like a
+credential and holds a string that is not a session key or a quantity.
+
+In `net-in`, a successful GET the same caller repeats within a minute is
+counted, not repeated: the first is recorded as it happens and the rest as
+one line with their number and timing. An open dashboard tab would otherwise
+write a quarter of a million identical lines a day. A request that changes
+something, and one that is refused or fails, is always its own record.
+
+### What they cannot see
+
+Requests made by a child process: the model CLI talking to its API, the
+browser, a script the model wrote. `model` and `browse` record those from
+what the model reported doing. A child process shorter than the gap between
+two samples appears as its exit record only when this process started it.
+
+### Rotation and size
+
+Days are UTC, like the timestamps. When the day changes `daemon.log` is moved
+to `data/logs/daemon/<day>.log` and a new one started; `edmund logs` and the
+dashboard follow the new file. `[logs]` in the config sets the rest: files
+are compressed after `compress_after_days` (2), removed after
+`retention_days` (30), and the whole of `data/logs` is held under
+`max_total_mb` (2048) by dropping the oldest days. The daemon does this
+hourly; `edmund logs tidy` does it now.
+
+`data/logs/archive/` holds what predates rotation and what was copied out of
+a log some other program appends to. Nothing removes it but you.
+
+launchd keeps the daemon's raw output in `data/launchd.out.log` and
+`data/launchd.err.log`. Under launchd the daemon no longer prints its log
+lines there as well, so those files hold only what bypassed the logger: lines
+from before logging started, a child's inherited output, and a runtime crash
+report. One over `capture_max_mb` (20) is compressed into the archive and
+emptied.
+
+A line of one shape repeated more than 200 times in ten seconds is cut off
+and counted (`[log] suppressed N more lines …`), and while it keeps coming
+gets five lines per ten seconds. Three months of ordinary operation peak at
+31. This exists because one scheduler bug wrote the same line 7.7 million
+times in 28 minutes.
+
 Turn debug logging on with `EDMUND_LOG_LEVEL=debug` in `.env`, or
 `scripts/launchd/service.sh debug on`, which edits the tracked plist template
 and reinstalls; remember to turn it off before committing.
 
-The boot banner is one line and tells you the cursor, provider, model, pool
-state, watcher source and allowlist sizes. The line after it, `[loadout]`,
-tells you whether the persona and skills were found.
+## The data folder
 
-For macOS itself, use `/usr/bin/log show --predicate 'process == "Messages"'
---last 10m`. The full path matters if a shell function is shadowing `log`,
-and short windows matter because long queries hang.
+`edmund data audit` lists what is at the top of `data/` against the declared
+layout (`src/util/data-layout.ts`): what each entry is and what writes it,
+what a removed feature left behind, what is a backup somebody made by hand,
+what is stale (undeclared, and either empty for 30 days or a log untouched
+for 90), and what nothing accounts for. `edmund data clean` shows what it
+would move aside and `--apply` does it: retired and stale entries and backups
+older than 30 days go to `data/.trash/<day>/` and are deleted 30 days later,
+and old files in a declared cache are removed. An entry the layout does not know is listed and
+never touched, and neither is a file a process still has open.
 
 ## Spend
 

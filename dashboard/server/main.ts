@@ -26,6 +26,7 @@ import { AddressBook } from "../../src/sessions/address-book.ts";
 import { ContactBook } from "../../src/sessions/contacts.ts";
 import { StateStore } from "../../src/sessions/store.ts";
 import { SpendLedger } from "../../src/spend/ledger.ts";
+import { withAccessLog } from "../../src/util/access-log.ts";
 import { installLogSink } from "../../src/util/log-sink.ts";
 import { loadOrCreateSecret } from "./auth.ts";
 import { authMiddleware } from "./middleware/auth.ts";
@@ -72,7 +73,10 @@ async function main() {
 
   // Dashboard has its own log sink so daemon.log stays clean. Prefix makes
   // dashboard-originated lines easy to grep out later if needed.
-  installLogSink(config.paths.data_dir, "[dash] ", "dashboard.log");
+  installLogSink(config.paths.data_dir, "[dash] ", "dashboard.log", {
+    rotate: true,
+    retentionDays: config.logs.retention_days,
+  });
   console.log(`[dashboard] starting on ${config.dashboard.bind}:${config.dashboard.port}`);
 
   const secret = loadOrCreateSecret(config.paths.data_dir);
@@ -192,7 +196,7 @@ async function main() {
   const server = Bun.serve({
     hostname: config.dashboard.bind,
     port: config.dashboard.port,
-    fetch: app.fetch,
+    fetch: withAccessLog("dashboard", app.fetch),
     idleTimeout: 0,
   });
   console.log(`[dashboard] ready at http://${config.dashboard.bind}:${config.dashboard.port}`);
@@ -237,7 +241,7 @@ async function main() {
   const publicServer = Bun.serve({
     hostname: "127.0.0.1",
     port: config.dashboard.public_port,
-    fetch: pub.fetch,
+    fetch: withAccessLog("portal", pub.fetch),
     idleTimeout: 0,
   });
   console.log(

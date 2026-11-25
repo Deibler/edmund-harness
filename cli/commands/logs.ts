@@ -50,6 +50,7 @@ import {
 } from "../log-story.ts";
 import { DAEMON_LOG, DASHBOARD_LOG, FISHING_LOG } from "../services/paths.ts";
 import { color, color256, fail, print } from "../ui.ts";
+import { isLogSubcommand, logChannelCommand } from "./log-channels.ts";
 
 type Level = "debug" | "info" | "warn" | "error";
 const ALL_LEVELS: Level[] = ["debug", "info", "warn", "error"];
@@ -61,6 +62,13 @@ const W_SESSION = 19;
 const W_EVENT = 22;
 
 export async function logsCommand(p: Parsed): Promise<void> {
+  // `edmund logs net-out`, `edmund logs trace <turn>`: the channel files
+  // beside the operational log (log-channels.ts). No word: the log itself.
+  const sub = p.positional[0];
+  if (isLogSubcommand(sub)) {
+    await logChannelCommand(p, sub as string, p.positional.slice(1));
+    return;
+  }
   const path = hasFlag(p, "fishing")
     ? FISHING_LOG
     : hasFlag(p, "dashboard")

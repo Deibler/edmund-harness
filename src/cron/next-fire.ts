@@ -29,12 +29,13 @@ function nextCronFire(expr: string, after: number): number {
     throw new Error(`invalid cron expression: ${expr}`);
   }
 
-  // Round up to the next whole minute after `after`.
-  const start = new Date(after + 60_000);
-  start.setSeconds(0, 0);
+  // The next whole minute after `after`, counted in absolute time. Rounding
+  // through local fields (setSeconds) lands an hour early in the repeated hour
+  // when the clocks go back, which made the answer a time already past.
+  const start = (Math.floor(after / 60_000) + 1) * 60_000;
 
   const limitMs = after + 366 * 86_400_000;
-  for (let ms = start.getTime(); ms < limitMs; ms += 60_000) {
+  for (let ms = start; ms < limitMs; ms += 60_000) {
     const d = new Date(ms);
     if (!matches(minF, d.getMinutes())) continue;
     if (!matches(hourF, d.getHours())) continue;

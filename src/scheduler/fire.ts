@@ -27,6 +27,7 @@ import type { SessionLocks } from "../sessions/locks.ts";
 import type { StateStore } from "../sessions/store.ts";
 import { recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { envelopeStamp } from "../util/clock.ts";
+import { beginTurn, endTurn, withLogContext } from "../util/log-context.ts";
 import { humanMs, log, snippet } from "../util/log.ts";
 import { fireReceptions, receptionBlock } from "./reception.ts";
 
@@ -175,18 +176,26 @@ export async function fireJob(
   }
 
   await locks.withLock(job.sessionKey, async () => {
-    await runAndDeliver(
-      job,
-      config,
-      state,
-      echoes,
-      alert,
-      crons,
-      session.chatGuid,
-      () => locks.touch(job.sessionKey),
-      recentThread,
-      opts.chatDb,
-    );
+    // A fire is a turn of its conversation; its records are found under the job's id.
+    beginTurn(job.sessionKey, job.id);
+    try {
+      await withLogContext({ session: job.sessionKey, turn: job.id }, () =>
+        runAndDeliver(
+          job,
+          config,
+          state,
+          echoes,
+          alert,
+          crons,
+          session.chatGuid,
+          () => locks.touch(job.sessionKey),
+          recentThread,
+          opts.chatDb,
+        ),
+      );
+    } finally {
+      endTurn(job.sessionKey, job.id);
+    }
   });
 }
 

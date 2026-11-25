@@ -31,7 +31,7 @@ const sandboxPath = must("BG_SANDBOX_PATH");
 const dataDir = must("EDMUND_DATA_DIR");
 const configPath = must("EDMUND_CONFIG_PATH");
 
-installLogSinkFromEnv(`bg[${jobId}] `);
+installLogSinkFromEnv(`bg[${jobId}] `, { session: `bg:${jobId}` });
 log.info("bg", "runner starting", { id: jobId, tool: toolName });
 
 const bgStore = new BgJobStore(dataDir);

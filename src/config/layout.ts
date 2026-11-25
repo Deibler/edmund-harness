@@ -167,6 +167,10 @@ export const CONFIG_LAYOUT: LayoutTier[] = [
       { name: "imessage_watcher", note: "How new messages are noticed." },
       { name: "recovery", note: "The stuck-conversation healer and its fallback notice." },
       { name: "resources", note: "Memory limits that restart the daemon." },
+      {
+        name: "logs",
+        note: "How long logs are kept, how large they may grow, and how often resources are sampled.",
+      },
       { name: "paths", note: "Where Messages' database and Edmund's data live." },
       { name: "codex", note: "Used only when [claude] model names a gpt-* model." },
       { name: "evals", note: "Reply-quality probes and the weekly review." },

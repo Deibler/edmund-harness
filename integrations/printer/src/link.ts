@@ -16,6 +16,10 @@ export type CommandSection = "print" | "system" | "pushing" | "info" | "camera" 
 
 export type LinkOptions = {
   host: string;
+  /** The printer's MQTT port; 8883 unless a test stands in for it. */
+  port?: number;
+  /** How long one connection attempt may take before it counts as failed. */
+  connectTimeoutMs?: number;
   accessCode: string;
   serial: string;
   persistent?: boolean;
@@ -43,6 +47,9 @@ export class PrinterLink {
   private stateWaiters = new Set<() => void>();
   private stopped = false;
   private retryMs = 2_000;
+  /** The one pending reconnect, and whether an attempt is in the air. */
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private connecting = false;
   private resync: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly opts: LinkOptions) {}
@@ -57,6 +64,8 @@ export class PrinterLink {
   async connect(): Promise<void> {
     this.session = await openMqtt({
       host: this.opts.host,
+      port: this.opts.port,
+      timeoutMs: this.opts.connectTimeoutMs,
       username: "bblp",
       password: this.opts.accessCode,
       expectCn: this.opts.serial,
@@ -78,20 +87,34 @@ export class PrinterLink {
     }
   }
 
-  /** Connect, retrying forever with backoff. For the daemon. */
+  /**
+   * Connect, retrying forever with backoff. For the daemon. There is one retry
+   * loop however often this is called: a second one beside it doubles the
+   * attempts, and every further call doubles them again.
+   */
   start(): void {
     this.stopped = false;
+    if (this.connecting || this.retryTimer) return;
     const attempt = () => {
+      this.retryTimer = null;
       if (this.stopped) return;
-      this.connect().catch((e: Error) => {
-        this.connected = false;
-        this.lastError = e.message;
-        this.opts.onLog?.(
-          `printer connect failed: ${e.message}; retrying in ${this.retryMs / 1000}s`,
-        );
-        setTimeout(attempt, this.retryMs);
-        this.retryMs = Math.min(this.retryMs * 2, 5 * 60_000);
-      });
+      this.connecting = true;
+      this.connect().then(
+        () => {
+          this.connecting = false;
+        },
+        (e: Error) => {
+          this.connecting = false;
+          this.connected = false;
+          this.lastError = e.message;
+          if (this.stopped) return;
+          this.opts.onLog?.(
+            `printer connect failed: ${e.message}; retrying in ${this.retryMs / 1000}s`,
+          );
+          this.retryTimer = setTimeout(attempt, this.retryMs);
+          this.retryMs = Math.min(this.retryMs * 2, 5 * 60_000);
+        },
+      );
     };
     attempt();
   }
@@ -102,7 +125,11 @@ export class PrinterLink {
     this.session = null;
     if (this.opts.persistent && !this.stopped) {
       this.opts.onLog?.(`printer connection dropped (${why}); reconnecting`);
-      setTimeout(() => this.start(), this.retryMs);
+      if (this.connecting || this.retryTimer) return;
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        this.start();
+      }, this.retryMs);
     }
   }
 
@@ -204,6 +231,8 @@ export class PrinterLink {
 
   close(): void {
     this.stopped = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     if (this.resync) clearInterval(this.resync);
     this.resync = null;
     for (const p of this.pending.values()) clearTimeout(p.timer);

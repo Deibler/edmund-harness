@@ -133,6 +133,9 @@ export function openMqtt(opts: {
 }): Promise<MqttSession> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    // True from the broker's accept on. An attempt that fails is settled too,
+    // and its socket closing is not a connection that dropped.
+    let established = false;
     let closedByUs = false;
     // Assigned once below; declared first so the failure path can reach it.
     const holder: { socket?: TLSSocket } = {};
@@ -193,6 +196,7 @@ export function openMqtt(opts: {
           ping = setInterval(() => socket.write(Buffer.from([0xc0, 0])), 30_000);
           clearTimeout(timer);
           settled = true;
+          established = true;
           resolve({
             publish: (topic, payload) => socket.write(publishPacket(topic, payload)),
             publishAcked: (topic, payload, timeoutMs = 10_000) =>
@@ -230,7 +234,7 @@ export function openMqtt(opts: {
     socket.on("close", () => {
       if (ping) clearInterval(ping);
       if (!settled) fail(new Error("printer closed the connection"));
-      else if (!closedByUs) opts.onClose?.("connection closed");
+      else if (established && !closedByUs) opts.onClose?.("connection closed");
     });
   });
 }

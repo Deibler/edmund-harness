@@ -20,6 +20,7 @@ import { configCommand } from "./commands/config.ts";
 import { creditsCommand } from "./commands/credits.ts";
 import { cronCommand } from "./commands/cron.ts";
 import { dashboardCommand } from "./commands/dashboard.ts";
+import { dataCommand } from "./commands/data.ts";
 import { installCommand } from "./commands/install.ts";
 import { killCommand } from "./commands/kill.ts";
 import { logsCommand } from "./commands/logs.ts";
@@ -46,6 +47,8 @@ ${color.bold("Services")}
 
 ${color.bold("Observe")}
   ${color.cyan("logs")}         what the model is doing, for whom (--follow, --session NAME, --all, --error/--warn, --grep RE, -n N)
+               logs channels | logs <channel> [--since 2h] [-f] | logs errors | logs trace <turn|name> [--at 14:05] | logs tidy
+  ${color.cyan("data")}         what is in the data folder and who owns it: data audit | data clean [--apply]
   ${color.cyan("dashboard")}    dashboard URL, --pin, --logs [--follow]
   ${color.cyan("cron")}         list / delete scheduled jobs
   ${color.cyan("sessions")}     list / reset / heal / invoke / rerun / compact / wipe / brownnose
@@ -97,6 +100,9 @@ async function main() {
       break;
     case "logs":
       await logsCommand(p);
+      break;
+    case "data":
+      await dataCommand(p);
       break;
     case "dashboard":
       await dashboardCommand(p);

@@ -16,6 +16,8 @@ import type { Subprocess } from "bun";
 import { serveIdeation } from "../../../src/ideation/serve.ts";
 import { IdeationStore } from "../../../src/ideation/store.ts";
 import { serveShelf } from "../../../src/shelf/serve.ts";
+import { withAccessLog } from "../../../src/util/access-log.ts";
+import { installChannelSink } from "../../../src/util/log-sink.ts";
 import { mountFor } from "../../../src/web/mounts.ts";
 import { baseDir } from "../src/accounts.ts";
 import {
@@ -54,6 +56,10 @@ const server = join(ROOT, "skills", "instant-share", "scripts", "secure_server.p
 const shareConfig = join(baseDir(), "host-share");
 mkdirSync(shareConfig, { recursive: true, mode: 0o700 });
 const tokenFile = join(dataDir(), "kitchen-tunnel-token");
+
+// launchd keeps what this process prints (kitchen-host.log). The channels get
+// what it never printed: every request that reaches the public address.
+installChannelSink(dataDir(), "public-router");
 
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 
@@ -191,7 +197,7 @@ Bun.serve({
   // can be slower than that while its process is busy, and the person sees
   // a page that never loads.
   idleTimeout: 60,
-  async fetch(req) {
+  fetch: withAccessLog("public-router", async (req: Request) => {
     const url = new URL(req.url);
     const shelf = serveShelf(req, shelfDir);
     if (shelf) return shelf;
@@ -206,7 +212,7 @@ Bun.serve({
     const h = route(url, current);
     if (!h) return new Response("Not found", { status: 404 });
     return forward(req, url, h.port, "This kitchen page is restarting. Try again in a minute.");
-  },
+  }),
 });
 
 async function forward(req: Request, url: URL, port: number, down: string): Promise<Response> {

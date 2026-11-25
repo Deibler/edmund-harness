@@ -19,6 +19,7 @@ import { type ModelEffort, modelProfileForSession } from "../model/profile.ts";
 import { trackTurnWorker } from "../model/turn-workers.ts";
 import { hostAccess, tierForSessionKey } from "../security/policy.ts";
 import type { StateStore } from "../sessions/store.ts";
+import { recordBrowse } from "../util/browse-log.ts";
 import { humanCount, humanMs, log, snippet } from "../util/log.ts";
 import { codexMcpConfigArgs, tomlValue } from "./config.ts";
 import { codexExecutable } from "./executable.ts";
@@ -524,6 +525,11 @@ function runCodexProcess(input: ProcessInput): Promise<RunResult> {
               name: toolName,
               id: item.id,
               input_summary: codexItemSummary(item),
+            });
+            recordBrowse(input.sessionKey, toolName, {
+              ...(item.arguments && typeof item.arguments === "object" ? item.arguments : {}),
+              command: item.command,
+              query: item.query,
             });
           }
           // A failed builtin command is otherwise invisible: MCP tools log

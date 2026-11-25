@@ -125,3 +125,30 @@ describe("cron scheduler", () => {
     s.stop();
   });
 });
+
+/**
+ * The drain ends only when the store stops handing it a due job, so a job
+ * that marking fired does not move is handed back for ever. That is how one
+ * hourly job was launched 7.7 million times on 2026-11-01.
+ */
+describe("a job that is still due after being marked fired", () => {
+  test("is launched once in a drain, not until the store gives up", async () => {
+    const stuck = job("stuck", "imessage:dm:+15550100001");
+    let asked = 0;
+    const fired: string[] = [];
+    const scheduler = new Scheduler({
+      store: {
+        // Gives up after 5,000 asks so the unfixed loop ends and the count shows.
+        nextDue: () => (++asked > 5_000 ? null : stuck),
+        markFired: () => stuck,
+      },
+      onFire: (j) => {
+        fired.push(j.id);
+      },
+    });
+    scheduler.start();
+    await Bun.sleep(50);
+    scheduler.stop();
+    expect(fired).toEqual(["stuck"]);
+  });
+});

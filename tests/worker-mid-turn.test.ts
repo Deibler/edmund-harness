@@ -197,9 +197,11 @@ describe("a finished result is shown to a running turn first", () => {
   test("a result that joins is not fired again; one that cannot, fires as before", async () => {
     const src = readFileSync(join(import.meta.dir, "..", "src/scheduler/fire.ts"), "utf8");
     const joinAt = src.indexOf("if (isResultWakeUp(job.systemEvent))");
-    const lockAt = src.indexOf(
-      "await locks.withLock(job.sessionKey, async () => {\n    await runAndDeliver(",
-    );
+    // The lock the fire itself runs under: the last one taken, with the fire inside it.
+    const lockAt = src.lastIndexOf("await locks.withLock(job.sessionKey, async () => {");
+    const fireAt = src.indexOf("runAndDeliver(", lockAt);
+    expect(lockAt).toBeGreaterThan(0);
+    expect(fireAt - lockAt).toBeLessThan(400);
     expect(joinAt).toBeGreaterThan(0);
     expect(joinAt).toBeLessThan(lockAt);
     expect(src).toContain('log.info("cron", "result joined the running turn"');

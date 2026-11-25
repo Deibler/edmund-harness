@@ -35,6 +35,11 @@ login rather than at boot, and it runs as you.
 ```
 edmund logs [--follow] [--all] [--debug|--info|--warn|--error] [--session X] [--scope Y] [--grep RE] [-n 200]
 edmund logs --dashboard | --fishing
+edmund logs channels
+edmund logs <channel> [--since 2h] [-f] [--session X] [--grep RE] [--warn|--error] [--json] [-n 200]
+edmund logs errors [--since 2h]
+edmund logs trace <turn id | part of a name> [--at 14:05] [--minutes 5] [--all] [--json]
+edmund logs tidy
 ```
 
 Tails `data/daemon.log` as a story of what the model is doing and for whom:
@@ -65,6 +70,31 @@ following, a line each minute names every turn still running. `--all` shows
 every line in the raw columns (time, level, scope, session, event). Level
 flags are additive. Continuation lines inherit the parent's verdict, so a
 stack trace stays with its error.
+
+A first word selects the channel files beside the operational log
+([operations](operations.md#logs) lists what each holds). `edmund logs
+channels` shows them with their sizes; `edmund logs net-out --since 2h` reads
+one; `edmund logs errors` is every warning and error from every process;
+`edmund logs trace <turn id>` reads one turn back across all of them, and
+`edmund logs trace <name> --at 14:05` one conversation around a time (a clock
+time is today's on this machine, or yesterday's when it has not come yet).
+`edmund logs tidy` compresses, expires and archives now. The channel goes
+before the flags: `-f net-out` reads as "-f, with the value net-out".
+
+## Data
+
+```
+edmund data audit [--all]
+edmund data clean [--apply]
+```
+
+`audit` holds `data/` against the declared layout: what each entry is and
+what writes it, what a removed feature left behind, hand-made backups, and
+what nothing accounts for. `clean` lists what it would move to
+`data/.trash/<day>/` (retired entries, stale undeclared files, backups older
+than 30 days) and which
+expired cache files it would delete; `--apply` does it. Nothing the layout
+does not know is touched, and a file a process has open stays where it is.
 
 ## Sessions
 

@@ -9,6 +9,16 @@ export type SchedulerOptions = {
 };
 
 /**
+ * How long the drain waits before looking again at a job that marking fired
+ * did not move. On 2026-11-01 the next-fire arithmetic answered with a past
+ * time for an hour (the clocks had gone back), the drain launched one hourly
+ * job 7.7 million times, and the daemon answered nobody for 28 minutes. The
+ * arithmetic is fixed; this keeps the same shape of mistake to one launch a
+ * minute.
+ */
+const STUCK_RETRY_MS = 60_000;
+
+/**
  * Fire-and-reschedule loop. Keeps one setTimeout armed for the next-due job.
  * When that job fires, we hand it to `onFire`, then rearm for the new next.
  *
@@ -93,12 +103,21 @@ export class Scheduler {
     this.firing = true;
     this.timer = null;
     this.armedForMs = null;
+    // A job the store hands back in the same drain was not moved by being
+    // marked fired. Launching it again would never end: see STUCK_RETRY_MS.
+    let stuck: CronJob | null = null;
+    const launched = new Set<string>();
     try {
       const now = Date.now();
       // Drain all overdue jobs (in case we woke up late).
       while (!this.stopped) {
         const job = this.store.nextDue();
         if (!job || job.nextFireMs > now) break;
+        if (launched.has(job.id)) {
+          stuck = job;
+          break;
+        }
+        launched.add(job.id);
         // Mark-before-await: if the daemon crashes mid-onFire (long Claude
         // turn, OOM, etc.) we don't want this recurring job to refire on
         // restart and deliver duplicates. `markFired` advances next_fire_ms
@@ -111,7 +130,18 @@ export class Scheduler {
       }
     } finally {
       this.firing = false;
-      this.rearm();
+      if (stuck && !this.stopped) {
+        log.error("sched", "job is still due after being marked fired; trying again in a minute", {
+          job: stuck.id,
+          session: stuck.sessionKey,
+          next_fire: new Date(stuck.nextFireMs).toISOString(),
+        });
+        // Armed for the job's own time, so the heartbeat's poke() leaves this timer alone.
+        this.armedForMs = stuck.nextFireMs;
+        this.timer = setTimeout(() => void this.fireDue(), STUCK_RETRY_MS);
+      } else {
+        this.rearm();
+      }
     }
   }
 

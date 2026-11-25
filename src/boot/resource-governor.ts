@@ -121,7 +121,7 @@ export function parseProcessTable(output: string): ProcessRow[] {
   return rows;
 }
 
-function processKind(command: string): string {
+export function processKind(command: string): string {
   const name = basename(command).toLowerCase();
   if (name === "bun") return "bun";
   if (name === "claude") return "claude";
@@ -131,14 +131,14 @@ function processKind(command: string): string {
   return "other";
 }
 
-/** Sum the daemon's descendant tree plus detached process groups rooted at its
+/** The daemon's descendant tree plus detached process groups rooted at its
  * resident Claude workers. This deliberately excludes unrelated Bun or Python
  * programs owned by the same login. */
-export function summarizeManagedProcesses(
-  rows: ProcessRow[],
+export function managedProcesses<T extends { pid: number; ppid: number; pgid: number }>(
+  rows: T[],
   daemonPid: number,
   workerPids: number[],
-): ResourceStatus["managed"] {
+): T[] {
   const roots = new Set([daemonPid, ...workerPids]);
   const groups = new Set<number>();
   const parents = new Map(rows.map((row) => [row.pid, row.ppid]));
@@ -155,9 +155,16 @@ export function summarizeManagedProcesses(
     }
     return false;
   };
-  const managed = rows.filter(
-    (row) => roots.has(row.pid) || groups.has(row.pgid) || isDescendant(row.pid),
-  );
+  return rows.filter((row) => roots.has(row.pid) || groups.has(row.pgid) || isDescendant(row.pid));
+}
+
+/** Sum what `managedProcesses` selects. */
+export function summarizeManagedProcesses(
+  rows: ProcessRow[],
+  daemonPid: number,
+  workerPids: number[],
+): ResourceStatus["managed"] {
+  const managed = managedProcesses(rows, daemonPid, workerPids);
   const byKindBytes: Record<string, number> = {};
   let rssBytes = 0;
   let footprintBytes = 0;

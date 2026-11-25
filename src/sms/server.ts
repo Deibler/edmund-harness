@@ -1,3 +1,4 @@
+import { withAccessLog } from "../util/access-log.ts";
 import { log } from "../util/log.ts";
 import { publicUrlFor, validateTwilioSignature } from "./signature.ts";
 
@@ -34,7 +35,7 @@ export function startSmsServer(opts: SmsServerOpts): { stop: () => void; port: n
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: opts.port,
-    fetch: async (req) => {
+    fetch: withAccessLog("sms", async (req: Request) => {
       const url = new URL(req.url);
       if (req.method === "GET" && url.pathname === "/sms/health") {
         return new Response("ok", { status: 200 });
@@ -65,7 +66,7 @@ export function startSmsServer(opts: SmsServerOpts): { stop: () => void; port: n
         default:
           return new Response("not found", { status: 404 });
       }
-    },
+    }),
   });
   const baseNow =
     typeof opts.publicBaseUrl === "function" ? opts.publicBaseUrl() : opts.publicBaseUrl;

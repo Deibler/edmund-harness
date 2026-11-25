@@ -46,6 +46,7 @@ import { isMirrorSession, isSmsSession } from "../sessions/key.ts";
 import { isSessionStale } from "../sessions/staleness.ts";
 import { localDay, recordSpend, resumedRunSpend } from "../spend/ledger.ts";
 import { genId } from "../util/ids.ts";
+import { beginTurn, endTurn, withLogContext } from "../util/log-context.ts";
 import { humanCount, log, shortSession } from "../util/log.ts";
 import { prefetchLinks } from "../web/link-prefetch.ts";
 import { clearCompact, registerCompact } from "./compact-gate.ts";
@@ -236,20 +237,35 @@ export async function handleBatch(
     wanted: false,
     backend: "claude",
   };
+  // Every record written while this turn runs carries the conversation and
+  // the turn, whichever channel it lands in: `edmund logs trace` reads a turn
+  // back across all of them.
+  const turnStarted = Date.now();
+  beginTurn(key, turnId);
+  log.event("model", "turn", "turn start", { session: key, turn: turnId, messages: batch.length });
   try {
-    return await handleBatchInner(
-      key,
-      batch,
-      deps,
-      opts,
-      ackCover,
-      {
-        id: turnId,
-        signal: turnController.signal,
-      },
-      compactPlan,
+    return await withLogContext({ session: key, turn: turnId }, () =>
+      handleBatchInner(
+        key,
+        batch,
+        deps,
+        opts,
+        ackCover,
+        {
+          id: turnId,
+          signal: turnController.signal,
+        },
+        compactPlan,
+      ),
     );
   } finally {
+    log.event("model", "turn", "turn end", {
+      session: key,
+      turn: turnId,
+      ms: Date.now() - turnStarted,
+      interrupted: turnController.signal.aborted || undefined,
+    });
+    endTurn(key, turnId);
     // Anything still parked (e.g. a message that landed after the gate's
     // last drain, or one the model only peeked at via check_incoming)
     // deserves a turn — re-queue it rather than discard. With coalescing

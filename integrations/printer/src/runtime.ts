@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "../../../src/config/config.ts";
 import { ChatDb } from "../../../src/imessage/db.ts";
 import { isDmSession } from "../../../src/sessions/key.ts";
+import { withAccessLog } from "../../../src/util/access-log.ts";
 import { atomicWriteFileSync } from "../../../src/util/atomic-write.ts";
 import { log } from "../../../src/util/log.ts";
 import { registerMount, unregisterMount } from "../../../src/web/mounts.ts";
@@ -138,7 +139,7 @@ export class PrinterRuntime {
       // A page request can wait on a still from a cold camera; Bun's default
       // of 10 s would drop it.
       idleTimeout: 30,
-      fetch: (req) => this.handle(req),
+      fetch: withAccessLog("printer", (req: Request) => this.handle(req)),
     });
     const port = this.server.port ?? 0;
     mkdirSync(printerDir(this.dataDir), { recursive: true });

@@ -167,6 +167,41 @@ so a move to another depth compiles and then starts nothing. The two scripts
 the daemon starts this way are checked in `tests/architecture.test.ts`; any
 other needs reading by hand when its file moves.
 
+## A loop that ends when someone else's answer changes
+Found twice in one month from the log alone. The scheduler's drain asked the
+store for the next due job until there was none, and at the autumn clock
+change the next-fire arithmetic answered with a time already past: one hourly
+job was launched 7.7 million times, the daemon answered nobody for 28 minutes,
+and the log grew by 1.9 GB (2026-11-01). The printer link started a retry
+loop on every drop report, and a failed attempt reported a drop: the loops
+doubled each round, to 4,290 attempts a minute (2026-11-17). Both are fixed
+at the cause and bounded at the loop. When a loop's exit depends on another
+function moving something forward, bound the loop as well.
+
+Cron arithmetic stays in absolute time. `setSeconds`, `setMinutes` and
+`setHours` go through local fields, and in the repeated hour local fields
+name the earlier of two instants.
+
+## Logs: one line, two places, and hooks that are process-wide
+`log.info(tag, …)` writes the line to `data/daemon.log` and a record to the
+tag's channel under `data/logs/` (`src/util/log-channels.ts`). A new tag
+needs a channel there or `tests/log-channels.test.ts` fails. Outbound
+requests, child processes and fatal exceptions are recorded by hooks installed
+with the log sink (`src/util/log-instrument.ts`): `node:child_process` runs
+on `Bun.spawn` and `Bun.spawnSync` (measured on Bun 1.4.5), so wrapping those
+two sees every spawn, and `tests/log-instrument.test.ts` fails if a later Bun
+changes that. The fetch wrapper returns a promise that rejects exactly as the
+original does; a version that swallowed the rejection would keep a process
+alive that used to exit.
+
+Never record a header or a body, and never a request's query string: paths
+go through `safePath` and command lines through `describeCommand`. The one
+place a query is kept is `browse`, where it is often the page; it goes
+through `loggableUrl`, which hides the values of credential-like parameters.
+
+A path built under the data folder needs an entry in
+`src/util/data-layout.ts` (`tests/data-layout.test.ts`).
+
 ## stdout is sacred in MCP servers
 `src/mcp/server.ts` speaks JSON-RPC over stdout. A stray `console.log` corrupts
 the stream. `protectStdout()` redirects the console to stderr; don't remove it.

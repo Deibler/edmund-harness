@@ -50,7 +50,9 @@ the ones worth knowing.
 
 1. Config is loaded and validated (`src/config/config.ts`). The integration
    registry is built from `[integrations]`.
-2. A log sink tees every `console.*` call into `data/daemon.log`.
+2. A log sink writes every log line to `data/daemon.log` and to its channel
+   under `data/logs/`, and hooks this process's outbound requests, child
+   processes and fatal exception (`src/util/log-sink.ts`).
 3. `chat.db` is opened read only, in WAL mode, with a prepared statement
    cache. Every reader in the process shares this one connection.
 4. The bridge starts before anything that produces events, so events have
@@ -315,7 +317,8 @@ Everything the runtime writes lives in three ignored directories.
 
 | File | Purpose |
 |---|---|
-| `daemon.log` | Every process's log, one file |
+| `daemon.log` | The operational log: every process's lines, today's |
+| `logs/` | The same events by channel, one JSON record a line; earlier days of `daemon.log`; the archive |
 | `state.db` | Sessions, cursor, acks, outbox, routing, guests, SMS, credits, ghost preferences |
 | `cron.db` | Scheduled and one-shot jobs |
 | `spend.db` | One row per model invocation, daily rollups, eval scores |

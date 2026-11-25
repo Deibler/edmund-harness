@@ -82,7 +82,9 @@ export function configReader(path: string): () => Config {
 async function main() {
   protectStdout();
   const sessionKey = process.env.EDMUND_SESSION_KEY ?? "";
-  installLogSinkFromEnv(`computer[${sessionKey.replace(/^imessage:/, "")}] `);
+  installLogSinkFromEnv(`computer[${sessionKey.replace(/^imessage:/, "")}] `, {
+    session: sessionKey || undefined,
+  });
 
   const configPath = resolve(process.env.EDMUND_CONFIG_PATH ?? "./config.toml");
   let config: Config | null = null;

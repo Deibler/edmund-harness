@@ -46,6 +46,7 @@ import { VectorStore, normalize } from "../src/memory/vector-store.ts";
 import { AddressBook } from "../src/sessions/address-book.ts";
 import { ContactBook } from "../src/sessions/contacts.ts";
 import { LearnedNames } from "../src/sessions/learned-names.ts";
+import { readOpsLog } from "../src/util/log-files.ts";
 
 type Needle = {
   id: string;
@@ -105,14 +106,15 @@ const compactions: Compaction[] = existsSync(compactionsPath)
   : [];
 const fromLog = arg("compactions-from-log", "");
 if (fromLog) {
-  compactions.push(...compactionsFromLog(join(dataDir, "daemon.log"), fromLog));
+  compactions.push(...compactionsFromLog(fromLog));
   compactions.sort((a, b) => a.atMs - b.atMs);
 }
 
 /** The compactions the worker logged for one session (worker.ts "compacted"). */
-function compactionsFromLog(logPath: string, session: string): Compaction[] {
+function compactionsFromLog(session: string): Compaction[] {
   const marker = `[claude-worker] compacted session=${session} `;
-  return readFileSync(logPath, "utf8")
+  // Every day still on disk; lines older than [logs] retention_days are in the archive.
+  return readOpsLog(dataDir, 0)
     .split("\n")
     .filter((l) => l.includes(marker))
     .map((l) => ({

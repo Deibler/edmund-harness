@@ -79,3 +79,38 @@ describe("nextFire — cron", () => {
     expect(nextFire({ kind: "cron", expr: "0 0 30 2 *" }, after)).toBe(0);
   });
 });
+
+/**
+ * On 2026-11-01 the daemon stopped for 28 minutes and wrote 7.7 million log
+ * lines (1.9 GB). The clocks had gone back an hour, and for every instant in
+ * the repeated hour `nextFire` answered with a time already in the past: it
+ * rounded up to the minute through local fields, which lands in the first
+ * 1 a.m. when the instant is in the second. The scheduler's drain then found
+ * the same hourly job due again each time it marked it fired.
+ */
+describe("nextFire — a cron job's next fire is always after `after`", () => {
+  /** Every minute of a night, computed in a zone that changes its clocks. */
+  function minutesNotAdvanced(fromIso: string, toIso: string, expr: string): number {
+    const code = `
+      import { nextFire } from ${JSON.stringify(new URL("../src/cron/next-fire.ts", import.meta.url).pathname)};
+      let bad = 0;
+      for (let t = Date.parse(${JSON.stringify(fromIso)}) + 30_000; t < Date.parse(${JSON.stringify(toIso)}); t += 60_000) {
+        if (nextFire({ kind: "cron", expr: ${JSON.stringify(expr)} }, t) <= t) bad++;
+      }
+      console.log(bad);`;
+    const run = Bun.spawnSync([process.execPath, "-e", code], {
+      env: { ...process.env, TZ: "America/New_York" },
+    });
+    expect(run.exitCode).toBe(0);
+    return Number(run.stdout.toString().trim());
+  }
+
+  for (const expr of ["0 * * * *", "*/15 * * * *", "45 1 * * *", "* * * * *"]) {
+    test(`'${expr}' across the night the clocks go back`, () => {
+      expect(minutesNotAdvanced("2026-11-01T04:00:00Z", "2026-11-01T09:00:00Z", expr)).toBe(0);
+    });
+    test(`'${expr}' across the night the clocks go forward`, () => {
+      expect(minutesNotAdvanced("2026-03-08T05:00:00Z", "2026-03-08T10:00:00Z", expr)).toBe(0);
+    });
+  }
+});

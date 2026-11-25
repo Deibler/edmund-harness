@@ -53,7 +53,7 @@ const dataDir = must("EDMUND_DATA_DIR");
 // Mirror this subprocess's console output into daemon.log so agent
 // lifecycle shows up in the shared audit trail (the per-agent agent.log
 // still captures the full stream; this just surfaces lifecycle hits).
-installLogSinkFromEnv(`agent[${id}] `);
+installLogSinkFromEnv(`agent[${id}] `, { session: `agent:${id}` });
 log.info("agent", "runner starting", { id, task: task.slice(0, 120) });
 
 const store = new AgentStore(dataDir);

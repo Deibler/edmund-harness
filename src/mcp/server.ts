@@ -49,7 +49,7 @@ async function main() {
   // tool calls are attributable in the shared file when multiple sessions
   // run concurrently.
   const rawSessionKey = process.env.EDMUND_SESSION_KEY ?? "?";
-  installLogSinkFromEnv(`mcp[${shortKey(rawSessionKey)}] `);
+  installLogSinkFromEnv(`mcp[${shortKey(rawSessionKey)}] `, { session: rawSessionKey });
 
   const ctx = loadToolContext();
   initRegistryFromConfig(ctx.config);

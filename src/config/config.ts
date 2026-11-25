@@ -286,6 +286,21 @@ export const ConfigSchema = z.object({
       message: "resources.memory_soft_mb must be below memory_hard_mb",
     })
     .default({}),
+  /** How long logs are kept and how large they may grow (src/util/log-files.ts). */
+  logs: z
+    .object({
+      /** Days a channel file or a rotated day of daemon.log is kept. */
+      retention_days: z.number().int().min(1).default(30),
+      /** Days a file stays plain text before it is compressed. */
+      compress_after_days: z.number().int().min(1).default(2),
+      /** Everything under data/logs except the archive stays below this. */
+      max_total_mb: z.number().int().min(50).default(2048),
+      /** A log launchd or a tunnel appends to is archived and emptied past this. */
+      capture_max_mb: z.number().int().min(1).default(20),
+      /** How often memory, CPU, GPU, disk and the process tree are sampled. 0 turns it off. */
+      resource_sample_seconds: z.number().int().min(0).default(60),
+    })
+    .default({}),
   keys: z
     .object({
       openai: z.string().default(""),
