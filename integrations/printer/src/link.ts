@@ -107,6 +107,9 @@ export class PrinterLink {
   }
 
   private onMessage(payload: string) {
+    // A report already on the wire can land after close(). Whoever closed the
+    // link has let go of what its callbacks reach, so it goes nowhere.
+    if (this.stopped) return;
     let msg: Raw;
     try {
       msg = JSON.parse(payload) as Raw;

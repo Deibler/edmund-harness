@@ -17,6 +17,7 @@ import { buildRunSystemPrompt } from "../model/context.ts";
 import { type ModelEffort, modelProfileForSession } from "../model/profile.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
 import { classifyError } from "../recovery/classify.ts";
+import { trackTurnWorker } from "../recovery/turn-workers.ts";
 import { hostAccess, tierForSessionKey } from "../security/policy.ts";
 import { type SessionKey, isTradingSession } from "../sessions/key.ts";
 import type { StateStore } from "../sessions/store.ts";
@@ -376,6 +377,7 @@ function runCodexProcess(input: ProcessInput): Promise<RunResult> {
       cwd: input.cwd,
       detached: true,
     });
+    trackTurnWorker(proc, input.sessionKey);
     let stdout = "";
     let stderr = "";
     let sessionId = input.knownSessionId ?? "";

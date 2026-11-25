@@ -66,6 +66,7 @@ export class MirrorBridge {
   private snapshotId: string | null = null;
   private synced = false;
   private stopped = false;
+  private sweepFailing = false;
 
   constructor(config: Config, store: MirrorStore, handlers: MirrorEventHandlers) {
     this.config = config;
@@ -79,10 +80,26 @@ export class MirrorBridge {
     this.connect();
     this.drainTimer = setInterval(() => void this.drainOutbox(), OUTBOX_DRAIN_MS);
     this.drainTimer.unref?.();
-    this.expiryTimer = setInterval(() => this.store.pruneExpired(), EXPIRY_SWEEP_MS);
+    this.expiryTimer = setInterval(() => this.sweepExpired(), EXPIRY_SWEEP_MS);
     this.expiryTimer.unref?.();
     this.heartbeatTimer = setInterval(() => void this.heartbeat(), HEARTBEAT_MS);
     this.heartbeatTimer.unref?.();
+  }
+
+  /**
+   * An expiry sweep runs on a bare timer, so a throw here is uncaught and takes
+   * the whole daemon down. With the Pi away long enough the outbox fills and
+   * every sweep throws; skip it and try again next sweep instead.
+   */
+  private sweepExpired(): void {
+    try {
+      this.store.pruneExpired();
+      this.sweepFailing = false;
+    } catch (err) {
+      if (!this.sweepFailing)
+        console.warn("[mirror] expiry sweep skipped:", err instanceof Error ? err.message : err);
+      this.sweepFailing = true;
+    }
   }
 
   stop(): void {

@@ -85,6 +85,31 @@ roughly every 30 seconds. `objc_copyClassList` + `class_getInstanceMethod`
 across the runtime triggers `+initialize` on classes that can't tolerate it;
 use `class_copyMethodList` on named classes instead.
 
+## A turn worker must not outlive its daemon
+Turn workers are spawned detached so the daemon can stop a worker's whole
+tree, and a detached worker survives the daemon. It then finishes its turn and
+sends it while the next daemon replays the same messages: on 2026-11-24 a
+daemon that died 44 times in 26 minutes sent one person 17 messages for 2
+requests. `src/recovery/turn-workers.ts` writes each worker down with its
+daemon; a watchdog stops them when the daemon is gone and boot stops any that
+are left. A new place that spawns a model process to run a turn calls
+`trackTurnWorker`, and a test fails if it does not. Sub-agents and background
+jobs are left out on purpose: they are meant to survive a restart.
+
+Two things measured while building it. The CLI runs each Bash tool call in
+its own process group, so a signal to the worker's group does not reach it;
+the CLI stops its tool calls itself on SIGTERM, within about 50 ms. And once
+the daemon is dead the CLI does not exit on SIGTERM alone, so the SIGKILL
+that follows is what ends it.
+
+## `process.ppid` does not notice a dead parent under bun
+Bun keeps the value it first read (1.3.9, measured 2026-11-25), so a child
+that reads `process.ppid` goes on naming a parent that has died. Ask the
+system: `process.kill(pid, 0)` throws `ESRCH` once the pid is gone. The
+watchdog was first written on `process.ppid` and never fired; the test that
+caught it lets the watchdog run a while before killing the daemon, because a
+first read made after the parent died does return the new parent.
+
 ## `[security]` is the trust policy; tests build partial configs
 Host access, contact tier and the open-allowlist flags live in `[security]`
 (`src/security/policy.ts`). The helpers fail closed when the section is

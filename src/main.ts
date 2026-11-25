@@ -111,6 +111,7 @@ import {
 } from "./integrations/optional.ts";
 import { initRegistryFromConfig } from "./integrations/registry.ts";
 import { trimTransformerEmbeddingWorkers } from "./memory/embed-provider.ts";
+import { guardTurnWorkers } from "./recovery/turn-workers.ts";
 import { RefreshWatcher, buildRefreshRepairEvent } from "./refresh/runner.ts";
 import { RefreshScriptStore } from "./refresh/store.ts";
 import { SessionLocks, sessionLockTimeoutMs } from "./sessions/locks.ts";
@@ -142,6 +143,9 @@ async function main() {
   await warmOptionalExports();
   const logPath = installLogSink(config.paths.data_dir);
   console.log(`[edmund-harness] logging to ${logPath}`);
+  // Before the control socket is served and before catch-up replays anything:
+  // a worker the last daemon left running would deliver the same turn again.
+  await guardTurnWorkers(config.paths.data_dir);
 
   // Export keys into the daemon's own env so modules (transcribe-inbound,
   // etc.) that use openai-http can read them. MCP subprocesses still get

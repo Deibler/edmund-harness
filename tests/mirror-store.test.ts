@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MirrorStore } from "../integrations/mirror/src/store.ts";
+import { MAX_OUTBOX_ROWS, MirrorStore } from "../integrations/mirror/src/store.ts";
 
 const dirs: string[] = [];
 
@@ -270,4 +270,107 @@ describe("MirrorStore v2", () => {
       store.close();
     }
   });
+
+  // The Pi was off the network for nine days. State deltas never expire, so
+  // they filled the outbox, and from then on every write threw: the tools, the
+  // refresh scripts, and the expiry sweep on its timer.
+  test("a Pi that stays away cannot fill the outbox with state deltas", () => {
+    const store = makeStore();
+    try {
+      const writes = MAX_OUTBOX_ROWS + 5;
+      for (let i = 0; i < writes; i++) store.upsertContent(note(`${i}`));
+
+      const queued = drainOutbox(store);
+      expect(queued).toHaveLength(MAX_OUTBOX_ROWS);
+      // The newest state survives; what gave way was the oldest, which the
+      // snapshot a reconnect begins with replaces anyway.
+      const revisions = queued.map((frame) => frame.revision as number).sort((a, b) => a - b);
+      expect(revisions.at(-1)).toBe(writes);
+      expect(revisions[0]).toBe(writes - MAX_OUTBOX_ROWS + 1);
+      expect(store.getContent("note")?.props).toMatchObject({ text: `${writes - 1}` });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("expired content is still removed while the outbox is full", () => {
+    const store = makeStore();
+    try {
+      store.upsertContent({ ...note("stale"), id: "note:expiring", expiresAtMs: 10 });
+      for (let i = 0; i < MAX_OUTBOX_ROWS; i++) store.upsertContent(note(`${i}`));
+
+      expect(store.pruneExpired(11)).toEqual(["note:expiring"]);
+      expect(store.getContent("note:expiring")).toBeNull();
+      const queued = drainOutbox(store);
+      expect(queued).toHaveLength(MAX_OUTBOX_ROWS);
+      expect(
+        queued.filter(
+          (frame) => frame.type === "content_remove" && frame.contentId === "note:expiring",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a full outbox gives up state deltas, never a pending command", () => {
+    const store = makeStore();
+    try {
+      store.enqueueCommand(
+        { v: 2, id: "overlay:pending", type: "overlay_set", overlay: { phase: "thinking" } },
+        60_000,
+      );
+      for (let i = 0; i < MAX_OUTBOX_ROWS + 5; i++) store.upsertContent(note(`${i}`));
+
+      const queued = drainOutbox(store);
+      expect(queued).toHaveLength(MAX_OUTBOX_ROWS);
+      expect(queued.filter((frame) => frame.id === "overlay:pending")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("an outbox full of commands still refuses another", () => {
+    const store = makeStore();
+    try {
+      const command = (i: number) =>
+        ({
+          v: 2,
+          id: `overlay:${i}`,
+          type: "overlay_set",
+          overlay: { phase: "thinking" },
+        }) as const;
+      for (let i = 0; i < MAX_OUTBOX_ROWS; i++) store.enqueueCommand(command(i), 60_000);
+
+      expect(() => store.enqueueCommand(command(MAX_OUTBOX_ROWS), 60_000)).toThrow(/full/);
+      expect(() => store.upsertContent(note("blocked"))).toThrow(/full/);
+      expect(store.getContent("note")).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
 });
+
+function note(text: string) {
+  return {
+    id: "note",
+    zone: "lower_third",
+    component: "text_block",
+    props: { text },
+    lifespan: "session",
+    expiresAtMs: null,
+  } as const;
+}
+
+/** Every queued frame, oldest first, acknowledged as it is read. */
+function drainOutbox(store: MirrorStore): Array<Record<string, unknown>> {
+  const frames: Array<Record<string, unknown>> = [];
+  for (;;) {
+    const rows = store.listReadyOutbox(Date.now(), 0, 128);
+    if (rows.length === 0) return frames;
+    for (const row of rows) {
+      frames.push(JSON.parse(row.payload));
+      store.acknowledgeOutbox(row.messageId);
+    }
+  }
+}

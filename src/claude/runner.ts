@@ -10,6 +10,7 @@ import { modelProfileForSession } from "../model/profile.ts";
 import { orchestratorForSession } from "../orchestrators/registry.ts";
 import { type FailureClass, classifyError } from "../recovery/classify.ts";
 import { HEALERS } from "../recovery/healers.ts";
+import { trackTurnWorker } from "../recovery/turn-workers.ts";
 import {
   disallowedBuiltinTools,
   hostAccess,
@@ -1119,6 +1120,7 @@ function runProcess(
       cwd,
       detached: true,
     });
+    trackTurnWorker(proc, sessionKey);
     let stdout = "";
     let stderr = "";
     let sessionId = "";
