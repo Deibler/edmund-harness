@@ -622,6 +622,19 @@ export class PrinterStore {
     );
   }
 
+  /**
+   * A new print retires every watch bound to an earlier one. Those can no
+   * longer fire, and the state and error watches each start sets would
+   * otherwise pile up, one more per print.
+   */
+  retireEarlierPrintWatches(printKey: string): void {
+    this.db
+      .query(
+        "UPDATE watches SET active = 0 WHERE active = 1 AND kind != 'filament' AND print_key != '' AND print_key != ?",
+      )
+      .run(printKey);
+  }
+
   /** Watches tied to a print end with it. */
   endPrintWatches(printKey: string): void {
     this.db

@@ -209,6 +209,7 @@ export class PrinterRuntime {
             this.printKeyPath(),
             JSON.stringify({ key: this.printKey, task: st.taskName }),
           );
+        this.store.retireEarlierPrintWatches(this.printKey);
       }
     }
     const fp = trayFingerprint(allTrays(st));
@@ -313,7 +314,9 @@ export class PrinterRuntime {
     }
     const ended =
       prev && isActive(prev) && (st.gcodeState === "FINISH" || st.gcodeState === "FAILED");
-    if (!ended || this.ending.has(job.id)) return;
+    // While a start is underway the printer can report its last print's
+    // FINISH once more; a job can end only after the start saw it begin.
+    if (!ended || job.startedMs === null || this.ending.has(job.id)) return;
     this.ending.add(job.id);
     const cancelled =
       st.gcodeState === "FAILED" && (st.printError === 0x0300400c || st.printError === 0x0500400e);
@@ -606,9 +609,12 @@ export class PrinterRuntime {
     }
     // onState saw the print begin and named it before waitFor returned.
     const taskName = gate.route === "bambu_connect" ? started.taskName : remoteName;
+    // Nothing seen before this point can have ended this print.
+    this.ending.delete(job.id);
     this.store.updateJob(job.id, {
       status: "printing",
       startedMs: Date.now(),
+      endedMs: null,
       remoteName: taskName,
     });
     this.store.log(
