@@ -86,6 +86,22 @@ else
     exit 1
 fi
 
+# The publish gate (src/security/watch/gate.ts): nothing is given a public
+# address until its expiry is within the limit and its folder holds nothing
+# secret. It runs before the server starts, so a refusal leaves nothing up.
+HARNESS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+PUBLISH_GATE="$HARNESS_ROOT/scripts/publish-gate.ts"
+gate() {
+    [[ -f "$PUBLISH_GATE" ]] || return 0
+    command -v bun &>/dev/null || { echo "Error: the publish gate needs bun on PATH" >&2; return 1; }
+    bun "$PUBLISH_GATE" "$@"
+}
+GATE_PATH="$SERVE_PATH"
+[[ -f "$GATE_PATH" ]] && GATE_PATH="$(dirname "$GATE_PATH")"
+if ! gate check "$GATE_PATH" --expire "$EXPIRE_MINUTES"; then
+    exit 1
+fi
+
 cleanup() {
     if [[ "$BACKGROUND" != "true" ]]; then
         [[ -n "$TEMP_ARTIFACT" && -d "$TEMP_ARTIFACT" ]] && rm -rf "$TEMP_ARTIFACT"
@@ -120,6 +136,10 @@ if [[ "$LOCAL_STATUS" != "200" && "$LOCAL_STATUS" != "403" ]]; then
     echo "Error: Local server not responding (status: $LOCAL_STATUS)" >&2
     exit 1
 fi
+
+# Written down before the tunnel exists, so the watch never sees a tunnel
+# to this port that it has not been told about.
+gate register --port "$PORT" --artifact "$ARTIFACT_ID" --path "$GATE_PATH" --expire "$EXPIRE_MINUTES" || true
 
 # Start tunnel
 TUNNEL_LOG=$(mktemp)
@@ -181,6 +201,14 @@ if $BACKGROUND; then
     if [[ "$VERIFIED" != "true" ]]; then
         echo "Error: Could not verify URL is working after $MAX_VERIFY_ATTEMPTS attempts" >&2
         echo "Last status: $HTTP_STATUS" >&2
+        kill $TUNNEL_PID 2>/dev/null || true
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+
+    # The other half of "it works": the same address with no key is refused.
+    if ! gate verify "$TUNNEL_URL/"; then
+        echo "Error: the link is open to a visitor with no key. Taken down." >&2
         kill $TUNNEL_PID 2>/dev/null || true
         kill $SERVER_PID 2>/dev/null || true
         exit 1

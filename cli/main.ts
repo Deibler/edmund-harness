@@ -32,6 +32,7 @@ import { skillsCommand } from "./commands/skills.ts";
 import { startCommand } from "./commands/start.ts";
 import { statusCommand } from "./commands/status.ts";
 import { stopCommand } from "./commands/stop.ts";
+import { lockdownCommand, watchCommand } from "./commands/watch.ts";
 import { serviceCommandRefusal } from "./services/target.ts";
 import { color, fail, print } from "./ui.ts";
 
@@ -50,6 +51,8 @@ ${color.bold("Observe")}
   ${color.cyan("logs")}         what the model is doing, for whom (--follow, --session NAME, --all, --error/--warn, --grep RE, -n N)
                logs channels | logs <channel> [--since 2h] [-f] | logs errors | logs traffic [--since 24h] | logs trace <turn|name> [--at 14:05] | logs tidy
   ${color.cyan("data")}         what is in the data folder and who owns it: data audit | data clean [--apply]
+  ${color.cyan("watch")}        the security watch: watch [status] | incidents | ok <id> | undo <id> | resume [chat]
+  ${color.cyan("lockdown")}     close every quick tunnel and share, take the shell from workers, message only the operator: lockdown | lockdown off
   ${color.cyan("dashboard")}    dashboard URL, --pin, --logs [--follow]
   ${color.cyan("cron")}         list / delete scheduled jobs
   ${color.cyan("sessions")}     list / reset / heal / invoke / rerun / compact / wipe / brownnose
@@ -112,6 +115,12 @@ async function main() {
       break;
     case "data":
       await dataCommand(p);
+      break;
+    case "watch":
+      await watchCommand(p);
+      break;
+    case "lockdown":
+      await lockdownCommand(p);
       break;
     case "dashboard":
       await dashboardCommand(p);

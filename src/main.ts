@@ -102,11 +102,13 @@ import {
   sessionKeyFor,
 } from "./sessions/key.ts";
 import { LearnedNames } from "./sessions/learned-names.ts";
+import { chatGuidsForSession } from "./sessions/session-scope.ts";
 import { SkillCurator } from "./skills/curator-observer.ts";
 import { createSmsChannel } from "./sms/channel.ts";
 import { resolveTwilioCreds } from "./sms/creds.ts";
 import { startSmsServer } from "./sms/server.ts";
 import { ensureTwilioWebhooks } from "./sms/twilio-config.ts";
+import { startWatch } from "./watch/runtime.ts";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const execAsync = promisify(exec);
@@ -479,6 +481,24 @@ async function main() {
   const activeSessions = new Set<SessionKey>();
   const turnControllers = new Map<SessionKey, AbortController>();
 
+  // The security watch (src/watch/): started before any worker can be, so
+  // that the first one already reports its tool calls to it.
+  const watchRuntime = startWatch({
+    config,
+    dataDir: resolve(config.paths.data_dir),
+    repoRoot: REPO_ROOT,
+    alert,
+    chatDb,
+    contacts,
+    interruptTurn: (sessionKey, reason) => {
+      const controller = turnControllers.get(sessionKey);
+      if (!controller || controller.signal.aborted) return false;
+      controller.abort(reason);
+      return true;
+    },
+    chatGuidsOf: (sessionKey) => chatGuidsForSession(sessionKey, chatDb, contacts),
+  });
+
   const recall = wireRecall({ config, state, chatDb, contacts });
 
   // Dump claude-pool stats to disk every 30s so the dashboard (running in
@@ -587,8 +607,11 @@ async function main() {
   telemetry.start();
 
   // What on this machine can be reached from outside it: see boot/exposure.ts.
+  // Every half minute, so that a door nobody registered is noticed while it
+  // can still be closed before anyone finds it.
   const exposure = new ExposureWatch({
-    intervalMs: config.logs.resource_sample_seconds > 0 ? 5 * 60_000 : 0,
+    intervalMs: config.logs.resource_sample_seconds > 0 ? 30_000 : 0,
+    onOpened: (opened) => void watchRuntime.doorOpened(opened),
   });
   exposure.start();
 
@@ -1232,6 +1255,29 @@ async function main() {
   const routeAccepted = (msg: InboundMessage): void => {
     const key = sessionKeyFor(msg, contacts);
 
+    // An operator's answer to a security alert (OK, UNDO, LOCKDOWN) is
+    // acted on here and never becomes a turn: it has to work when the model
+    // is the thing that went wrong.
+    const forWatch = msg.isGroup ? null : watchRuntime.operatorSaid(key, msg.text);
+    if (forWatch) {
+      log.info("watch", "the operator answered the watch", { session: key });
+      void (async () => {
+        let text: string;
+        try {
+          text = await forWatch();
+        } catch (err) {
+          text = `That did not work: ${(err as Error).message}`;
+        }
+        await deliverReply(
+          // Pinned: an unpinned DM send resolves to note-to-self.
+          { to: chatIdFromKey(key), isGroup: false, text, chatGuid: msg.chatGuid },
+          config,
+          echoes,
+        ).catch(() => {});
+      })();
+      return;
+    }
+
     // On-demand Cloudflare dashboard tunnel trigger for the operator DM
     if (!msg.isGroup && msg.fromHandle && config.alerts.operator_handle) {
       const normSender = normalizeHandle(msg.fromHandle);
@@ -1395,6 +1441,7 @@ async function main() {
     resourceGovernor.stop();
     telemetry.stop();
     exposure.stop();
+    await watchRuntime.stop().catch(() => {});
     clearInterval(watchAttacks);
     clearTimeout(firstTidy);
     clearInterval(logTidyTimer);

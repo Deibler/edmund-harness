@@ -3,6 +3,7 @@ import { chunkForIMessage } from "../imessage/chunk.ts";
 import { ChatDb } from "../imessage/db.ts";
 import { hasMapsLink, looksLikeStreetAddress } from "../imessage/maps-link.ts";
 import { sendMessage } from "../imessage/send.ts";
+import { pipeline as watchPipeline } from "../security/watch/bus.ts";
 import { voiceBindingFor } from "../sessions/call-binding.ts";
 import { ContactBook } from "../sessions/contacts.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
@@ -164,6 +165,21 @@ export async function deliverReply(
         chars: veto.narration.length,
       });
     }
+    return { sent: 0, sentChunks: [], errors: [], silenced: true };
+  }
+
+  // The one place every reply the daemon sends for the model passes through,
+  // so the one place the watch reads them: a planted canary, or a real
+  // credential bound for someone who is not the operator, is not sent. This
+  // is the exception to "never suppress a reply": what is held back is a
+  // secret, the operator is texted about it, and it counts as delivered so
+  // that nothing queues it to try again.
+  const watched = watchPipeline.outgoing(
+    args.sessionKey ?? (args.isGroup ? `imessage:group:${args.to}` : dmKeyFor(args.to)),
+    cleaned,
+  );
+  if (!watched.allow) {
+    log.warn("deliver", "reply held by the security watch", { to: args.to, why: watched.reason });
     return { sent: 0, sentChunks: [], errors: [], silenced: true };
   }
 

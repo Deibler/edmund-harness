@@ -1,5 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { trackTurnWorker } from "../model/turn-workers.ts";
+import { pipeline as watchPipeline } from "../security/watch/bus.ts";
 import { recordBrowse } from "../util/browse-log.ts";
 import { DEBUG, humanCost, humanCount, humanMs, log, snippet } from "../util/log.ts";
 import {
@@ -214,6 +215,12 @@ type ContentBlock =
 type ClaudeEvent =
   | { type: "system"; subtype: "init"; session_id: string; model?: string }
   | { type: "system"; subtype: "compact_boundary"; compact_metadata?: unknown }
+  | {
+      type: "system";
+      subtype: "informational";
+      tag?: string;
+      hook_no_verdict?: { hook_event?: string; tool_use_id?: string; timed_out?: boolean };
+    }
   | {
       type: "assistant";
       message: { content: Array<ContentBlock>; model?: string; usage?: UsageStats };
@@ -753,6 +760,20 @@ export class Worker {
   private handleEvent(evt: ClaudeEvent): void {
     if (evt.type === "stream_event") {
       this.handleStreamEvent(evt.event);
+      return;
+    }
+    // The CLI says so when a hook gave it no answer and the tool call ran
+    // anyway (measured on 2.1.332). For the security watch's hook that is a
+    // call nobody checked; a run of them means the watch is not answering.
+    if (evt.type === "system" && evt.subtype === "informational") {
+      const silent = evt.tag === "hook_no_verdict" ? evt.hook_no_verdict : undefined;
+      if (silent?.hook_event === "PreToolUse") {
+        watchPipeline.hookSilent(
+          this.sessionKey,
+          silent.tool_use_id ?? "",
+          silent.timed_out === true,
+        );
+      }
       return;
     }
     if (evt.type === "system" && evt.subtype === "compact_boundary") {

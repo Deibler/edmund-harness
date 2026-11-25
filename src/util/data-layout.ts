@@ -119,6 +119,11 @@ export const DATA_LAYOUT: DataEntry[] = [
   ),
   state("run/pool-stats.json", "src/main.ts", "The worker pool, for the dashboard."),
   state(
+    "run/watch.json",
+    "src/security/watch/address.ts",
+    "Where the security watch listens for workers' tool calls, and the key they present.",
+  ),
+  state(
     "run/public-router.json",
     "src/web/public-hosts.ts",
     "Where the public router listens, and the key the portal's listener relays with.",
@@ -179,6 +184,12 @@ export const DATA_LAYOUT: DataEntry[] = [
     kind: "secret",
     owner: "dashboard/server/auth.ts",
     note: "Signs dashboard and portal sessions.",
+  },
+  {
+    name: "secrets/aws-backup.token",
+    kind: "secret",
+    owner: "src/security/watch/canary.ts",
+    note: "A canary: a credential that opens nothing. Reading it, or its value going anywhere, raises an alert.",
   },
   {
     name: "secrets/kitchen-tunnel-token",
@@ -259,6 +270,11 @@ export const DATA_LAYOUT: DataEntry[] = [
   folder("plugins", "config: [claude] plugin_dirs", "Model CLI plugins."),
   folder("printer", "integrations/printer/", "Print jobs, camera frames and the printer's state."),
   folder("shelf", "src/shelf/", "What was handed to people at a permanent link."),
+  folder(
+    "watch",
+    "src/watch/",
+    "The security watch: incidents, what the operator allowed, paused chats, known sites, registered doors.",
+  ),
   folder("sms-media", "src/sms/", "Attachments received by SMS."),
   folder(".trash", "src/util/data-layout.ts", "What a clean moved aside; emptied after 30 days."),
 ];

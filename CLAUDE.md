@@ -105,6 +105,41 @@ the source and the tracked skills to the tool's schema, and `callTool`
 have before the tool runs. When a tool's answer is "done", have it say what
 it was done to.
 
+## The security watch sees a worker through a hook, and fails open
+`src/watch/` puts every tool call a worker makes through tripwires
+(`src/security/watch/`), using Claude Code's HTTP hooks. Measured on CLI
+2.1.332 (2026-11-25): a `type: "http"` hook in `--settings` runs in `-p` mode
+with `--setting-sources ""`; `PreToolUse` carries `tool_name`, `tool_input`
+and `tool_use_id`, `PostToolUse` adds `tool_response`; an answer of
+`permissionDecision: "deny"` stops the call and the model is shown the
+reason; a call costs about 3 ms. When nothing answers, the call runs and the
+stream carries `system` / `informational` with `tag: "hook_no_verdict"`,
+which the worker reports and the watch counts.
+
+Four things that are easy to get wrong:
+
+- **A worker started without the hooks is a worker nothing is watching.**
+  Settings for anything that runs tools come from `workerSettings`
+  (`src/model/direct-env.ts`); a test fails for a spawn site that builds
+  them another way.
+- **Replay before changing a rule.** `bun scripts/watch-replay.ts
+  persona/sessions --days 35` runs the tripwires over real transcripts. The
+  first draft tripped on 46 of 753 turns from three mistakes (fetched data
+  piped into the turn's own inline script, a long article URL, here-document
+  bodies read as shell); the fixed rules trip on 7. A rule that fires on
+  ordinary work teaches everyone to ignore it.
+- **A model will not run an exfiltration for a test.** Asked to `cat` a
+  secrets file and `curl` it somewhere, the worker model refused before the
+  hook was consulted. A drill has to use commands that trip a rule and look
+  harmless: a marker string that happens to be a canary's value, a profile
+  file in the working directory.
+- **`example.com` is a real host.** Only names ending `.example`, `.invalid`
+  or `.test` never leave the machine. And a site is known as a whole
+  (`siteOf`), so in a test each role needs a second-level name of its own.
+
+It runs as the same user as the model. It catches mistakes and injections,
+not something that already owns the account.
+
 ## Never relax the send-resolution guard
 `chat_mismatch` is a **true positive**. Tested by relaxing it: sends went to the
 note-to-self thread. It refuses because acting would reach the wrong person. If

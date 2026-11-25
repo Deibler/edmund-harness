@@ -36,6 +36,8 @@ export const CHANNELS = {
   "net-in":
     "Every HTTP request a harness server answered: server, method, path, status, duration, caller.",
   browse: "What the model opened on the web: pages, fetches and searches, by conversation.",
+  flight:
+    "What each turn's tool calls reached: every command, fetch and message that named a host outside this machine, opened a door or changed something that persists, with what it tripped.",
   proc: "Every child process: command, pid, exit code or signal, duration; and the process tree as the system reports it.",
   resource:
     "Memory, CPU, GPU, swap, disk and thermal state once a minute, with the largest processes; the resource governor's decisions; main thread stalls.",
@@ -162,7 +164,7 @@ const BY_CHANNEL: Partial<Record<Channel, string[]>> = {
     "pay",
     "credits",
   ],
-  security: ["gate", "guest", "addressing", "security"],
+  security: ["gate", "guest", "addressing", "security", "watch", "lockdown"],
   resource: ["resources", "loop"],
   system: ["edmund-harness", "boot", "shutdown", "config", "fatal", "alert", "log", "data"],
 };

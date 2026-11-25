@@ -124,6 +124,10 @@ export const CONFIG_LAYOUT: LayoutTier[] = [
         note: "Trust policy: what the model may touch on this Mac and what contacts get.",
       },
       {
+        name: "watch",
+        note: "The security watch: tripwires on every tool call, a judge for what trips, and what is stopped.",
+      },
+      {
         name: "allowlist",
         note: "Who may DM Edmund and which groups it joins (see [security] for open allowlists).",
       },

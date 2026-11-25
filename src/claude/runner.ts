@@ -6,11 +6,7 @@ import type { Config } from "../config/config.ts";
 import { deriveGuestLoadout } from "../guests/access.ts";
 import { withCallBlocks } from "../model/call-loadout.ts";
 import { buildRunSystemPrompt } from "../model/context.ts";
-import {
-  PROMPT_SNAPSHOT_ARGS,
-  isolatedSettingsArgs,
-  postCompactHookSettings,
-} from "../model/direct-env.ts";
+import { PROMPT_SNAPSHOT_ARGS, isolatedSettingsArgs, workerSettings } from "../model/direct-env.ts";
 import { type FailureClass, classifyError } from "../model/failure-class.ts";
 import { type InlineImage, prepareInlineImages } from "../model/inline-images.ts";
 import {
@@ -490,10 +486,11 @@ export async function runClaude(
     // operator registered for their own Claude Code never reaches a worker.
     // Deterministic regardless of cwd / registration scope.
     "--strict-mcp-config",
-    // The operator's CLAUDE.md files, auto-memory and plugins stay out. The
-    // one hook a conversation worker runs puts the chat's own messages back
-    // after every compaction (post-compact-thread.ts).
-    ...isolatedSettingsArgs(postCompactHookSettings()),
+    // The operator's CLAUDE.md files, auto-memory and plugins stay out. A
+    // conversation worker runs two kinds of hook: one puts the chat's own
+    // messages back after every compaction (post-compact-thread.ts), and the
+    // watch's see every tool call before and after it runs (src/watch/).
+    ...isolatedSettingsArgs(workerSettings(config.paths.data_dir, input.sessionKey)),
     ...PROMPT_SNAPSHOT_ARGS,
     ...pluginDirArgs(config.claude.plugin_dirs, hostAccess(config), isGuest),
     "--append-system-prompt",

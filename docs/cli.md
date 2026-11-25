@@ -105,6 +105,26 @@ does not know is touched, and a file a process has open stays where it is.
 `migrate` moves a folder from the old flat layout into the grouped one and its
 logs out to `logs/`: stop every service first ([operations](operations.md#the-data-folder)).
 
+## The security watch
+
+```
+edmund watch [status]
+edmund watch incidents
+edmund watch ok <id> | undo <id>
+edmund watch resume [chat]
+edmund lockdown
+edmund lockdown off
+```
+
+`watch` shows the mode, how many tool calls were seen, tripped, held and
+refused since the daemon started, what is paused and what is open.
+`ok <id>` reverses what was done for an incident and stops that shape being
+raised again; `undo <id>` reverses it once. `resume` lets a paused chat take
+turns again. `lockdown` closes every quick tunnel and share, takes the shell
+from workers, messages nobody but the operator and turns the web tools off;
+`lockdown off` puts back what it unloaded. Both lockdown commands work with
+the daemon down ([the security watch](watch.md)).
+
 ## Sessions
 
 ```

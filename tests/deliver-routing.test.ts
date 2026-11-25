@@ -23,6 +23,7 @@ mock.module("../src/imessage/bridge/index.ts", () => ({ invoke }));
 
 import { deliverReply } from "../src/channels/deliver.ts";
 import type { Config } from "../src/config/config.ts";
+import { listenToPipeline } from "../src/security/watch/bus.ts";
 import type { EchoCache } from "../src/sessions/echo-cache.ts";
 
 const HANDLE = "+15550100005";
@@ -153,5 +154,40 @@ describe("deliverReply DM addressing", () => {
     expect(res.sent).toBe(1);
     expect(res.errors).toEqual([]);
     expect(sentChat()).toBe(HANDLE);
+  });
+});
+
+// Every reply the daemon sends for the model goes through deliverReply, so
+// that is where the security watch reads them (src/watch/service.ts).
+describe("deliverReply and the security watch", () => {
+  test("a reply the watch refuses is not sent, and is not queued to try again", async () => {
+    const { path, cleanup } = makeChatDb();
+    const asked: [string, string][] = [];
+    const stop = listenToPipeline({
+      outgoing: (session, text) => {
+        asked.push([session, text]);
+        return text.includes("SECRET")
+          ? { allow: false, reason: "it held a credential" }
+          : { allow: true };
+      },
+    });
+    cleanups.push(cleanup, stop);
+
+    const held = await deliverReply(
+      { to: HANDLE, isGroup: false, text: "the key is SECRET" },
+      configFor(path),
+      echoes,
+    );
+    expect(held).toEqual({ sent: 0, sentChunks: [], errors: [], silenced: true });
+    expect(invoke).not.toHaveBeenCalled();
+    // The watch is told which chat the reply was for.
+    expect(asked).toEqual([[`imessage:dm:${HANDLE}`, "the key is SECRET"]]);
+
+    const fine = await deliverReply(
+      { to: HANDLE, isGroup: false, text: "dinner is at six" },
+      configFor(path),
+      echoes,
+    );
+    expect(fine.sent).toBe(1);
   });
 });

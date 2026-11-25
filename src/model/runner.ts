@@ -3,6 +3,7 @@ import { shouldCompact } from "../claude/auto-compact.ts";
 import { type RunInput, type RunResult, evictWarmWorker, runClaude } from "../claude/runner.ts";
 import { runCodex } from "../codex/runner.ts";
 import type { Config } from "../config/config.ts";
+import { pausedReason } from "../security/watch/state.ts";
 import type { SessionKey } from "../sessions/key.ts";
 import { endScreenHold, screenLockPath } from "../sessions/screen-lock.ts";
 import type { StateStore } from "../sessions/store.ts";
@@ -173,6 +174,20 @@ export async function runModel(
   config: Config,
   store: StateStore,
 ): Promise<ModelRunResult> {
+  // A chat the security watch paused starts no turn until the operator
+  // answers the alert (OK or UNDO) or runs `edmund watch resume`. Worded so
+  // that no caller reads it as an outage to alert on or a failure to retry.
+  const paused = pausedReason(config.paths.data_dir, rawInput.sessionKey);
+  if (paused) {
+    log.warn("model", "turn not started: chat paused by the security watch", {
+      session: rawInput.sessionKey,
+    });
+    return {
+      ok: false,
+      error: "This chat is paused by the security watch until the operator answers its alert.",
+    } as ModelRunResult;
+  }
+
   const { profile, backend, transition } = sessionTransition(rawInput.sessionKey, config, store);
 
   let input = rawInput;

@@ -112,8 +112,16 @@ describe("every Claude spawn site is isolated", () => {
     // The pool's workers get runClaude's argv, so baseArgs covers both paths.
     const runner = read("src/claude/runner.ts");
     const baseArgs = runner.slice(runner.indexOf("const baseArgs"), runner.indexOf("const env ="));
-    expect(baseArgs).toContain("...isolatedSettingsArgs(postCompactHookSettings()),");
-    expect(read("scripts/agent-runner.ts")).toContain("...ISOLATED_SETTINGS_ARGS,");
+    // Both still go through isolatedSettingsArgs, which is what carries
+    // `--setting-sources ""`; what they add to it is the worker's hooks
+    // (the compaction hook and the security watch's, src/model/direct-env.ts).
+    expect(baseArgs).toContain(
+      "...isolatedSettingsArgs(workerSettings(config.paths.data_dir, input.sessionKey)),",
+    );
+    const agent = read("scripts/agent-runner.ts");
+    expect(agent).toMatch(
+      /\.\.\.isolatedSettingsArgs\(\s*workerSettings\(dataDir, `agent:\$\{id\}`/,
+    );
     expect(read("src/claude/one-shot.ts")).toContain('spawn("claude", oneShotArgv(opts.args)');
   });
 

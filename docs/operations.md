@@ -72,12 +72,13 @@ with their sizes.
 | `net-out` | Every HTTP request a harness process made: host, path, status, duration |
 | `net-in` | Every HTTP request a harness server answered: server, method, path, status, duration, caller |
 | `browse` | What the model opened on the web: pages, fetches, searches, addresses in shell commands |
+| `flight` | What each turn's tool calls reached outside this machine, opened or changed for good, and what they tripped ([the security watch](watch.md)) |
 | `proc` | Every child process (command, pid, exit code or signal, duration) and the process tree as the system reports it |
 | `resource` | Memory, CPU, GPU, swap, disk and thermal state once a minute, with the largest processes |
 | `system` | Start-up, shutdown, alerts, process exits, and the logger's own notices |
 | `error` | A copy of every warning and error from every channel, and any exception that ended a process, with its stack |
 
-`net-out`, `net-in`, `browse`, `proc` and `resource` are channel only: they
+`net-out`, `net-in`, `browse`, `flight`, `proc` and `resource` are channel only: they
 would bury the operational log, so they are not in it.
 
 ### When something goes wrong

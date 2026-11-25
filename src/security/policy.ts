@@ -10,6 +10,7 @@
 
 import type { Config } from "../config/config.ts";
 import { normalizeHandle } from "../sessions/key.ts";
+import { isLockedDown } from "./watch/state.ts";
 
 export type HostAccess = Config["security"]["model_host_access"];
 
@@ -17,6 +18,11 @@ export type HostAccess = Config["security"]["model_host_access"];
 export type SessionTier = "operator" | "contact" | "keyed-guest" | "vouched";
 
 export function hostAccess(config: Config): HostAccess {
+  // In a lockdown no worker is started with a shell, whatever the config
+  // says (watch/lockdown.ts). Read on every spawn, so it holds from the
+  // moment the flag is set and lifts the moment it is cleared.
+  const dataDir = config.paths?.data_dir;
+  if (dataDir && isLockedDown(dataDir)) return "sandboxed";
   // Partial configs (tests, older callers) fail closed.
   return config.security?.model_host_access ?? "sandboxed";
 }

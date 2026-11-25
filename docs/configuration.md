@@ -266,6 +266,17 @@ Which rich actions the model may use. On by default: `effects`,
 | `sustained_samples` | `3` | Samples over a limit before acting |
 | `restart_on_hard_limit` | `true` | SIGTERM self at the hard limit |
 
+### `[watch]`
+
+The security watch: what it does and how to answer it is in [watch.md](watch.md).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mode` | `"observe"` | `off`, `observe` (record, judge, alert; stop nothing) or `enforce` (hold what cannot be undone, refuse and contain what is judged serious) |
+| `judge_model` | `"claude-haiku-5-5"` | The model that reviews a tripped call |
+| `hold_seconds` | `6` | How long a held call waits for a verdict before it is let through, flagged |
+| `max_share_days` | `30` | A share expires within this unless the operator allowed that folder longer |
+
 ### `[logs]`
 
 Where the files are and what each channel holds is in [operations](operations.md#logs).

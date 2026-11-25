@@ -12,6 +12,7 @@
 
 import type { HostAccess } from "../security/policy.ts";
 import { envAllowedWhenSandboxed } from "../security/policy.ts";
+import { mergeSettings, readWatchAddress, watchHookSettings } from "../security/watch/address.ts";
 
 const ALWAYS_STRIPPED = new Set(["ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"]);
 
@@ -55,6 +56,25 @@ export function postCompactHookSettings(bun = process.execPath): Record<string, 
       ],
     },
   };
+}
+
+/**
+ * Everything a worker that runs tools for a session is started with: the
+ * post-compaction hook for a conversation, and the watch's hooks, which send
+ * every tool call to the security watch before and after it runs
+ * (security/watch/address.ts). Each place that starts such a worker builds
+ * its settings here, and a test fails for one that does not: a worker
+ * started without the hooks is a worker nothing is watching.
+ */
+export function workerSettings(
+  dataDir: string,
+  sessionKey: string,
+  opts: { postCompact?: boolean } = {},
+): Record<string, unknown> {
+  return mergeSettings(
+    opts.postCompact === false ? {} : postCompactHookSettings(),
+    watchHookSettings(readWatchAddress(dataDir), sessionKey),
+  );
 }
 
 /** ISOLATED_SETTINGS_ARGS with more settings in the same `--settings` JSON,

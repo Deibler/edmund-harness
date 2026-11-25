@@ -53,7 +53,10 @@ const LAYERS: { name: string; modules: string[] }[] = [
   { name: "what a turn reads and schedules", modules: ["cron", "persona", "research", "skills"] },
   { name: "what a turn recalls", modules: ["memory"] },
   { name: "the turn pipeline", modules: ["agents", "channels", "relay"] },
-  { name: "features on the pipeline", modules: ["calls", "credits", "evals", "ghost", "recovery"] },
+  {
+    name: "features on the pipeline",
+    modules: ["calls", "credits", "evals", "ghost", "recovery", "watch"],
+  },
   { name: "features that use other features", modules: ["background", "ideation"] },
   { name: "entry surfaces", modules: ["boot", "mcp", "scheduler"] },
 ];

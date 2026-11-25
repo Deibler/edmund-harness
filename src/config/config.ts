@@ -288,6 +288,29 @@ export const ConfigSchema = z.object({
       message: "resources.memory_soft_mb must be below memory_hard_mb",
     })
     .default({}),
+  /**
+   * The security watch (src/watch/): every tool call a worker makes is put
+   * through a set of tripwires, and one that trips is reviewed by a small
+   * model before or after it runs.
+   */
+  watch: z
+    .object({
+      /**
+       *   "off"      no hook on workers, nothing recorded.
+       *   "observe"  everything is recorded, judged and alerted on, and
+       *              nothing is stopped. The way to try it on a new machine.
+       *   "enforce"  calls that cannot be undone wait for the judge, and
+       *              what is judged serious is refused and contained.
+       */
+      mode: z.enum(["off", "observe", "enforce"]).default("observe"),
+      /** The model that reviews a trip. Measured at 2.1 to 2.5 s a verdict (2026-11-25). */
+      judge_model: z.string().default("claude-haiku-5-5"),
+      /** How long a held call waits for a verdict before it is let through, flagged. */
+      hold_seconds: z.number().min(1).max(15).default(6),
+      /** Shares and tunnels expire within this unless the operator approved longer. */
+      max_share_days: z.number().int().min(1).default(30),
+    })
+    .default({}),
   /** How long logs are kept and how large they may grow (src/util/log-files.ts). */
   logs: z
     .object({

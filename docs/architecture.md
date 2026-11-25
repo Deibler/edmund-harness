@@ -236,6 +236,7 @@ compaction threshold, a compaction is deferred until after delivery.
 | `src/triggers/`, `src/refresh/` | Data-driven and deterministic wakeups |
 | `src/relay/` | Messages one session sends into another |
 | `src/recovery/` | Sweeper, recovery turns, fallback, outbox drainer |
+| `src/watch/`, `src/security/watch/` | The security watch. `security/watch/` is what a tool call means and the tripwires over it, pure and low in the layering. `watch/` is the service: the listener workers report to, the judge, incidents, lockdown |
 | `src/spend/`, `src/credits/` | Spend ledger, per-person generation credits |
 | `src/sms/` | Twilio channel on the shared pipeline |
 | `src/guests/` | Campaign keys, vouching, caps |
@@ -259,7 +260,7 @@ nobody placed, and on a new import cycle between files.
 |---|---|
 | Entry surfaces | `boot`, `mcp`, `scheduler`, and `main.ts` above them all |
 | Features that use other features | `background`, `ideation` |
-| Features on the pipeline | `calls`, `credits`, `evals`, `ghost`, `recovery` |
+| Features on the pipeline | `calls`, `credits`, `evals`, `ghost`, `recovery`, `watch` |
 | The turn pipeline | `agents`, `channels`, `relay` |
 | What a turn recalls | `memory` |
 | What a turn reads and schedules | `cron`, `persona`, `research`, `skills` |

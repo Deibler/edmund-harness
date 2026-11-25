@@ -613,6 +613,21 @@ open_group_allowlist = false
 # Leave empty to disable group support.
 groups = []
 
+# The security watch. Every tool call a worker makes passes a set of
+# tripwires: a credential going somewhere it has never been, fetched code run
+# unread, a text to someone outside the chat just after reading a web page.
+# Nearly every call trips nothing. One that does is reviewed by a small model
+# that is shown what the person asked for and what the turn did.
+[watch]
+#   "off"      no hook on workers, nothing recorded.
+#   "observe"  recorded, judged and alerted on; nothing is stopped.
+#   "enforce"  a call that cannot be undone waits for the verdict, and what
+#              is judged serious is refused, the turn stopped, the chat paused.
+mode = "observe"
+judge_model = "claude-haiku-5-5"
+hold_seconds = 6        # a held call is let through, flagged, after this
+max_share_days = 30     # a share or tunnel expires within this
+
 # Contacts allowed to DM the assistant. Use E.164 or Apple ID.
 # If empty, DMs from anyone are accepted (not recommended).
 [allowlist]

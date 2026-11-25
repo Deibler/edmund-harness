@@ -92,6 +92,42 @@ export class OperatorAlert {
     return false;
   }
 
+  /**
+   * Send a message that is already written, such as a security alert that
+   * says what happened, what was done and how to answer. Deduplicated by
+   * `signature` and recorded like any other alert, but not reshaped: the
+   * 400-character cut and the "auto-alert" footer of `notify` would take the
+   * reply instructions off the end.
+   */
+  async sendText(params: { category: string; signature: string; text: string }): Promise<boolean> {
+    if (!this.enabled()) return false;
+    const sig = `${params.category}::${params.signature}`;
+    const now = Date.now();
+    if (now - (this.lastSentAt.get(sig) ?? 0) < this.minIntervalMs) return false;
+    const muted = this.store?.isMuted(params.category, now) ?? false;
+    const res = muted
+      ? { ok: false as const, error: "muted" }
+      : await sendMessage({ to: this.handle, isGroup: false, text: params.text });
+    this.store?.record({
+      category: params.category,
+      signature: sig,
+      text: params.text,
+      context: null,
+      delivered: res.ok,
+    });
+    if (!res.ok) {
+      console.error(`[alert] failed to deliver: ${res.error}`);
+      return false;
+    }
+    if (this.lastSentAt.size >= MAX_SIGNATURES) {
+      const oldest = this.lastSentAt.keys().next().value;
+      if (oldest !== undefined) this.lastSentAt.delete(oldest);
+    }
+    this.lastSentAt.set(sig, now);
+    console.log(`[alert] sent to ${this.handle} category=${params.category}`);
+    return true;
+  }
+
   private signature(category: string, error: string): string {
     return `${category}::${error.trim().slice(0, 120)}`;
   }

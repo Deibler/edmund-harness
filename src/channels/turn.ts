@@ -38,6 +38,8 @@ import { ensurePersonFile } from "../persona/ensure.ts";
 import { ensureGroupFile } from "../persona/groups.ts";
 import { listRecentReceived } from "../persona/recent-received.ts";
 import { ensureSandbox } from "../persona/sandbox.ts";
+import { tierForSessionKey } from "../security/policy.ts";
+import { pipeline as watchPipeline } from "../security/watch/bus.ts";
 import { isVoiceLive, spokenSessionFor, voiceBindingFor } from "../sessions/call-binding.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import type { EchoCache } from "../sessions/echo-cache.ts";
@@ -243,6 +245,14 @@ export async function handleBatch(
   const turnStarted = Date.now();
   beginTurn(key, turnId);
   log.event("model", "turn", "turn start", { session: key, turn: turnId, messages: batch.length });
+  // The watch keeps a flight record per turn, starting from what was asked
+  // and by whom: its judge needs both to tell a request from an injection.
+  const asker = batch[0]?.fromHandle ?? null;
+  watchPipeline.turnStarted(key, turnId, inFlight.get(key) ?? "", {
+    handle: asker,
+    tier: tierForSessionKey(deps.config, key),
+    label: (asker && deps.contacts.displayName(asker)) || undefined,
+  });
   try {
     return await withLogContext({ session: key, turn: turnId }, () =>
       handleBatchInner(
@@ -266,6 +276,7 @@ export async function handleBatch(
       interrupted: turnController.signal.aborted || undefined,
     });
     endTurn(key, turnId);
+    watchPipeline.turnEnded(key, turnId);
     // Anything still parked (e.g. a message that landed after the gate's
     // last drain, or one the model only peeked at via check_incoming)
     // deserves a turn — re-queue it rather than discard. With coalescing

@@ -35,6 +35,7 @@ code looks the way it does, rather than how to operate it.
 | Symptoms and what they have meant before | [troubleshooting.md](troubleshooting.md) |
 | Services, logs, spend, backup, upgrade | [operations.md](operations.md) |
 | Threat model and what leaves the machine | [security.md](security.md) |
+| What watches the assistant's own tool calls, and how to answer its alerts | [watch.md](watch.md) |
 | What costs money and which levers move it | [costs.md](costs.md) |
 | Write a skill | [skills.md](skills.md) |
 | Write an integration | [integrations.md](integrations.md), [integrations/README.md](../integrations/README.md) |

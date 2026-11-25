@@ -31,7 +31,7 @@ import { AgentStore } from "../src/agents/store.ts";
 import { buildCodexExecArgs, codexExecutable, parseCodexJsonLine } from "../src/codex/runner.ts";
 import { CronStore } from "../src/cron/store.ts";
 import { backendForModel } from "../src/model/backend.ts";
-import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "../src/model/direct-env.ts";
+import { directClaudeEnv, isolatedSettingsArgs, workerSettings } from "../src/model/direct-env.ts";
 import type { ModelEffort } from "../src/model/profile.ts";
 import {
   type HostAccess,
@@ -143,7 +143,13 @@ const args =
         mcpConfig,
         // Only the file's servers — don't inherit user/project MCP servers.
         "--strict-mcp-config",
-        ...ISOLATED_SETTINGS_ARGS,
+        // A sub-agent has the same shell its parent has, so the watch sees
+        // its tool calls too. No compaction hook: it has no chat to restore.
+        ...isolatedSettingsArgs(
+          workerSettings(dataDir, `agent:${id}`, {
+            postCompact: false,
+          }),
+        ),
         ...pluginDirArgs(
           pluginDirsFromEnv(process.env.EDMUND_PLUGIN_DIRS),
           hostAccessFromEnv,

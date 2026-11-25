@@ -58,6 +58,14 @@ where every allowlisted contact was the operator.
 - **Sends are verified against the store.** A send that lands in the wrong
   chat is detected from `chat.db` and treated as a failure, and the bridge
   refuses to send when the resolved chat is not the addressed one.
+- **Every tool call passes a set of tripwires.** A canary on its way out is
+  refused; a call that cannot be undone and looks like exfiltration waits for
+  a small model's verdict on whether the person asked for it; what is judged
+  serious stops the turn and pauses the chat until the operator answers. See
+  [the security watch](watch.md). It runs as your user, so it catches mistakes
+  and injections, not something that already owns the account.
+- **A share cannot be published with a secret in it or without an expiry.**
+  The publish gate reads the folder and refuses, before anything is started.
 - **Relays are depth capped.** A message to another person can trigger a turn
   in their session, which can relay again, at most three deep.
 - **Outbound fetches are SSRF guarded.** `web_fetch` refuses private and link
