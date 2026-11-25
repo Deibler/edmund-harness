@@ -25,7 +25,7 @@ export function cloudflareBrowserTools(ctx: ToolContext): ToolDef[] {
     {
       name: "cf_screenshot",
       description:
-        "Capture a screenshot of a URL or HTML using Cloudflare's headless browser. Saves PNG to cloudflare/screenshot/ in the sandbox. Takes 15-90s — ALWAYS pass async:true so this backgrounds and the session stays responsive. You'll be woken up when the PNG is ready; then send_attachment(path).",
+        "Capture a screenshot of a URL or HTML using Cloudflare's headless browser. Saves PNG to cloudflare/screenshot/ in the sandbox. Takes 15-90s — ALWAYS pass async:true so this backgrounds and the session stays responsive. You'll be woken up when the PNG is ready; then send_attachment(file_path).",
       inputSchema: z.object({
         url: z.string().optional().describe("URL to capture. Provide url OR html."),
         html: z.string().optional().describe("Raw HTML to render and capture."),
@@ -52,7 +52,7 @@ export function cloudflareBrowserTools(ctx: ToolContext): ToolDef[] {
     {
       name: "cf_pdf",
       description:
-        "Render a webpage or HTML as PDF. Saves to cloudflare/pdf/. Takes 15-90s — ALWAYS pass async:true. You'll wake when the PDF is ready; then send_attachment(path).",
+        "Render a webpage or HTML as PDF. Saves to cloudflare/pdf/. Takes 15-90s — ALWAYS pass async:true. You'll wake when the PDF is ready; then send_attachment(file_path).",
       inputSchema: z.object({
         url: z.string().optional().describe("URL to render as PDF."),
         html: z.string().optional().describe("Raw HTML to render as PDF."),

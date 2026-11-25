@@ -31,8 +31,8 @@ export function agentCompletionMessage(
   lines.push(
     ``,
     status === "done"
-      ? `Read the result with \`read_agent_result("${agentId}")\` and relay it to the user.`
-      : `The agent did not complete successfully. Whatever it produced is in \`read_agent_result("${agentId}")\`; \`check_agent("${agentId}")\` shows the log tail. Tell the user what came through and what didn't.`,
+      ? `Read the result with \`read_agent_result(id: "${agentId}")\` and relay it to the user.`
+      : `The agent did not complete successfully. Whatever it produced is in \`read_agent_result(id: "${agentId}")\`; \`check_agent(id: "${agentId}")\` shows the log tail. Tell the user what came through and what didn't.`,
     `Lead with the takeaway. Reformat for iMessage bubbles per your rules.`,
     `Don't paste the raw output.`,
   );

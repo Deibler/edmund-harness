@@ -32,6 +32,7 @@ import { skillsCommand } from "./commands/skills.ts";
 import { startCommand } from "./commands/start.ts";
 import { statusCommand } from "./commands/status.ts";
 import { stopCommand } from "./commands/stop.ts";
+import { serviceCommandRefusal } from "./services/target.ts";
 import { color, fail, print } from "./ui.ts";
 
 const HELP = `${color.bold("edmund")} — iMessage harness + dashboard controller
@@ -79,6 +80,14 @@ async function main() {
 
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     print(HELP);
+    return;
+  }
+
+  // Before any of them acts: `edmund restart --help` used to restart.
+  const refusal = serviceCommandRefusal(cmd, p);
+  if (refusal) {
+    print(refusal.text);
+    if (!refusal.help) process.exitCode = 2;
     return;
   }
 

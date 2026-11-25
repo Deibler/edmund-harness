@@ -16,7 +16,7 @@ import { log } from "../util/log.ts";
  *   - see images directly (we pass them through cron's attachImages,
  *     which surface as multimodal content blocks on the receiving turn);
  *   - read non-image files (PDFs, docs, audio, video) via `Read` / the
- *     path-aware tools, then call `send_attachment(path)` to forward.
+ *     path-aware tools, then call `send_attachment(file_path)` to forward.
  *
  * Validation refuses paths that aren't absolute, don't exist, aren't
  * regular files, or exceed per-file / total caps (iMessage tops out at

@@ -21,7 +21,7 @@ Generation (pass `model` from the listing; falls back to configured default if o
 - `generate_video(prompt, model?, resolution?, aspect_ratio?, duration?, generate_audio?, frame_images?, reference_images?)`
 - `generate_audio(text, model?, voice?, format?)`
 
-All outputs land in the session sandbox (`images/`, `videos/`, `voice-memos/`). Deliver with `send_attachment(path)`.
+All outputs land in the session sandbox (`images/`, `videos/`, `voice-memos/`). Deliver with `send_attachment(file_path)`.
 
 ## When to use reference images
 

@@ -10,8 +10,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { postCompactContext } from "../scripts/post-compact-thread.ts";
-import { POST_COMPACT_THREAD_CHARS, recentThreadWindow } from "../src/channels/history.ts";
+import {
+  HOOK_CONTEXT_LIMIT_CHARS,
+  POST_COMPACT_THREAD_CHARS,
+  postCompactContext,
+  recentThreadWindow,
+} from "../src/channels/history.ts";
 import { ConfigSchema } from "../src/config/config.ts";
 import { ChatDb } from "../src/imessage/db.ts";
 import { isolatedSettingsArgs, postCompactHookSettings } from "../src/model/direct-env.ts";
@@ -101,6 +105,107 @@ describe("the hook's output", () => {
     expect(text).toContain("these are right");
     expect(postCompactContext([])).toBe("");
     expect(POST_COMPACT_THREAD_CHARS).toBeGreaterThan(0);
+  });
+});
+
+// Sixty messages of about 430 characters: some 26,000 in all, where the CLI
+// keeps 10,000 of a hook's output and cuts the end, which is the newest.
+describe("a thread longer than Claude Code keeps of a hook's output", () => {
+  const long = emptyChatDb();
+  {
+    const w = new Database(long.path);
+    w.exec("ALTER TABLE chat ADD COLUMN style INTEGER");
+    w.exec(
+      `INSERT INTO chat (ROWID, guid, chat_identifier, style) VALUES (1, '${GUID}', '${H}', 45)`,
+    );
+    w.exec(`INSERT INTO handle (ROWID, id, service) VALUES (1, '${H}', 'iMessage')`);
+    w.exec("INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (1, 1)");
+    for (let i = 0; i < 60; i++) {
+      w.exec(
+        `INSERT INTO message (ROWID, guid, text, handle_id, is_from_me, date, associated_message_type) VALUES (${i + 1}, 'L${i + 1}', 'long message ${i} ${"y".repeat(400)} end ${i}', ${i % 2 ? 0 : 1}, ${i % 2}, ${nsAt(now - (60 - i) * 60_000)}, 0)`,
+      );
+      w.exec(`INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, ${i + 1})`);
+    }
+    w.close();
+  }
+  const longDb = new ChatDb(long.path);
+  afterAll(() => {
+    longDb.close();
+    long.cleanup();
+  });
+  const longDeps = {
+    config: ConfigSchema.parse({
+      self: { handles: [] },
+      allowlist: {},
+      identity: {},
+      behavior: { history_messages: 60 },
+    }),
+    chatDb: longDb,
+    contacts,
+    state: null,
+  };
+
+  test("the limit is the CLI's, measured: change it only with a new measurement", () => {
+    expect(HOOK_CONTEXT_LIMIT_CHARS).toBe(10_000);
+  });
+
+  test("the window the hook reads fits whole, newest message last", () => {
+    const whole = recentThreadWindow(key, GUID, longDeps);
+    expect(whole.formatted.join("\n").length).toBeGreaterThan(2 * HOOK_CONTEXT_LIMIT_CHARS);
+    const fit = recentThreadWindow(key, GUID, longDeps, { budgetChars: POST_COMPACT_THREAD_CHARS });
+    const text = postCompactContext(fit.formatted);
+    expect(text.length).toBeLessThanOrEqual(HOOK_CONTEXT_LIMIT_CHARS);
+    // Nothing more had to go: recall excludes this window as in sight, so the
+    // hook must show all of it.
+    expect(text.split("\n").slice(1)).toEqual(fit.formatted);
+    expect(fit.formatted.length).toBeGreaterThan(15);
+    expect(text.endsWith("end 59")).toBe(true);
+    expect(fit.formatted[0]).not.toContain("long message 0 ");
+  });
+
+  test("lines over the limit give way from the old end, and no line is cut", () => {
+    const lines = Array.from({ length: 40 }, (_, i) => `  Them: line ${i} ${"z".repeat(400)}`);
+    const text = postCompactContext(lines);
+    expect(text.length).toBeLessThanOrEqual(HOOK_CONTEXT_LIMIT_CHARS);
+    expect(text.endsWith(lines[39]!)).toBe(true);
+    expect(text).not.toContain("line 0 ");
+    expect(text).not.toContain("cut here");
+    expect(text.split("\n")[0]).toContain("exactly as they were sent");
+  });
+
+  test("one message longer than the whole allowance is cut with a note saying so", () => {
+    const text = postCompactContext([`  Them: ${"w".repeat(20_000)}`]);
+    expect(text.length).toBe(HOOK_CONTEXT_LIMIT_CHARS);
+    expect(text).toContain("  Them: www");
+    expect(text.endsWith("get_message has all of it]")).toBe(true);
+  });
+
+  test("the hook process prints no more than the limit, ending with the newest message", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "post-compact-long-"));
+    try {
+      const cfg = join(dir, "config.toml");
+      await Bun.write(
+        cfg,
+        `[self]\nhandles = []\n[allowlist]\n[identity]\n[paths]\nchat_db = "${long.path}"\ndata_dir = "${dir}"\n[behavior]\nhistory_messages = 60\n`,
+      );
+      const script = join(import.meta.dir, "../scripts/post-compact-thread.ts");
+      const r = Bun.spawnSync([process.execPath, script], {
+        env: {
+          ...process.env,
+          EDMUND_SESSION_KEY: key,
+          EDMUND_CONFIG_PATH: cfg,
+          EDMUND_DATA_DIR: dir,
+        },
+        stdin: new TextEncoder().encode('{"hook_event_name":"SessionStart","source":"compact"}'),
+      });
+      expect(r.stderr.toString()).toBe("");
+      const added: string = JSON.parse(r.stdout.toString()).hookSpecificOutput.additionalContext;
+      expect(added.length).toBeLessThanOrEqual(HOOK_CONTEXT_LIMIT_CHARS);
+      expect(added.length).toBeGreaterThan(HOOK_CONTEXT_LIMIT_CHARS - 500);
+      expect(added.endsWith("end 59")).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

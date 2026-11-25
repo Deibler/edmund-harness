@@ -28,7 +28,7 @@ const asyncField = z
  *   to files under `received-images/` (or wherever) and the HTTP layer inlines
  *   them as base64 data URLs. No special staging step.
  * - **Outputs land in the sandbox archive** (images/, videos/, voice-memos/),
- *   dated filenames. Model must follow with `send_attachment(path)` to
+ *   dated filenames. Model must follow with `send_attachment(file_path)` to
  *   actually deliver.
  */
 

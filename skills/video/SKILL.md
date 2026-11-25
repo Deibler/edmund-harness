@@ -45,7 +45,7 @@ wrong aspect. Listen-check isn't possible — check loudness stats instead:
 
 ## Send a video
 
-`send_attachment(path)` — the harness auto-re-encodes anything too heavy or in an
+`send_attachment(file_path)` — the harness auto-re-encodes anything too heavy or in an
 iMessage-hostile format (webm/mkv/vp9/av1) to h264+aac mp4 ≤ ~15 MB. Still, prefer
 exporting deliverable files yourself: `-c:v libx264 -crf 23 -pix_fmt yuv420p -c:a aac -movflags +faststart` and keep casual clips ≤ 1080p / a couple of minutes. The
 tool result tells you if a converted copy was sent.

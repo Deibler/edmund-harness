@@ -35,34 +35,43 @@ export function getGroupParticipants(chatDb: ChatDb, chatGuid: string): string[]
 }
 
 const LATEST_MESSAGE_IN_GUIDS_SQL = (placeholders: string) => `
-  SELECT c.guid AS cguid, m.guid AS mguid, m.is_from_me AS from_me
+  SELECT c.guid AS cguid, m.guid AS mguid, m.is_from_me AS from_me, m.text AS text, m.attributedBody AS body
   FROM message m
   JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
   JOIN chat c                ON c.ROWID = cmj.chat_id
   WHERE c.guid IN (${placeholders}) AND m.guid IS NOT NULL
+    AND (m.associated_message_type = 0 OR m.associated_message_type IS NULL)
   ORDER BY m.date DESC
   LIMIT 1
 `;
 
 /**
- * The single most recent message across one or more chat GUIDs — its message
- * guid plus the chat guid it lives in. Used to target an IMCore-bridge tapback
- * ("react to what was just said"). `fromMe` lets callers decide whether to
- * skip reacting to the bot's own last message.
+ * The single most recent message across one or more chat GUIDs: its guid, the
+ * chat it lives in, whose it is and what it says. Used to target a tapback
+ * ("react to what was just said") and to say afterwards which message that
+ * was. A tapback is a row in the same table and is never the answer: the
+ * newest row is often someone's reaction, and a reaction to a reaction
+ * reaches nothing.
  */
-export function latestMessageInGuids(
-  chatDb: ChatDb,
-  guids: string[],
-): { chatGuid: string; messageGuid: string; fromMe: boolean } | null {
+export function latestMessageInGuids(chatDb: ChatDb, guids: string[]): ResolvedMessage | null {
   if (guids.length === 0) return null;
   const placeholders = guids.map(() => "?").join(",");
   const row = chatDb
-    .query<{ cguid: string; mguid: string; from_me: number }>(
-      LATEST_MESSAGE_IN_GUIDS_SQL(placeholders),
-    )
+    .query<{
+      cguid: string;
+      mguid: string;
+      from_me: number;
+      text: string | null;
+      body: Uint8Array | null;
+    }>(LATEST_MESSAGE_IN_GUIDS_SQL(placeholders))
     .get(...guids);
   if (!row) return null;
-  return { chatGuid: row.cguid, messageGuid: row.mguid, fromMe: row.from_me === 1 };
+  return {
+    chatGuid: row.cguid,
+    messageGuid: row.mguid,
+    fromMe: row.from_me === 1,
+    text: decodeMessageText(row.text, row.body),
+  };
 }
 
 const RECENT_MESSAGES_IN_GUIDS_SQL = (placeholders: string) => `

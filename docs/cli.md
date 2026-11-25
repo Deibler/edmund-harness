@@ -27,6 +27,11 @@ on all of them.
 | `edmund status [target]` | launchd state, pid, uptime, who holds the port, URLs, config mtime, log size. |
 | `edmund kill [target]` | Remove the launchd job and terminate any stray local process. |
 
+These five act on what was typed or not at all. `--help` prints the command's
+usage. A flag the command does not have, or a service named without its
+dashes (`edmund restart harness`), is refused with exit status 2 before
+anything is stopped: both used to be ignored, which made them "all of them".
+
 The daemon is not a system daemon. It is a user LaunchAgent, so it starts at
 login rather than at boot, and it runs as you.
 

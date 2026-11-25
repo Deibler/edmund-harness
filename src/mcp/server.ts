@@ -34,7 +34,7 @@ import { shelfTools } from "./tools/shelf.ts";
 import { skillRegistryTools } from "./tools/skill-registry.ts";
 import { skillTools } from "./tools/skills.ts";
 import { triggerTools } from "./tools/triggers.ts";
-import type { ToolDef } from "./tools/types.ts";
+import type { ToolDef, ToolResult } from "./tools/types.ts";
 import { typingTools } from "./tools/typing.ts";
 import { videoTools } from "./tools/video.ts";
 import { voiceTools } from "./tools/voice.ts";
@@ -119,46 +119,64 @@ async function main() {
     })),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const name = req.params.name;
-    const tool = toolMap.get(name);
-    if (!tool) {
-      log.warn("tool", "unknown tool", { name });
-      return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
-    }
-    const rawArgs = normalizeAliases(req.params.arguments ?? {}, tool.inputSchema);
-    log.info("tool", `→ ${name}`, { args: summarizeArgs(rawArgs) });
-    log.debug("tool", `args-full ${name}`, { args: redactSecrets(rawArgs) });
-    const started = Date.now();
-    try {
-      const args = tool.inputSchema.parse(rawArgs);
-      const result = await tool.handler(args);
-      const duration = Date.now() - started;
-      const isError = Boolean(result.isError);
-      const replyText = extractText(result);
-      log.info("tool", `${isError ? "✗" : "✓"} ${name}`, {
-        dur: humanMs(duration),
-        reply: snippet(replyText, 200),
-      });
-      return result;
-    } catch (err) {
-      const duration = Date.now() - started;
-      // Zod errors as raw `.message` are a long JSON dump; the model
-      // wastes a follow-up turn trying to parse them. Reformat to a
-      // single-line "field X: reason" list and surface the schema's
-      // expected fields so the model can self-correct in one shot.
-      const msg =
-        err instanceof z.ZodError
-          ? formatZodError(err, tool.inputSchema)
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      log.error("tool", `✗ ${name} threw`, { dur: humanMs(duration), err: msg });
-      return { content: [{ type: "text", text: `error: ${msg}` }], isError: true };
-    }
-  });
+  server.setRequestHandler(CallToolRequestSchema, (req) =>
+    callTool(toolMap, req.params.name, req.params.arguments ?? {}),
+  );
 
   await server.connect(new StdioServerTransport());
+}
+
+/**
+ * One tool call, from the arguments as the model sent them to the result it
+ * is shown. Outside the request handler so a test can drive it: what happens
+ * to a misnamed argument is decided here, before the tool runs.
+ */
+export async function callTool(
+  toolMap: ReadonlyMap<string, ToolDef>,
+  name: string,
+  rawArguments: unknown,
+): Promise<ToolResult> {
+  const tool = toolMap.get(name);
+  if (!tool) {
+    log.warn("tool", "unknown tool", { name });
+    return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
+  }
+  const rawArgs = normalizeAliases(rawArguments, tool.inputSchema);
+  log.info("tool", `→ ${name}`, { args: summarizeArgs(rawArgs) });
+  log.debug("tool", `args-full ${name}`, { args: redactSecrets(rawArgs) });
+  const unknown = unknownArguments(rawArgs, tool.inputSchema);
+  if (unknown.length > 0) {
+    const msg = unknownArgumentsError(name, unknown, tool.inputSchema);
+    log.warn("tool", `✗ ${name} refused`, { unknown: unknown.join(","), err: msg });
+    return { content: [{ type: "text", text: `error: ${msg}` }], isError: true };
+  }
+  const started = Date.now();
+  try {
+    const args = tool.inputSchema.parse(rawArgs);
+    const result = await tool.handler(args);
+    const duration = Date.now() - started;
+    const isError = Boolean(result.isError);
+    const replyText = extractText(result);
+    log.info("tool", `${isError ? "✗" : "✓"} ${name}`, {
+      dur: humanMs(duration),
+      reply: snippet(replyText, 200),
+    });
+    return result;
+  } catch (err) {
+    const duration = Date.now() - started;
+    // Zod errors as raw `.message` are a long JSON dump; the model
+    // wastes a follow-up turn trying to parse them. Reformat to a
+    // single-line "field X: reason" list and surface the schema's
+    // expected fields so the model can self-correct in one shot.
+    const msg =
+      err instanceof z.ZodError
+        ? formatZodError(err, tool.inputSchema)
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    log.error("tool", `✗ ${name} threw`, { dur: humanMs(duration), err: msg });
+    return { content: [{ type: "text", text: `error: ${msg}` }], isError: true };
+  }
 }
 
 /**
@@ -260,19 +278,44 @@ function assembleByTier(ctx: ToolContext): ToolDef[] {
  * error, retried 3s later with the right key. This eliminates the
  * common single-field-name-guess class of papercut entirely.
  */
-// Trimmed to the path-family — the only aliases backed by a real
-// incident (2026-05-17 send_attachment papercut). Earlier revisions
+// Trimmed to names backed by a real incident. Earlier revisions
 // included speculative renames like `query → prompt`, `body → text`,
 // `image → image_path` etc.; even with the schema-aware guard they
 // were a footgun (the brave web_search call on 2026-05-18 was the
 // canary). Add new entries here ONLY when the model actually got
 // caught reaching for an alias in the logs, not preemptively.
+//   path, filepath: the 2026-05-17 send_attachment papercut.
+//   target_msg_guid: what the system prompt called react's `target_guid`
+//     until 2026-11-25; 10 of 20 react calls in a month used it.
+//   agent_id: 19 read_agent_result and check_agent calls in the same month.
 const TOOL_ALIASES: Record<string, string> = {
   path: "file_path",
   filepath: "file_path",
+  target_msg_guid: "target_guid",
+  agent_id: "id",
 };
 
-function normalizeAliases(args: unknown, schema: z.ZodTypeAny): Record<string, unknown> {
+/**
+ * The fields of a tool's input when it is a plain object, looking through
+ * `.superRefine()` and friends. Null for anything else (a union, an
+ * intersection), where there is no one list of names to hold a call to.
+ */
+function objectShape(
+  schema: z.ZodTypeAny,
+): { shape: Record<string, z.ZodTypeAny>; keepsUnknown: boolean } | null {
+  // biome-ignore lint/suspicious/noExplicitAny: zod's runtime shape isn't typed in public API
+  let def: any = (schema as any)?._def;
+  while (def?.typeName === "ZodEffects") def = def.schema?._def;
+  if (def?.typeName !== "ZodObject") return null;
+  const shape = typeof def.shape === "function" ? def.shape() : def.shape;
+  if (!shape) return null;
+  const keepsUnknown =
+    def.unknownKeys === "passthrough" ||
+    (def.catchall && def.catchall._def?.typeName !== "ZodNever");
+  return { shape, keepsUnknown: Boolean(keepsUnknown) };
+}
+
+export function normalizeAliases(args: unknown, schema: z.ZodTypeAny): Record<string, unknown> {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     return args as Record<string, unknown>;
   }
@@ -282,9 +325,7 @@ function normalizeAliases(args: unknown, schema: z.ZodTypeAny): Record<string, u
   // `query → prompt` would silently strip the legit `query` arg from
   // tools like web_search whose schema defines `query`, not `prompt` —
   // exactly the failure mode caught on 2026-05-18 in the daemon log.
-  // biome-ignore lint/suspicious/noExplicitAny: zod runtime shape isn't typed
-  const def: any = (schema as any)._def;
-  const shape: Record<string, unknown> | undefined = def?.shape?.() ?? def?.shape ?? undefined;
+  const shape = objectShape(schema)?.shape;
   if (!shape) return src;
   let out: Record<string, unknown> | null = null;
   for (const [alias, canonical] of Object.entries(TOOL_ALIASES)) {
@@ -295,6 +336,38 @@ function normalizeAliases(args: unknown, schema: z.ZodTypeAny): Record<string, u
     }
   }
   return out ?? src;
+}
+
+/**
+ * The arguments a call named that its tool does not have.
+ *
+ * Zod drops a field it was not told about and says nothing, so a call with a
+ * misnamed optional argument ran as if the argument had not been given. On
+ * 2026-11-25 `react` was sent the id of the message to react to under a name
+ * it did not have, reacted to the newest message instead, and reported
+ * success. Measured over the month before: 75 of 11,311 calls carried such an
+ * argument. A call like that is now refused before anything runs, with the
+ * names the tool does take, which costs the model one step and never a wrong
+ * action. A field given as null is "not given" and is let through.
+ */
+export function unknownArguments(args: unknown, schema: z.ZodTypeAny): string[] {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return [];
+  const object = objectShape(schema);
+  if (!object || object.keepsUnknown) return [];
+  return Object.entries(args as Record<string, unknown>)
+    .filter(([key, value]) => !(key in object.shape) && value !== null && value !== undefined)
+    .map(([key]) => key);
+}
+
+export function unknownArgumentsError(
+  tool: string,
+  unknown: string[],
+  schema: z.ZodTypeAny,
+): string {
+  const named = unknown.map((k) => `\`${k}\``).join(", ");
+  const fields = describeSchemaFields(schema);
+  const takes = fields ? `It takes: ${fields}.` : "It takes no arguments.";
+  return `${tool} has no argument ${named}, so nothing was done. ${takes}`;
 }
 
 /**
@@ -319,9 +392,7 @@ function describeSchemaFields(schema: z.ZodTypeAny): string {
   // We only expose the top-level shape; nested objects are still in the
   // issue path. Good enough to disambiguate the common "wrong field name"
   // mistake without dumping the whole schema.
-  // biome-ignore lint/suspicious/noExplicitAny: zod's runtime shape isn't typed in public API
-  const def: any = (schema as any)._def;
-  const shape: Record<string, z.ZodTypeAny> | undefined = def?.shape?.() ?? def?.shape ?? undefined;
+  const shape = objectShape(schema)?.shape;
   if (!shape) return "";
   const names: string[] = [];
   for (const [k, v] of Object.entries(shape)) {

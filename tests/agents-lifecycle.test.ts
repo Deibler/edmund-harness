@@ -176,7 +176,7 @@ describe("the reaper judges an agent by its output, not its age", () => {
     const wake = f.completions();
     expect(wake).toHaveLength(1);
     expect(wake[0]!.systemEvent).toContain("stopped after 20 minutes without any output");
-    expect(wake[0]!.systemEvent).toContain(`read_agent_result("${a.id}")`);
+    expect(wake[0]!.systemEvent).toContain(`read_agent_result(id: "${a.id}")`);
   });
 
   test("whoever settles first wins; the runner cannot revive a settled row", () => {

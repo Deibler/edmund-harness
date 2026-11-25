@@ -14,7 +14,7 @@ export { sendMessage } from "./actions/send.ts";
 export { configureSendVerification } from "./actions/verify.ts";
 export { isPermanentSendError } from "./actions/classify.ts";
 export { EXPRESSIVE_EFFECTS } from "./actions/effects.ts";
-export { sendTapback } from "./actions/reactions.ts";
+export { REACTION_WORDS, isSingleEmoji, sendTapback } from "./actions/reactions.ts";
 export { deleteMessage, editMessage, unsendMessage } from "./actions/edits.ts";
 export {
   renameGroup,

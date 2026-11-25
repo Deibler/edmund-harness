@@ -352,11 +352,52 @@ export function recentThreadLines(
   return recentThreadWindow(sessionKey, chatGuid, deps, { sinceMs }).formatted;
 }
 
-/** How much of the thread the post-compaction hook re-injects: about 3k
- *  tokens. The last 60 messages of the operator's DM measured 2.7k tokens at the
- *  median and 3.7k at p90 (2026-10-29); the window keeps the newest lines
- *  that fit. Recall reads the same budget to know where that window began. */
-export const POST_COMPACT_THREAD_CHARS = 12_000;
+/**
+ * How much added context Claude Code keeps from one hook, in characters.
+ * Read from the CLI's own handling (2.1.332) and from 42 runs of the
+ * post-compaction hook in the transcripts kept on 2026-11-25: every one of
+ * the 17 that was longer came back cut at exactly this length, and none of
+ * the 25 that was shorter was touched.
+ *
+ * Over it the CLI saves the text to a file and puts a short preview in its
+ * place; when it cannot write the file, which is always the case here (see
+ * CLAUDE.md, "The CLI will not write through a linked session folder"), it
+ * cuts the text at the limit. Either way the end is what goes, and a thread
+ * listed oldest first ends with its newest messages. So nothing a hook adds
+ * may be longer than this, and what has to give is the old end.
+ */
+export const HOOK_CONTEXT_LIMIT_CHARS = 10_000;
+
+/** What the post-compaction hook says before the thread. */
+const POST_COMPACT_PREAMBLE =
+  "The conversation was just compacted, and the summary above paraphrases it. These are the " +
+  "latest messages in this chat exactly as they were sent, oldest first. Where the summary " +
+  "and these disagree, these are right: quote and act from these.";
+
+/** How much of the thread the post-compaction hook re-injects: what the hook
+ *  limit leaves after the preamble, about 2.4k tokens. It was 12,000 until
+ *  2026-11-25, which the limit turned into "the newest 2,000 characters are
+ *  missing" on 17 of 42 compactions. The window keeps the newest lines that
+ *  fit. Recall reads the same budget to know where that window began. */
+export const POST_COMPACT_THREAD_CHARS =
+  HOOK_CONTEXT_LIMIT_CHARS - POST_COMPACT_PREAMBLE.length - 1;
+
+/**
+ * The text the hook adds after a compaction, or "" when there is no thread.
+ * Never longer than the CLI keeps: lines within the budget fit as they are,
+ * and a single message longer than the whole allowance is cut at its end
+ * with a note saying so, because an unmarked cut reads as the whole message.
+ */
+export function postCompactContext(lines: string[]): string {
+  if (lines.length === 0) return "";
+  let kept = lines;
+  const render = () => [POST_COMPACT_PREAMBLE, ...kept].join("\n");
+  while (kept.length > 1 && render().length > HOOK_CONTEXT_LIMIT_CHARS) kept = kept.slice(1);
+  const text = render();
+  if (text.length <= HOOK_CONTEXT_LIMIT_CHARS) return text;
+  const note = " [cut here: this message is longer than fits; get_message has all of it]";
+  return text.slice(0, HOOK_CONTEXT_LIMIT_CHARS - note.length) + note;
+}
 
 /** What reading a session's recent thread needs. */
 export type ThreadDeps = Pick<Deps, "config" | "chatDb" | "contacts" | "sms">;

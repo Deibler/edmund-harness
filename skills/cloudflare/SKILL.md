@@ -70,15 +70,15 @@ edmund: cf_screenshot({ url: "...", full_page: true })   ← NO async:true, bloc
 
 You usually don't need these — completed background jobs wake you up automatically with the result included. But:
 - `list_bg_jobs` — see what's currently running ("what are you working on?")
-- `check_bg_job(id)` — inspect a specific job's status
+- `check_bg_job(job_id)` — inspect a specific job's status
 
 ## When to use which tool
 
 **Reading an article or doc?** → `cf_markdown`. Returns the content inline + saves to disk. Cheapest and fastest.
 
-**Need the visual?** → `cf_screenshot`. Returns path only — follow up with `send_attachment(path)` to share.
+**Need the visual?** → `cf_screenshot`. Returns path only — follow up with `send_attachment(file_path)` to share.
 
-**Generating a report or invoice from HTML?** → `cf_pdf`. Always use `send_attachment(path)` to share.
+**Generating a report or invoice from HTML?** → `cf_pdf`. Always use `send_attachment(file_path)` to share.
 
 **JS-heavy page (SPA, React, Vue)?** → add `wait_until: "networkidle0"` to any tool. This waits for all network activity to settle before capturing.
 
@@ -96,10 +96,10 @@ You usually don't need these — completed background jobs wake you up automatic
 
 All tools return the **local sandbox path** of the saved file. To share with the user:
 
-- **Images / screenshots**: `send_attachment(path)` — iMessage delivers inline.
-- **PDFs**: `send_attachment(path)` — iMessage delivers as downloadable.
+- **Images / screenshots**: `send_attachment(file_path)` — iMessage delivers inline.
+- **PDFs**: `send_attachment(file_path)` — iMessage delivers as downloadable.
 - **Markdown**: already returned inline, no attachment needed for short content.
-- **JSON / HTML**: if the user wants to see it, `send_attachment(path)` or summarize inline.
+- **JSON / HTML**: if the user wants to see it, `send_attachment(file_path)` or summarize inline.
 
 **Never** just print the path and say "here's the file" — the user can't see your filesystem.
 
@@ -171,7 +171,7 @@ To run browser capture in the background and surface the result:
 spawn_agent(task: "Screenshot https://example.com full-page and return the file path")
 ```
 
-The agent calls `cf_screenshot`, writes the result, and returns the path in its final text. You then `read_agent_result(id)` and `send_attachment(path)`.
+The agent calls `cf_screenshot`, writes the result, and returns the path in its final text. You then `read_agent_result(id)` and `send_attachment(file_path)`.
 
 ## Output cleanup
 

@@ -11,7 +11,13 @@ import {
   latestMessageInGuids,
   resolveMessageGuid,
 } from "../../imessage/participants.ts";
-import { EXPRESSIVE_EFFECTS, sendMessage, sendTapback } from "../../imessage/send.ts";
+import {
+  EXPRESSIVE_EFFECTS,
+  REACTION_WORDS,
+  isSingleEmoji,
+  sendMessage,
+  sendTapback,
+} from "../../imessage/send.ts";
 import type {
   MirrorComponentForAsset,
   MirrorStoreCtor,
@@ -102,7 +108,7 @@ const MessageInput = z.object({
     .string()
     .optional()
     .describe(
-      "OPTIONAL — thread this as an inline reply to a SPECIFIC earlier message: pass a snippet of that message's text. Useful in a busy group to answer something three messages back without ambiguity. (Needs the IMCore bridge; if it's unavailable the message still sends, just not threaded.)",
+      "OPTIONAL — thread this as an inline reply to a SPECIFIC earlier message: pass a snippet of that message's text, or its message id when you were shown one. Useful in a busy group to answer something three messages back without ambiguity. (Needs the IMCore bridge; if it's unavailable the message still sends, just not threaded.)",
     ),
   effect: z
     .string()
@@ -124,7 +130,7 @@ const ReactInput = z.object({
     .min(1)
     .describe(
       "One of: love, like, dislike, laugh, emphasis, question — OR a single emoji character for a custom reaction. " +
-        "love=❤️ like=👍 dislike=👎 laugh=😂 emphasis=‼️ question=❓",
+        "love=❤️ like=👍 dislike=👎 laugh=😂 emphasis=‼️ question=❓. Any other word is refused.",
     ),
   target: z
     .string()
@@ -136,17 +142,19 @@ const ReactInput = z.object({
     .string()
     .optional()
     .describe(
-      "OPTIONAL — alternative to `target`: the exact msg_guid of the message to react to (e.g. one returned by search_history). Takes precedence over `target`.",
+      "OPTIONAL — alternative to `target`: the exact id of the message to react to (the `message id` a mid-turn note shows, or a msg_guid from search_history). Takes precedence over `target`.",
     ),
 });
 
 /** Map common phrasings the model might pick to imsg's expected keywords.
- *  Pass-through for anything else (e.g. a literal emoji). */
+ *  A word goes here only once the log shows the model reaching for it:
+ *  `thumbs` is what the system prompt called `like` until 2026-11-25. */
 const REACTION_ALIASES: Record<string, string> = {
   heart: "love",
   loved: "love",
   "❤️": "love",
   "❤": "love",
+  thumbs: "like",
   thumbsup: "like",
   "thumbs up": "like",
   liked: "like",
@@ -169,14 +177,48 @@ const REACTION_ALIASES: Record<string, string> = {
   "❓": "question",
 };
 
-function normalizeReaction(input: string): string {
+/**
+ * What a reaction argument means: one of the six words, or one emoji. Null
+ * for anything else, which is refused before a message is looked up. A word
+ * the tool did not know used to be passed on as if it were an emoji.
+ */
+export function resolveReaction(input: string): string | null {
   const trimmed = input.trim();
   const lower = trimmed.toLowerCase();
-  return (
-    REACTION_ALIASES[lower] ??
-    REACTION_ALIASES[trimmed] ??
-    (/^[a-z]+$/.test(lower) ? lower : trimmed)
-  );
+  const word = REACTION_ALIASES[lower] ?? REACTION_ALIASES[trimmed] ?? lower;
+  if ((REACTION_WORDS as readonly string[]).includes(word)) return word;
+  return isSingleEmoji(trimmed) ? trimmed : null;
+}
+
+const MESSAGE_ID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+
+/**
+ * The message `reply_to` names: by its id, or by a few words of its text.
+ *
+ * The note that shows a message to a running turn gives its id and says to
+ * reply to "the id above" (mid-turn.ts), and this took only words: 5 of the 8
+ * replies sent with `reply_to` in a month passed the id, and all 5 were
+ * refused. An id is taken only for a message in this conversation, because
+ * the reply is sent to the chat the message is in.
+ */
+export function findReplyTarget(
+  ctx: Pick<ToolContext, "chatDb" | "chatGuids">,
+  replyTo: string,
+): ResolvedMessage | null {
+  const value = replyTo.trim();
+  if (MESSAGE_ID.test(value)) {
+    const byId = resolveMessageGuid(ctx.chatDb, value);
+    if (byId && ctx.chatGuids.includes(byId.chatGuid)) return byId;
+  }
+  return findRecentMessageByText(ctx.chatDb, ctx.chatGuids, value);
+}
+
+/** The message a reaction went to, as the model can check it: whose, and its words. */
+function describeTarget(hit: ResolvedMessage): string {
+  const whose = hit.fromMe ? "your own message" : "their message";
+  const words = hit.text.replace(/\s+/g, " ").trim();
+  if (!words) return `${whose} (no text: a photo or attachment)`;
+  return `${whose} "${words.length > 60 ? `${words.slice(0, 60)}\u2026` : words}"`;
 }
 
 /**
@@ -445,17 +487,17 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
         const isGroup = isGroupSession(ctx.sessionKey);
         const to = chatIdFromKey(ctx.sessionKey);
 
-        // Resolve an inline-reply target from a text snippet → message guid.
+        // Resolve an inline-reply target → message guid.
         let replyTo: string | undefined;
         let chatGuid: string | undefined = ctx.chatGuids[0];
         if (args.reply_to?.trim()) {
-          const hit = findRecentMessageByText(ctx.chatDb, ctx.chatGuids, args.reply_to);
+          const hit = findReplyTarget(ctx, args.reply_to);
           if (!hit) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `couldn't find a recent message containing "${args.reply_to}" to reply to — sending un-threaded would be confusing, so try a different snippet or send without reply_to`,
+                  text: `couldn't find a recent message in this chat matching "${args.reply_to}" to reply to, so nothing was sent — sending un-threaded would be confusing. Try a few words of its text, or send without reply_to`,
                 },
               ],
               isError: true,
@@ -614,7 +656,18 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
             isError: true,
           };
         }
-        const reaction = normalizeReaction(args.reaction);
+        const reaction = resolveReaction(args.reaction);
+        if (!reaction) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `"${args.reaction.trim()}" is not a reaction, so nothing was sent. Use ${REACTION_WORDS.join(", ")}, or one emoji.`,
+              },
+            ],
+            isError: true,
+          };
+        }
         const target = args.target?.trim();
         const targetGuid = args.target_guid?.trim();
 
@@ -624,9 +677,7 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
         // only ever touch the newest message, so "react 🎉 to what you said
         // earlier" was refused. IMCore sends emoji tapbacks as real objects, so
         // there is one path now and no combination to refuse.
-        // The latest-message lookup carries no text (it does not need to read
-        // one to find it), so the quoted snippet in the reply is optional.
-        const hit: (Omit<ResolvedMessage, "text"> & { text?: string }) | null = targetGuid
+        const hit: ResolvedMessage | null = targetGuid
           ? resolveMessageGuid(ctx.chatDb, targetGuid)
           : target
             ? findRecentMessageByText(ctx.chatDb, ctx.chatGuids, target)
@@ -652,15 +703,11 @@ export function messageTools(ctx: ToolContext): ToolDef[] {
           return { content: [{ type: "text", text: `react error: ${res.error}` }], isError: true };
         }
 
-        const snippet = (hit.text ?? "").replace(/\s+/g, " ").trim();
-        const what = snippet.length > 50 ? `${snippet.slice(0, 50)}\u2026` : snippet;
+        // Say which message got it. The reply used to be a bare "reacted
+        // like" unless a snippet had been given, so a reaction that landed on
+        // the wrong message read the same as one that landed on the right one.
         return {
-          content: [
-            {
-              type: "text",
-              text: what ? `reacted ${reaction} to "${what}"` : `reacted ${reaction}`,
-            },
-          ],
+          content: [{ type: "text", text: `reacted ${reaction} to ${describeTarget(hit)}` }],
         };
       },
     },

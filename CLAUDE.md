@@ -68,6 +68,43 @@ Second, the daemon refuses to boot when either link dangles
 When copying a sandbox, remember that Edmund mounts disk images *inside*
 sandbox folders. `rsync -a` walks into those mounts, so detach them first.
 
+## The CLI will not write through a linked session folder
+Claude Code saves what is too long to show inline (a tool result over its
+token limit, a hook's output over 10,000 characters) to `tool-results/` under
+the session's folder in `~/.claude/projects/`, and refuses when any folder on
+the way is a link: `tool-results path refused: … is a link or not a
+directory` (CLI 2.1.332 checks each one with `lstat`). Every conversation's
+folder there is a link into `persona/sessions/`, so here that save always
+fails. Measured 2026-11-25 over the transcripts kept: 17 of 42 outputs of the
+post-compaction hook were cut at 10,000 characters, and 6 tool results over
+the limit came back as an error with nothing in it (all in September, from
+`web_fetch`, `read_team_results` and an outside MCP server).
+
+Making the folder real would not have saved the hook. A saved output is
+replaced inline by a short preview and a path, and that hook exists to put
+the conversation's words back in sight. It listed the thread oldest first, so
+what the cut took was the newest messages. Whatever the harness adds through
+a hook fits `HOOK_CONTEXT_LIMIT_CHARS` (`src/channels/history.ts`) and gives
+way from the old end. A tool whose result can be very long has no fallback
+either and must bound it itself. Background Bash output is not affected: the
+shell writes those files and follows the link.
+
+## The model calls a tool the way it was told to
+The tool list in the system prompt is written by hand, and so are skills and
+wake-up notes. Each drifted from the schemas: `react(target_msg_guid,
+reaction)` for a tool whose field is `target_guid`, `message_contact(handle,
+text)`, a mid-turn note saying to reply to "the id above" when `reply_to`
+took only words. A misnamed required argument fails and is retried. A
+misnamed optional one was dropped by zod without a word and the tool did
+something else: 10 of 20 `react` calls in a month lost the id they gave and
+went to the newest message. Usually that was the one meant; on 2026-11-25 it
+was not, and every one of them answered "reacted".
+`tests/prompt-tool-signatures.test.ts` holds every backticked signature in
+the source and the tracked skills to the tool's schema, and `callTool`
+(`src/mcp/server.ts`) refuses a call that names an argument the tool does not
+have before the tool runs. When a tool's answer is "done", have it say what
+it was done to.
+
 ## Never relax the send-resolution guard
 `chat_mismatch` is a **true positive**. Tested by relaxing it: sends went to the
 note-to-self thread. It refuses because acting would reach the wrong person. If
