@@ -124,7 +124,11 @@ sandbox artifacts and skill descriptions.
   compared in process; a full text index gives a BM25 leg; the two are fused,
   deduplicated, diversified and boosted for recency.
 - **Embeddings**: the default provider runs `Xenova/bge-small-en-v1.5` in a
-  worker thread with no network. OpenAI and Ollama providers are available.
+  process of its own with no network, started on first use and released
+  after a minute idle. OpenAI and Ollama providers are available. When the
+  embedder cannot run, replies still go out; the inbound log line reads
+  `recall=ERR` and the operator is alerted once it has failed three times
+  over five minutes.
 - **Indexer**: every sixty seconds it walks new `chat.db` rows, person and
   group files by modification time, `SOUL.md` and its archive, sandbox
   artifacts and skills.

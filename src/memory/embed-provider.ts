@@ -5,7 +5,10 @@
  * insert and refuses to mix shapes.
  */
 
+import { fileURLToPath } from "node:url";
+import type { Subprocess } from "bun";
 import type { EmbedLane } from "./embed-lanes.ts";
+import type { EmbedReady, EmbedRequest, EmbedResponse } from "./transformers-embed-child.ts";
 
 export type EmbedResult = { vectors: Float32Array[]; model: string; dim: number };
 
@@ -38,9 +41,9 @@ export type ProviderConfig = {
 
 // A daemon process has several recall entry points (boot indexing, automatic
 // recall, artifact indexing, and summary persistence). They used to each make
-// their own local Transformers provider, which meant one ONNX model + worker
-// thread per entry point. Keep exactly one provider per model/dimension in a
-// process; its worker already serializes inference safely.
+// their own local Transformers provider, which meant one ONNX model per entry
+// point. Keep exactly one provider per model/dimension in a process; its
+// embedding process already serializes inference safely.
 const transformersProviders = new Map<string, TransformersEmbedProvider>();
 
 function sharedTransformersProvider(model: string, dim: number): TransformersEmbedProvider {
@@ -53,7 +56,7 @@ function sharedTransformersProvider(model: string, dim: number): TransformersEmb
   return provider;
 }
 
-/** Release idle local-model workers under memory pressure. Active embedding
+/** Release idle local-model processes under memory pressure. Active embedding
  * calls are never interrupted; they will be eligible on the next pass. */
 export function trimTransformerEmbeddingWorkers(): number {
   let trimmed = 0;
@@ -141,24 +144,65 @@ function familyFor(model: string): { pooling: "mean" | "cls"; queryPrefix: strin
   return { pooling: "mean", queryPrefix: "" };
 }
 
-type WorkerEmbedResponse =
-  | { id: number; ok: true; data: Float32Array; dim: number }
-  | { id: number; ok: false; error: string };
-
 type PendingEmbed = {
   textCount: number;
   resolve: (result: EmbedResult) => void;
   reject: (error: Error) => void;
 };
 
+/** One embedding process and what has been queued for it. */
+type Runner = {
+  proc: Subprocess;
+  /** False until the process says it is listening. Requests wait in `outbox`. */
+  ready: boolean;
+  outbox: EmbedRequest[];
+};
+
+/** What the daemon is told when local embedding stops working, and when it
+ *  works again. */
+export type EmbedHealthEvent = {
+  kind: "failing" | "recovered";
+  model: string;
+  /** The latest error. Empty on a recovery. */
+  error: string;
+  failures: number;
+  failingForMs: number;
+};
+
+let healthHook: ((event: EmbedHealthEvent) => void) | null = null;
+
+/**
+ * The daemon listens here so an embedder that stays broken reaches the
+ * operator. Called once per outage and once when it ends. Recall treats an
+ * embedding error as "nothing found" so a reply is never held up; before this
+ * hook that was also the only trace, and 364 turns were answered without
+ * recall across four outages (2026-10-30 to 2026-11-16) with no alert.
+ */
+export function setEmbedHealthHook(hook: ((event: EmbedHealthEvent) => void) | null): void {
+  healthHook = hook;
+}
+
+function tellHealth(event: EmbedHealthEvent): void {
+  try {
+    healthHook?.(event);
+  } catch {
+    // Reporting must never be what breaks embedding.
+  }
+}
+
+/** When failures are an outage rather than a blip: this many in a row,
+ *  spanning at least this long. */
+export type EmbedAlertAfter = { failures: number; ms: number };
+export const EMBED_ALERT_AFTER: EmbedAlertAfter = { failures: 3, ms: 5 * 60_000 };
+
 /**
  * Local embeddings via @huggingface/transformers (Transformers.js).
  *
- * The model pipeline lives in a worker thread. Although Transformers.js
- * returns a Promise, ONNX inference itself occupies the JavaScript thread that
- * called it; keeping that work in the daemon used to stall bridge RPC and
- * health timers for whole indexing batches. The worker is lazy and retains the
- * loaded model between calls.
+ * The model lives in a process of its own (transformers-embed-child.ts, which
+ * says why it is not a Worker thread). ONNX inference occupies the JavaScript
+ * thread that called it; keeping that work in the daemon used to stall bridge
+ * RPC and health timers for whole indexing batches. The process is started on
+ * first use and keeps the model loaded between calls.
  *
  * Pooling + query prefix follow the model family (see familyFor); output is
  * L2-normalized either way.
@@ -184,90 +228,115 @@ export const LOCAL_EMBED_BATCH = 8;
 export const INDEX_EMBED_BATCH = 2;
 
 export class TransformersEmbedProvider implements EmbedProvider {
-  /** How long an idle worker keeps the model loaded. Reloading took 201 ms
-   *  (measured 2026-10-25), and the model plus its arena hold 300-650 MB, so
-   *  releasing it quickly costs a recall a fifth of a second at most. */
+  /** How long an idle process keeps the model loaded. The model and its
+   *  arena hold 300-650 MB, and a fresh process has its first vector out in
+   *  about 140 ms (measured 2026-11-25), so releasing it quickly costs a
+   *  recall a seventh of a second at most. */
   static readonly WORKER_IDLE_MS = 60_000;
-  private worker: Worker | null = null;
+  private runner: Runner | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingEmbed>();
+  private failures = 0;
+  private failingSinceMs = 0;
+  private lastError = "";
+  private reported = false;
 
   constructor(
     public model: string,
     public dim: number,
-    private readonly workerUrl: URL = new URL("./transformers-embed-worker.ts", import.meta.url),
+    private readonly script: URL = new URL("./transformers-embed-child.ts", import.meta.url),
     private readonly idleMs: number = TransformersEmbedProvider.WORKER_IDLE_MS,
+    private readonly alertAfter: EmbedAlertAfter = EMBED_ALERT_AFTER,
   ) {}
 
-  private getWorker(): Worker {
+  private getRunner(): Runner {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-    if (this.worker) return this.worker;
-    const worker = new Worker(this.workerUrl, {
-      name: "recall-embeddings",
-      ref: false,
+    if (this.runner) return this.runner;
+    const runner: Runner = { proc: null as unknown as Subprocess, ready: false, outbox: [] };
+    runner.proc = Bun.spawn([process.execPath, fileURLToPath(this.script)], {
+      // stdout is not inherited: inside an MCP server it is the JSON-RPC stream.
+      stdio: ["ignore", "ignore", "inherit"],
+      // Spelled out: left to the default, the process gets the environment
+      // this one was launched with, not what it holds now.
+      env: { ...process.env },
+      serialization: "advanced",
+      ipc: (message) => this.onMessage(runner, message as EmbedResponse | EmbedReady),
+      onExit: (_proc, code, signal) =>
+        this.drop(runner, new Error(`embedding process exited (${signal ?? `code ${code}`})`)),
     });
-    worker.onmessage = (event: MessageEvent<WorkerEmbedResponse>) => {
-      const response = event.data;
-      const call = this.pending.get(response.id);
-      if (!call) return;
-      this.pending.delete(response.id);
-      if (this.pending.size === 0) {
-        worker.unref();
-        this.armIdleTermination(worker);
-      }
-
-      if (!response.ok) {
-        call.reject(new Error(response.error));
-        return;
-      }
-      if (response.dim <= 0 || response.data.length !== call.textCount * response.dim) {
-        call.reject(
-          new Error(
-            `embedding worker returned ${response.data.length} values for ` +
-              `${call.textCount} texts at dim ${response.dim}`,
-          ),
-        );
-        return;
-      }
-      const vectors: Float32Array[] = [];
-      for (let i = 0; i < call.textCount; i++) {
-        vectors.push(response.data.slice(i * response.dim, (i + 1) * response.dim));
-      }
-      call.resolve({ vectors, model: this.model, dim: response.dim });
-    };
-    worker.onerror = (event: ErrorEvent) => {
-      this.failWorker(worker, new Error(event.message || "embedding worker crashed"));
-    };
-    worker.addEventListener("close", () => {
-      this.failWorker(worker, new Error("embedding worker exited"));
-    });
-    this.worker = worker;
-    return worker;
+    this.runner = runner;
+    return runner;
   }
 
-  private failWorker(worker: Worker, error: Error): void {
-    if (this.worker !== worker) return;
+  private onMessage(runner: Runner, message: EmbedResponse | EmbedReady): void {
+    if (this.runner !== runner) return;
+    if ("ready" in message) {
+      runner.ready = true;
+      for (const request of runner.outbox.splice(0)) runner.proc.send(request);
+      return;
+    }
+    const call = this.pending.get(message.id);
+    if (!call) return;
+    this.pending.delete(message.id);
+
+    if (!message.ok) {
+      call.reject(new Error(message.error));
+      // A process that could not load the model is replaced, never asked
+      // again: whatever broke it is not carried into the next one.
+      if (message.stage === "load") this.drop(runner, new Error(message.error));
+      else this.rest(runner);
+      return;
+    }
+    this.rest(runner);
+    if (message.dim <= 0 || message.data.length !== call.textCount * message.dim) {
+      call.reject(
+        new Error(
+          `embedding process returned ${message.data.length} values for ` +
+            `${call.textCount} texts at dim ${message.dim}`,
+        ),
+      );
+      return;
+    }
+    const vectors: Float32Array[] = [];
+    for (let i = 0; i < call.textCount; i++) {
+      vectors.push(message.data.slice(i * message.dim, (i + 1) * message.dim));
+    }
+    call.resolve({ vectors, model: this.model, dim: message.dim });
+  }
+
+  /** Nothing is waiting on the process: let its owner exit, and start the
+   *  idle clock. */
+  private rest(runner: Runner): void {
+    if (this.pending.size > 0) return;
+    runner.proc.unref();
+    this.armIdleTermination(runner);
+  }
+
+  /** Stop using this process. Whatever still waits on it fails with `error`,
+   *  and the next call starts a fresh one. */
+  private drop(runner: Runner, error: Error): void {
+    if (this.runner !== runner) return;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
-    this.worker = null;
-    worker.terminate();
+    this.runner = null;
+    runner.proc.kill();
     for (const [id, call] of this.pending) {
       this.pending.delete(id);
       call.reject(error);
     }
   }
 
-  private armIdleTermination(worker: Worker): void {
+  private armIdleTermination(runner: Runner): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     const timer = setTimeout(() => {
-      if (this.worker !== worker || this.pending.size > 0) return;
+      if (this.runner !== runner || this.pending.size > 0) return;
       this.idleTimer = null;
-      this.worker = null;
-      worker.terminate();
+      this.runner = null;
+      runner.proc.kill();
     }, this.idleMs);
     timer.unref?.();
     this.idleTimer = timer;
@@ -275,24 +344,33 @@ export class TransformersEmbedProvider implements EmbedProvider {
 
   /** Synchronous pressure valve used by the daemon resource governor. */
   trimIdleWorker(): boolean {
-    const worker = this.worker;
-    if (!worker || this.pending.size > 0) return false;
+    const runner = this.runner;
+    if (!runner || this.pending.size > 0) return false;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
-    this.worker = null;
-    worker.terminate();
+    this.runner = null;
+    runner.proc.kill();
     return true;
   }
 
   /**
-   * Load the model now if its worker was released, so the recall query that
+   * Load the model now if its process was released, so the recall query that
    * follows does not pay the reload. The daemon calls it as an inbound
    * message opens its debounce window, 1.5 s before recall runs. Free when a
-   * worker is alive; the idle release still applies afterwards.
+   * process is alive; the idle release still applies afterwards.
    */
   warm(): void {
-    if (this.worker) return;
+    if (this.runner) return;
     this.runChunk(["warm"], "query").catch(() => {});
+  }
+
+  /** How embedding is doing right now. Zero failures means healthy. */
+  health(): { failures: number; failingSinceMs: number | null; lastError: string | null } {
+    return {
+      failures: this.failures,
+      failingSinceMs: this.failures > 0 ? this.failingSinceMs : null,
+      lastError: this.failures > 0 ? this.lastError : null,
+    };
   }
 
   async embed(texts: string[]): Promise<EmbedResult> {
@@ -319,30 +397,75 @@ export class TransformersEmbedProvider implements EmbedProvider {
 
   private async runChunk(texts: string[], lane: EmbedLane): Promise<EmbedResult> {
     if (texts.length === 0) return { vectors: [], model: this.model, dim: this.dim };
-    const worker = this.getWorker();
+    try {
+      const result = await this.send(texts, lane);
+      this.noteSuccess();
+      return result;
+    } catch (error) {
+      this.noteFailure(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  private send(texts: string[], lane: EmbedLane): Promise<EmbedResult> {
+    const runner = this.getRunner();
     const id = this.nextRequestId++;
+    const request: EmbedRequest = {
+      id,
+      model: this.model,
+      pooling: familyFor(this.model).pooling,
+      texts,
+      lane,
+    };
     return new Promise<EmbedResult>((resolve, reject) => {
       this.pending.set(id, { textCount: texts.length, resolve, reject });
-      // An unresolved Promise does not keep a process alive. Hold the worker
-      // only while calls are outstanding; idle local-model workers are free to
-      // let one-shot MCP/indexing processes exit normally.
-      worker.ref();
+      // An unresolved Promise does not keep a process alive. Hold the
+      // embedding process only while calls are outstanding; an idle one is
+      // free to let one-shot MCP/indexing processes exit normally.
+      runner.proc.ref();
       try {
-        worker.postMessage({
-          id,
-          model: this.model,
-          pooling: familyFor(this.model).pooling,
-          texts,
-          lane,
-        });
+        if (runner.ready) runner.proc.send(request);
+        else runner.outbox.push(request);
       } catch (error) {
         this.pending.delete(id);
-        if (this.pending.size === 0) {
-          worker.unref();
-          this.armIdleTermination(worker);
-        }
+        this.rest(runner);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
+    });
+  }
+
+  private noteSuccess(): void {
+    if (this.failures === 0) return;
+    const event: EmbedHealthEvent = {
+      kind: "recovered",
+      model: this.model,
+      error: "",
+      failures: this.failures,
+      failingForMs: Date.now() - this.failingSinceMs,
+    };
+    const wasReported = this.reported;
+    this.failures = 0;
+    this.failingSinceMs = 0;
+    this.lastError = "";
+    this.reported = false;
+    if (wasReported) tellHealth(event);
+  }
+
+  private noteFailure(error: string): void {
+    const now = Date.now();
+    if (this.failures === 0) this.failingSinceMs = now;
+    this.failures++;
+    this.lastError = error;
+    const failingForMs = now - this.failingSinceMs;
+    if (this.reported) return;
+    if (this.failures < this.alertAfter.failures || failingForMs < this.alertAfter.ms) return;
+    this.reported = true;
+    tellHealth({
+      kind: "failing",
+      model: this.model,
+      error,
+      failures: this.failures,
+      failingForMs,
     });
   }
 }
