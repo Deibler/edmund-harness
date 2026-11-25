@@ -1,5 +1,5 @@
 /**
- * Tail data/daemon.log, keep a ring buffer of recent lines, broadcast new
+ * Tail logs/daemon.log, keep a ring buffer of recent lines, broadcast new
  * lines to SSE subscribers.
  *
  * The log format is `<ISO> [level] [tag] message key=val ...` per

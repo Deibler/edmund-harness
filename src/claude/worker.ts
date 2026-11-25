@@ -1120,7 +1120,7 @@ function terminateProcessTree(pid: number | undefined, signal: NodeJS.Signals): 
 }
 
 function mcpConfigName(path: string): string {
-  // ../data/mcp.json → mcp.json
+  // ../data/run/mcp.json → mcp.json
   const slash = path.lastIndexOf("/");
   return slash >= 0 ? path.slice(slash + 1) : path;
 }

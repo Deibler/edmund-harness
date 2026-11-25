@@ -19,7 +19,11 @@ import type { SkillDto } from "../types.ts";
 export function skillsRoutes(deps: { config: Config; repoRoot: string }): Hono {
   const app = new Hono();
   const skillsRoot = resolve(deps.repoRoot, "skills");
-  const dbPath = resolve(deps.config.paths.data_dir, deps.config.skills_marketplace.installed_db);
+  const dbPath = resolve(
+    deps.config.paths.data_dir,
+    "state",
+    deps.config.skills_marketplace.installed_db,
+  );
   const opts: InstallOptions = {
     skillsRoot,
     dbPath,

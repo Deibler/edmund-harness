@@ -91,7 +91,7 @@ Compacting early looks absurd and is correct.
 
 This is why the archiver exists, why person files have a byte gate, why
 principles replace observations rather than joining them, and why there is a
-warm worker pool at all. It is also why `data/spend.db` records the CLI's own
+warm worker pool at all. It is also why `data/db/spend.db` records the CLI's own
 reported cost for every model call and never estimates one.
 
 Full detail: [context-economics.md](context-economics.md).

@@ -126,7 +126,7 @@ export function wireRecovery(args: {
   // Dashboard "Force sweep" button: poll for a sentinel file faster than
   // the regular sweep interval so the button is responsive. The sweep is
   // idempotent; an extra one between intervals is harmless.
-  const sweepKickPath = `${config.paths.data_dir}/recovery-sweep.kick`;
+  const sweepKickPath = `${config.paths.data_dir}/run/recovery-sweep.kick`;
   const checkKick = (): boolean => {
     if (!existsSync(sweepKickPath)) return false;
     try {

@@ -150,7 +150,7 @@ port; its accessibility tree carries every label and the DOM classes
 - `data/printer/hms-en.json`: Bambu's error text, refreshed weekly
   (falls back to `assets/hms-en.json` here).
 - `data/printer/runtime.json`: the runtime's loopback port and secret.
-- `data/web-mounts.json`: `/print/` -> the runtime's port, for the kitchen host.
+- `data/state/web-mounts.json`: `/print/` -> the runtime's port, for the kitchen host.
 
 ## Tests
 

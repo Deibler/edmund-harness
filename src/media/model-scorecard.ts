@@ -28,7 +28,7 @@ export type ModelOutcome = "generated" | "failed" | "liked" | "rejected";
 const DB_FILE = "model_stats.db";
 
 function open(dataDir: string): Database {
-  const db = openDb(resolve(dataDir, DB_FILE));
+  const db = openDb(resolve(dataDir, "db", DB_FILE));
   db.exec(`
     CREATE TABLE IF NOT EXISTS model_outcomes (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,

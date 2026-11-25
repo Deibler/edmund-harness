@@ -8,10 +8,11 @@
 # so Twilio's webhook config and the daemon's signature validation both pin to
 # config.toml's [sms].public_base_url and never need healing.
 #
-# The token in data/sms-tunnel-token (mode 600, gitignored) only authorizes
+# The token in data/secrets/sms-tunnel-token (mode 600, gitignored) only authorizes
 # RUNNING this one tunnel — it cannot reconfigure it or touch the account.
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+mkdir -p "$REPO/logs/services"
 exec /opt/homebrew/bin/cloudflared tunnel --no-autoupdate run \
-  --token-file "$REPO/data/sms-tunnel-token" \
-  >> "$REPO/data/sms-tunnel.log" 2>&1
+  --token-file "$REPO/data/secrets/sms-tunnel-token" \
+  >> "$REPO/logs/services/sms-tunnel.log" 2>&1

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,6 +114,7 @@ function configuredMcpServers(
  *  user may read them. chmod as well as mode: mode
  *  applies only when the file is created. */
 function writePrivate(path: string, servers: Record<string, unknown>): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, JSON.stringify({ mcpServers: servers }, null, 2), { mode: 0o600 });
   chmodSync(path, 0o600);
 }
@@ -134,11 +135,11 @@ export function pickMcpConfig(
 }
 
 export function ensureMcpConfig(config: Config): McpConfigPaths {
-  const defaultPath = join(config.paths.data_dir, "mcp.json");
-  const browserPath = join(config.paths.data_dir, "mcp-browser.json");
-  const contactPath = join(config.paths.data_dir, "mcp-contact.json");
-  const contactBrowserPath = join(config.paths.data_dir, "mcp-contact-browser.json");
-  const guestPath = join(config.paths.data_dir, "mcp-guest.json");
+  const defaultPath = join(config.paths.data_dir, "run", "mcp.json");
+  const browserPath = join(config.paths.data_dir, "run", "mcp-browser.json");
+  const contactPath = join(config.paths.data_dir, "run", "mcp-contact.json");
+  const contactBrowserPath = join(config.paths.data_dir, "run", "mcp-contact-browser.json");
+  const guestPath = join(config.paths.data_dir, "run", "mcp-guest.json");
 
   const harnessOnly: Record<string, unknown> = {
     "edmund-harness": {
@@ -348,5 +349,6 @@ export function toolEnv(
     INSTANT_SHARE_ADMIN_PASSWORD: config.instant_share?.admin_password ?? "",
     EDMUND_SANDBOX_PATH: sandboxPath,
     EDMUND_DATA_DIR: resolve(config.paths.data_dir),
+    EDMUND_LOGS_DIR: resolve(config.paths.logs_dir),
   };
 }

@@ -7,13 +7,13 @@
  *
  *   bun scripts/addressing-calibrate.ts [labels.json]
  *
- * Labels default to data/addressing/labels.json:
+ * Labels default to data/evals/addressing/labels.json:
  *   {"labels": [{"row": <chat.db ROWID>, "label": "yes" | "yes-ish" | "ambiguous" | "no"}]}
  * Each row is rebuilt through the live watcher's parser and checked as of its
  * own moment (history before it, the assistant's last message before it),
  * with the same facts production sends Jev.
  *
- * Results go to data/addressing/calibration-<version>.json, with `rates`: the
+ * Results go to data/evals/addressing/calibration-<version>.json, with `rates`: the
  * measured table the daemon reads to turn a "wants a reply" score into how
  * often such a message was really for him (see docs/group-addressing.md).
  * Restart the daemon to pick up a new table. Each checked row costs one Jev
@@ -50,7 +50,8 @@ type Result = {
 };
 
 const config = loadConfig();
-const labelsPath = process.argv[2] ?? join(config.paths.data_dir, "addressing", "labels.json");
+const labelsPath =
+  process.argv[2] ?? join(config.paths.data_dir, "evals", "addressing", "labels.json");
 const labels: { row: number; label: Label }[] = JSON.parse(readFileSync(labelsPath, "utf8")).labels;
 const chatDb = new ChatDb(config.paths.chat_db);
 const contacts = new ContactBook(config.contacts, new AddressBook());
@@ -101,6 +102,7 @@ const rates = rateBands(
 
 const out = join(
   config.paths.data_dir,
+  "evals",
   "addressing",
   `calibration-${ADDRESS_QUESTIONS_VERSION}.json`,
 );

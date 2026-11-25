@@ -276,7 +276,7 @@ paths cost money separately: image and video generation, transcription, web
 search, SMS segments. Per turn cost climbs steeply with context size, and a
 compaction makes the next turn markedly more expensive because it rewrites the
 cached prompt prefix. The lever is shrinking what is in the prompt on every
-turn, not raising the compaction threshold. `data/spend.db` records the CLI's
+turn, not raising the compaction threshold. `data/db/spend.db` records the CLI's
 own cost figure for every model call so you can measure your own curve.
 [docs/costs.md](docs/costs.md)
 

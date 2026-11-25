@@ -53,7 +53,7 @@ edmund restart                 # bounces ALL services incl. fishing
 edmund restart --fishing       # just the fishing API
 edmund start|stop --fishing    # launchd start/stop (install on first start)
 edmund status [--fishing]      # state, pid, port (8087), URL, log
-edmund logs --fishing [-f]     # tail data/fishing.launchd.out.log
+edmund logs --fishing [-f]     # tail logs/services/fishing.launchd.out.log
 edmund start --fishing --local # foreground (runs scripts/launchd/run-fishing.sh)
 ```
 

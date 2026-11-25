@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
  * Open a SQLite database hardened against the SQLITE_BUSY_RECOVERY ("database is locked")
@@ -16,6 +18,9 @@ import { Database } from "bun:sqlite";
  *      instead of taking down the daemon.
  */
 export function openDb(path: string): Database {
+  // Databases live in a folder of their own under the data folder; a fresh
+  // install, and every test, starts without it.
+  if (path !== ":memory:" && path !== "") mkdirSync(dirname(path), { recursive: true });
   let lastErr: unknown;
   for (let attempt = 0; attempt < 10; attempt++) {
     let db: Database | null = null;

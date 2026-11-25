@@ -50,8 +50,8 @@ the ones worth knowing.
 
 1. Config is loaded and validated (`src/config/config.ts`). The integration
    registry is built from `[integrations]`.
-2. A log sink writes every log line to `data/daemon.log` and to its channel
-   under `data/logs/`, and hooks this process's outbound requests, child
+2. A log sink writes every log line to `logs/daemon.log` and to its channel
+   under `logs/`, and hooks this process's outbound requests, child
    processes and fatal exception (`src/util/log-sink.ts`).
 3. `chat.db` is opened read only, in WAL mode, with a prepared statement
    cache. Every reader in the process shares this one connection.
@@ -144,7 +144,7 @@ removed features and are never acted on. Handles are normalised: IMCore tags the
 Routing is recorded, then a durable inbound ack is written to `state.db`. The
 ack is cleared only when a turn has covered the row, so a crash mid turn
 replays the message instead of losing it. If the session already has a turn
-in flight the message is parked in `data/pending/<hash>.jsonl`; a bare cancel
+in flight the message is parked in `data/state/pending/<hash>.jsonl`; a bare cancel
 word aborts the in-flight turn. Otherwise it is enqueued.
 
 ### Debounce
@@ -311,23 +311,32 @@ To move one, leave a re-export at the old path or update the scripts first.
 
 ## What is on disk
 
-Everything the runtime writes lives in three ignored directories.
+Everything the runtime writes lives in four ignored directories.
 
-**`data/`**
+**`data/`**: state. Nothing sits loose at the top: four group folders, and
+one folder for each feature that keeps files of its own.
 
-| File | Purpose |
+| Folder | Holds |
 |---|---|
-| `daemon.log` | The operational log: every process's lines, today's |
-| `logs/` | The same events by channel, one JSON record a line; earlier days of `daemon.log`; the archive |
-| `state.db` | Sessions, cursor, acks, outbox, routing, guests, SMS, credits, ghost preferences |
-| `cron.db` | Scheduled and one-shot jobs |
-| `spend.db` | One row per model invocation, daily rollups, eval scores |
-| `recall.sqlite` | Embeddings and the full text index |
-| `agents.db`, `bg_jobs.db`, `triggers.db`, `refresh.db`, `alerts.db`, `announcements.db`, `errands.db`, `model_stats.db` | One subsystem each |
-| `mcp*.json` | Generated MCP configs per session profile |
-| `pending/<hash>.jsonl` | Messages parked behind an in-flight turn |
-| `*.kick`, `pool-stats.json`, `resource-status.json` | Dashboard IPC |
-| `dashboard.secret`, `portal-tunnel-url`, `sms-tunnel-url` | Runtime endpoints and secrets |
+| `db/` | Every SQLite database. `state.db` (sessions, cursor, acks, outbox, routing, guests, SMS, credits, ghost preferences), `cron.db`, `spend.db`, `recall.sqlite`, and one each for agents, background jobs, triggers, refresh scripts, alerts, announcements, errands, calls, ideations, the mirror and model results |
+| `run/` | Written at every start and meaningless after a stop: generated MCP configs, the bridge socket, `pool-stats.json` and `resource-status.json`, `*.kick` requests from the dashboard, tunnel addresses, the worker ledger, call audio sockets |
+| `secrets/` | `dashboard.secret`, tunnel tokens, the signing keychain, the voice lab's certificate |
+| `state/` | Small durable files: skill records, addressing decisions, cursors, page mounts, `pending/<hash>.jsonl` (messages parked behind an in-flight turn) |
+| `calls/`, `computer-use/`, `evals/`, `grok/`, `ideations/`, `instant-share/`, `kitchen/`, `media/`, `models/`, `plugins/`, `printer/`, `shelf/`, `sms-media/` | A feature's own files |
+| `.trash/` | What `edmund data clean` moved aside, for thirty days |
+
+The layout is declared in `src/util/data-layout.ts`, and a test fails when
+the code builds a path that is not in it.
+
+**`logs/`**: every log, and nothing else.
+
+| Path | Holds |
+|---|---|
+| `daemon.log`, `dashboard.log` | The operational logs, today's lines |
+| `<channel>/<day>.jsonl` | The same events by channel, one JSON record a line |
+| `daemon/`, `dashboard/` | Earlier days of the operational logs |
+| `services/` | What launchd and the tunnel scripts capture: raw stdout and stderr |
+| `archive/` | What predates rotation; kept until you remove it |
 
 **`persona/`**: identity, venue rules, per-person and per-group memory,
 archives, session transcripts. See [memory.md](memory.md).

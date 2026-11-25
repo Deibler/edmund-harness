@@ -50,8 +50,8 @@ killed.kill("SIGKILL");
 await killed.exited;
 // The janitor compresses with gzip; its own housekeeping is not on record.
 const oldDay = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
-mkdirSync(join(dataDir, "logs", "cron"), { recursive: true });
-writeFileSync(join(dataDir, "logs", "cron", `${oldDay}.jsonl`), "{}\n");
+mkdirSync(join(dataDir, "cron"), { recursive: true });
+writeFileSync(join(dataDir, "cron", `${oldDay}.jsonl`), "{}\n");
 await runLogJanitor(dataDir);
 
 server.stop(true);

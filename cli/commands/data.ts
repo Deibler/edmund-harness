@@ -13,10 +13,17 @@
  * does not know is listed and left alone, and so is a file a process has open.
  */
 import { resolve } from "node:path";
-import { type Finding, applyClean, auditDataDir, planClean } from "../../src/util/data-layout.ts";
+import {
+  type Finding,
+  applyClean,
+  auditDataDir,
+  heldOpenBy,
+  planClean,
+} from "../../src/util/data-layout.ts";
+import { applyMigration, finishMigration, planMigration } from "../../src/util/data-migrate.ts";
 import type { Parsed } from "../args.ts";
 import { hasFlag } from "../args.ts";
-import { REPO } from "../services/paths.ts";
+import { LOGS_DIR, REPO } from "../services/paths.ts";
 import { color, fail, info, ok, print, table } from "../ui.ts";
 
 const dataDir = (): string => process.env.EDMUND_DATA_DIR ?? resolve(REPO, "data");
@@ -34,7 +41,10 @@ export async function dataCommand(p: Parsed): Promise<void> {
   const sub = p.positional[0] ?? "audit";
   if (sub === "audit") return audit(hasFlag(p, "all", "a"));
   if (sub === "clean") return clean(hasFlag(p, "apply"));
-  fail("usage: edmund data audit [--all] | edmund data clean [--apply]");
+  if (sub === "migrate") return migrate(hasFlag(p, "apply"), hasFlag(p, "force"));
+  fail(
+    "usage: edmund data audit [--all] | edmund data clean [--apply] | edmund data migrate [--apply]",
+  );
   process.exit(1);
 }
 
@@ -54,6 +64,7 @@ function audit(all: boolean): void {
   const of = (status: Finding["status"]) => findings.filter((f) => f.status === status);
   const total = (list: Finding[]) => list.reduce((sum, f) => sum + f.bytes, 0);
   const groups: [string, Finding["status"]][] = [
+    ["In the old layout (edmund data migrate)", "misplaced"],
     ["Not accounted for", "unknown"],
     ["Left by something removed", "retired"],
     ["Stale and undeclared", "stale"],
@@ -82,6 +93,48 @@ function audit(all: boolean): void {
   print();
   print(`${bytes(total(findings))} in ${dataDir()}`);
   print(color.dim("edmund data clean shows what would be moved aside; --apply does it"));
+}
+
+/**
+ * Move a folder in the old flat layout into the grouped one, and its logs to
+ * the logs folder. Run with the services stopped.
+ */
+function migrate(apply: boolean, force: boolean): void {
+  const dir = dataDir();
+  const plan = planMigration(dir, LOGS_DIR);
+  if (plan.moves.length === 0 && plan.conflicts.length === 0) {
+    finishMigration(dir, LOGS_DIR);
+    ok("nothing to move: the data folder is in the current layout");
+    return;
+  }
+  const short = (path: string) => path.replace(`${REPO}/`, "");
+  for (const c of plan.conflicts) {
+    fail(`both ${short(c.from)} and ${short(c.to)} exist; look at them and remove one`);
+  }
+  if (!apply) {
+    print(color.bold(`Would move ${plan.moves.length}:`));
+    table(
+      ["from", "to"],
+      plan.moves.map((m) => [short(m.from), short(m.to)]),
+    );
+    print();
+    info(
+      "nothing was changed. Stop the daemon and the dashboard, then: edmund data migrate --apply",
+    );
+    return;
+  }
+  if (plan.conflicts.length > 0) {
+    fail("nothing was moved");
+    process.exit(1);
+  }
+  const result = applyMigration(plan, heldOpenBy, force);
+  if (result.refused) {
+    fail(result.refused);
+    process.exit(1);
+  }
+  finishMigration(dir, LOGS_DIR);
+  ok(`moved ${result.moved.length}`);
+  for (const l of result.left) info(`left ${short(l.path)}: ${l.reason}`);
 }
 
 function clean(apply: boolean): void {

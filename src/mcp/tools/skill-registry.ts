@@ -38,7 +38,7 @@ function installOpts(ctx: ToolContext): InstallOptions {
   const cfg = ctx.config.skills_marketplace;
   return {
     skillsRoot: resolve(SKILLS_ROOT),
-    dbPath: resolve(ctx.dataDir, cfg.installed_db),
+    dbPath: resolve(ctx.dataDir, "state", cfg.installed_db),
     requireApprovalForScripts: cfg.require_approval_for_scripts,
   };
 }

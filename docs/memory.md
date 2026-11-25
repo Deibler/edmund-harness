@@ -119,7 +119,7 @@ conversation.
 Recall is a local search index over messages, persona files, archives,
 sandbox artifacts and skill descriptions.
 
-- **Store**: `data/recall.sqlite`. Vectors are stored as float32 blobs and
+- **Store**: `data/db/recall.sqlite`. Vectors are stored as float32 blobs and
   compared in process; a full text index gives a BM25 leg; the two are fused,
   deduplicated, diversified and boosted for recency.
 - **Embeddings**: the default provider runs `Xenova/bge-small-en-v1.5` in a

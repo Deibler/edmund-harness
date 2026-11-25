@@ -141,8 +141,8 @@ function lastInboundMs(dataDir: string, sessionKey: string): number | null {
 }
 
 export function skillTools(ctx: ToolContext): ToolDef[] {
-  const dbPath = resolve(ctx.dataDir, ctx.config.skills_marketplace.installed_db);
-  const consentDbPath = resolve(ctx.dataDir, ctx.config.public_skills.consent_db);
+  const dbPath = resolve(ctx.dataDir, "state", ctx.config.skills_marketplace.installed_db);
+  const consentDbPath = resolve(ctx.dataDir, "state", ctx.config.public_skills.consent_db);
   const consentDeps: ConsentDeps = {
     chatDb: ctx.chatDb,
     contacts: ctx.contacts,

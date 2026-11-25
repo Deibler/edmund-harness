@@ -6,7 +6,7 @@ and the four places where the intuitive decision is the wrong one.
 
 Absolute figures are deliberately absent. Your model, your conversations and
 your prices differ, and a number in a README is wrong the day either changes.
-What transfers is the shape, and `data/spend.db` records the CLI's own reported
+What transfers is the shape, and `data/db/spend.db` records the CLI's own reported
 cost for every model call so you can derive your own.
 
 ## The one fact everything follows from
@@ -131,7 +131,7 @@ capability was costing to carry.
 
 ## The ledger records, it never estimates
 
-Every model invocation in the system writes one row to `data/spend.db`:
+Every model invocation in the system writes one row to `data/db/spend.db`:
 timestamp, conversation, subsystem, model, duration, context tokens, cost. A
 daily rollup is written in the same transaction so dashboard queries never scan
 the raw table.
@@ -150,7 +150,7 @@ guess.
 ## Measuring your own
 
 The query in [costs.md](costs.md) buckets turn cost by context size against
-`data/spend.db`. Run it before changing anything about prompt composition, and
+`data/db/spend.db`. Run it before changing anything about prompt composition, and
 again afterwards. The first run is usually surprising.
 
 Two habits behind everything on this page:

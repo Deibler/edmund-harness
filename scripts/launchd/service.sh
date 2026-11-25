@@ -30,28 +30,28 @@ LABEL="com.edmund-harness"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC_PLIST="$REPO_ROOT/scripts/launchd/$LABEL.plist"
 DEST_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-DAEMON_LOG="$REPO_ROOT/data/daemon.log"
-ERR_LOG="$REPO_ROOT/data/launchd.err.log"
+DAEMON_LOG="$REPO_ROOT/logs/daemon.log"
+ERR_LOG="$REPO_ROOT/logs/services/launchd.err.log"
 DOMAIN="gui/$(id -u)"
 
 DASH_LABEL="com.edmund-harness.dashboard"
 DASH_SRC_PLIST="$REPO_ROOT/scripts/launchd/$DASH_LABEL.plist"
 DASH_DEST_PLIST="$HOME/Library/LaunchAgents/$DASH_LABEL.plist"
-DASH_LOG="$REPO_ROOT/data/dashboard.log"
+DASH_LOG="$REPO_ROOT/logs/dashboard.log"
 
 FISH_LABEL="com.edmund-harness.fishing"
 FISH_SRC_PLIST="$REPO_ROOT/scripts/launchd/$FISH_LABEL.plist"
 FISH_DEST_PLIST="$HOME/Library/LaunchAgents/$FISH_LABEL.plist"
-FISH_LOG="$REPO_ROOT/data/fishing.launchd.out.log"
+FISH_LOG="$REPO_ROOT/logs/services/fishing.launchd.out.log"
 
 cmd="${1:-status}"
 
 # Stopping the daemon ends a FaceTime call in progress: the person is cut off
 # mid-sentence. The daemon holds its own restarts back for a call; this holds
 # back the ones asked for by hand (or by Edmund, of himself). A call the
-# daemon has not ended is a row in data/calls.db with no end time.
+# daemon has not ended is a row in data/db/calls.db with no end time.
 refuse_during_call() {
-  local db="$REPO_ROOT/data/calls.db" live
+  local db="$REPO_ROOT/data/db/calls.db" live
   [ "${EDMUND_FORCE:-}" = "1" ] && return 0
   [ -f "$db" ] || return 0
   live=$(sqlite3 -readonly "$db" "SELECT COUNT(*) FROM calls WHERE ended_at IS NULL" 2>/dev/null || echo 0)
@@ -69,6 +69,9 @@ refuse_during_call() {
 # first: if it is a symlink to the template, writing through it would empty
 # the template, and launchd would keep running the placeholders.
 render_plist() {
+  # launchd opens an agent's output files before it starts the agent, and
+  # does not create the folder they are in.
+  mkdir -p "$REPO_ROOT/logs/services" "$REPO_ROOT/data/run"
   rm -f "$2"
   sed -e "s|__HARNESS_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$1" > "$2"
 }

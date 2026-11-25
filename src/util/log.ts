@@ -3,8 +3,8 @@
  *
  * A line is `[tag] message key=val key=val ...`, greppable
  * (`rg '\[tool\]'`) and easy to scan. In a process that logs to files
- * (log-sink.ts) it goes to data/daemon.log as that text and to the tag's
- * channel under data/logs/ as a record with the fields intact; anywhere
+ * (log-sink.ts) it goes to logs/daemon.log as that text and to the tag's
+ * channel under logs/ as a record with the fields intact; anywhere
  * else it is printed.
  *
  * `log.event` writes to a channel only: for things worth having on record

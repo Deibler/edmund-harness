@@ -145,7 +145,7 @@ describe("turn workers answer to one daemon", () => {
     daemon.kill("SIGKILL");
     await until(() => !groupAlive(worker));
     // Nothing is left written down but the watchdog's note of what it stopped.
-    const ledger = join(dataDir, "turn-workers");
+    const ledger = join(dataDir, "run", "turn-workers");
     await until(() => readdirSync(ledger).join() === "last-stop");
     expect(JSON.parse(readFileSync(join(ledger, "last-stop"), "utf8"))).toMatchObject({
       owner: daemon.pid,
@@ -158,8 +158,8 @@ describe("turn workers answer to one daemon", () => {
   // The backstop: if the watchdog was not there to do it, boot does.
   test("a daemon stops the last daemon's workers as it boots", async () => {
     const dataDir = tempDir();
-    const ledger = join(dataDir, "turn-workers");
-    mkdirSync(ledger);
+    const ledger = join(dataDir, "run", "turn-workers");
+    mkdirSync(ledger, { recursive: true });
     const leftover = spawnWorker();
     writeDown(ledger, { pid: leftover });
 
@@ -172,8 +172,8 @@ describe("turn workers answer to one daemon", () => {
 
   test("the next daemon reports what the watchdog stopped, once", async () => {
     const dataDir = tempDir();
-    const ledger = join(dataDir, "turn-workers");
-    mkdirSync(ledger);
+    const ledger = join(dataDir, "run", "turn-workers");
+    mkdirSync(ledger, { recursive: true });
     writeFileSync(
       join(ledger, "last-stop"),
       JSON.stringify({ atMs: Date.now(), owner: 4242, sessions: ["dm:+15550100"] }),
@@ -213,7 +213,7 @@ console.log("booted");
   test("a worker is written down while it runs and forgotten when it exits", async () => {
     const dataDir = tempDir();
     const { daemon, worker } = await startDaemon(dataDir);
-    const entryPath = join(dataDir, "turn-workers", `${worker}.json`);
+    const entryPath = join(dataDir, "run", "turn-workers", `${worker}.json`);
     const entry = JSON.parse(readFileSync(entryPath, "utf8")) as TurnWorkerEntry;
     expect(entry).toMatchObject({ pid: worker, owner: daemon.pid, label: "dm:+15550100" });
 

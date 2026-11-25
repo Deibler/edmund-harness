@@ -445,8 +445,8 @@ function support(
 }
 
 function asksAroundReads(dataDir: string, reads: { session: string; at_ms: number }[]): Ask[] {
-  const statePath = join(dataDir, "state.db");
-  const recallPath = join(dataDir, "recall.sqlite");
+  const statePath = join(dataDir, "db", "state.db");
+  const recallPath = join(dataDir, "db", "recall.sqlite");
   if (!existsSync(statePath) || !existsSync(recallPath)) return [];
 
   const out: Ask[] = [];

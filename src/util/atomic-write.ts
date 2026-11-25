@@ -1,4 +1,5 @@
-import { renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
  * Soft cap for any single text file written via this helper. Persona
@@ -31,6 +32,8 @@ export function atomicWriteFileSync(path: string, body: string | Uint8Array): vo
       `atomicWriteFileSync: refusing to write ${size}b to ${path} (limit ${MAX_TEXT_FILE_BYTES}b). Persona/self-memory files this large indicate runaway content; trim or split before retrying.`,
     );
   }
+  // The folder may not exist yet: a fresh data folder has none of its groups.
+  mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}-${Date.now().toString(36)}`;
   writeFileSync(tmp, body);
   renameSync(tmp, path);

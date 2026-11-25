@@ -31,9 +31,9 @@ function setPrivateUmask(): void {
 
 /**
  * Tighten `dirs` to 0700 and the sensitive files directly inside them to
- * 0600. Only the top level of each directory is swept: the data dir is flat
- * where it matters, and a recursive chmod over a sandbox full of media on
- * every boot is not worth the I/O.
+ * 0600. Only the top level of each directory is swept: the folders that hold
+ * what matters are named one by one, and a recursive chmod over a sandbox
+ * full of media on every boot is not worth the I/O.
  */
 export function hardenPaths(dirs: string[], files: string[] = []): HardenReport {
   const report: HardenReport = { dirs: 0, files: 0, errors: [] };
@@ -74,10 +74,25 @@ export function hardenPaths(dirs: string[], files: string[] = []): HardenReport 
 }
 
 /** The standard call for a process rooted at `repoRoot` with this data dir. */
-export function hardenHarnessPermissions(repoRoot: string, dataDir: string): HardenReport {
+export function hardenHarnessPermissions(
+  repoRoot: string,
+  dataDir: string,
+  logsDir: string = join(repoRoot, "logs"),
+): HardenReport {
   setPrivateUmask();
   const report = hardenPaths(
-    [dataDir, join(repoRoot, "persona"), join(repoRoot, "sandbox")],
+    [
+      dataDir,
+      // Where the databases, generated configs, tokens and small state live.
+      join(dataDir, "db"),
+      join(dataDir, "run"),
+      join(dataDir, "secrets"),
+      join(dataDir, "state"),
+      logsDir,
+      join(logsDir, "services"),
+      join(repoRoot, "persona"),
+      join(repoRoot, "sandbox"),
+    ],
     [join(repoRoot, "config.toml"), join(repoRoot, ".env")],
   );
   for (const name of safeReaddir(repoRoot)) {

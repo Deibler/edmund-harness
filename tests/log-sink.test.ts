@@ -249,7 +249,7 @@ describe("rotation", () => {
     log.info("cron", "today");
     await Bun.sleep(100);
     expect(ops()).toHaveLength(1);
-    const filed = join(dir, "logs", "daemon");
+    const filed = join(dir, "daemon");
     expect(readdirSync(filed).sort()).toEqual([`${before}.log`, `${yesterday}.log`]);
     expect(readFileSync(join(filed, `${before}.log`), "utf8")).toContain("continuation line");
     const week = readOpsLog(dir, Date.now() - 7 * 86_400_000);
@@ -272,8 +272,8 @@ describe("rotation", () => {
     );
     install({ rotate: true, retentionDays: 30 });
     await Bun.sleep(100);
-    expect(readdirSync(join(dir, "logs", "daemon"))).toEqual([`${recent}.log`]);
-    expect(readdirSync(join(dir, "logs", "archive"))).toEqual([`daemon-${older}_to_${old}.log`]);
+    expect(readdirSync(join(dir, "daemon"))).toEqual([`${recent}.log`]);
+    expect(readdirSync(join(dir, "archive"))).toEqual([`daemon-${older}_to_${old}.log`]);
     const report = await runLogJanitor(dir, {
       retentionDays: 30,
       compressAfterDays: 2,
@@ -281,8 +281,8 @@ describe("rotation", () => {
       captureMaxMb: 20,
     });
     expect(report.errors).toEqual([]);
-    expect(readdirSync(join(dir, "logs", "archive"))).toEqual([`daemon-${older}_to_${old}.log.gz`]);
-    expect(readdirSync(join(dir, "logs", "daemon"))).toEqual([`${recent}.log.gz`]);
+    expect(readdirSync(join(dir, "archive"))).toEqual([`daemon-${older}_to_${old}.log.gz`]);
+    expect(readdirSync(join(dir, "daemon"))).toEqual([`${recent}.log.gz`]);
     // Compressed days still read back.
     expect(readOpsLog(dir, Date.now() - 7 * 86_400_000)).toContain("recent");
   });
@@ -292,7 +292,7 @@ describe("rotation", () => {
     install({ rotate: true });
     log.info("cron", "now");
     expect(ops()).toHaveLength(2);
-    expect(existsSync(join(dir, "logs", "daemon"))).toBe(false);
+    expect(existsSync(join(dir, "daemon"))).toBe(false);
   });
 });
 
@@ -300,7 +300,7 @@ describe("the janitor", () => {
   const policy = { retentionDays: 30, compressAfterDays: 2, maxTotalMb: 100, captureMaxMb: 1 };
 
   function channelDay(channel: string, day: string, bytes = 64): string {
-    const folder = join(dir, "logs", channel);
+    const folder = join(dir, channel);
     mkdirSync(folder, { recursive: true });
     const path = join(folder, `${day}.jsonl`);
     const record = JSON.stringify({
@@ -324,7 +324,7 @@ describe("the janitor", () => {
     channelDay("cron", today);
     const report = await runLogJanitor(dir, policy);
     expect(report).toMatchObject({ removed: 1, compressed: 1, errors: [] });
-    expect(readdirSync(join(dir, "logs", "cron")).sort()).toEqual(
+    expect(readdirSync(join(dir, "cron")).sort()).toEqual(
       [`${dayBefore(today, 10)}.jsonl.gz`, `${dayBefore(today, 1)}.jsonl`, `${today}.jsonl`].sort(),
     );
     expect(readChannel(dir, "cron", 0)).toHaveLength(3);
@@ -337,26 +337,27 @@ describe("the janitor", () => {
     channelDay("model", dayBefore(today, 4), half);
     channelDay("cron", dayBefore(today, 1), half);
     await runLogJanitor(dir, { ...policy, compressAfterDays: 30, maxTotalMb: 1 });
-    expect(readdirSync(join(dir, "logs", "cron"))).toEqual([`${dayBefore(today, 1)}.jsonl`]);
-    expect(readdirSync(join(dir, "logs", "model"))).toEqual([]);
+    expect(readdirSync(join(dir, "cron"))).toEqual([`${dayBefore(today, 1)}.jsonl`]);
+    expect(readdirSync(join(dir, "model"))).toEqual([]);
   });
 
   test("a log another program appends to is archived and emptied once it is large", async () => {
-    const capture = join(dir, "launchd.err.log");
+    mkdirSync(join(dir, "services"), { recursive: true });
+    const capture = join(dir, "services", "launchd.err.log");
     writeFileSync(capture, "a crash report\n".repeat(100_000));
-    writeFileSync(join(dir, "small.launchd.log"), "fine\n");
+    writeFileSync(join(dir, "services", "small.launchd.log"), "fine\n");
     writeFileSync(join(dir, "daemon.log"), "x".repeat(2_000_000));
     utimesSync(capture, new Date(), new Date());
     const report = await runLogJanitor(dir, policy);
     expect(report.captured).toEqual(["launchd.err.log"]);
     expect(readFileSync(capture, "utf8")).toBe("");
-    expect(readFileSync(join(dir, "small.launchd.log"), "utf8")).toBe("fine\n");
+    expect(readFileSync(join(dir, "services", "small.launchd.log"), "utf8")).toBe("fine\n");
     // The sink's own file is rotated by the sink, never emptied from outside.
     expect(readFileSync(join(dir, "daemon.log"), "utf8").length).toBe(2_000_000);
-    const [archived] = readdirSync(join(dir, "logs", "archive"));
+    const [archived] = readdirSync(join(dir, "archive"));
     expect(archived).toMatch(/^launchd\.err-until-.*\.log\.gz$/);
     const restored = Buffer.from(
-      Bun.gunzipSync(readFileSync(join(dir, "logs", "archive", archived!))),
+      Bun.gunzipSync(readFileSync(join(dir, "archive", archived!))),
     ).toString();
     expect(restored.length).toBe("a crash report\n".length * 100_000);
   });

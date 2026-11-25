@@ -11,7 +11,7 @@ import { skillDirectories } from "../skills/paths.ts";
 /**
  * Startup self-check: verify the persona/* and skills/* directories the
  * daemon expects to inject into Claude are actually readable. Called once
- * from main.ts at boot so missing files show up in data/daemon.log before
+ * from main.ts at boot so missing files show up in logs/daemon.log before
  * the first iMessage turn runs — otherwise the failure is silent (the
  * prompt gets assembled with empty sections and Edmund just behaves oddly).
  *

@@ -212,9 +212,9 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
     ? new FaceTimeProvider({
         dylibPath: native.dylib,
         audioAppPath: native.audioApp,
-        audioSocketPath: join(dataDir, "facetime", "audio.sock"),
+        audioSocketPath: join(dataDir, "run", "facetime", "audio.sock"),
         mouthPath: native.mouth,
-        mouthSocketPath: join(dataDir, "facetime", "mouth.sock"),
+        mouthSocketPath: join(dataDir, "run", "facetime", "mouth.sock"),
         mouthDevice: settings.mouth_device,
         micDevice: settings.mic_device,
         sampleRate: SAMPLE_RATE,
@@ -222,7 +222,7 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
         transcribe: (pcm) => transcriber.transcribe(pcm),
         turnVerdict,
         ...(settings.keep_turn_clips
-          ? { turnClipDir: join(dataDir, "facetime", "turn-clips") }
+          ? { turnClipDir: join(dataDir, "run", "facetime", "turn-clips") }
           : {}),
       })
     : null;
@@ -346,7 +346,7 @@ export async function startCallRuntime(deps: CallRuntimeDeps): Promise<CallRunti
     labServer = new LabServer({
       port: config.voice_lab.port,
       hostname: config.voice_lab.host,
-      dir: join(dataDir, "voice-lab"),
+      dir: join(dataDir, "secrets", "voice-lab"),
       provider: lab,
       settings: voiceSettings,
       // Phonon's catalog first, then Kokoro's voices read from their file:

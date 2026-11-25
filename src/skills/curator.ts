@@ -505,7 +505,7 @@ export async function runCurator(deps: CuratorDeps): Promise<CuratorOutcome> {
     };
   }
 
-  const recallPath = join(deps.dataDir, "recall.sqlite");
+  const recallPath = join(deps.dataDir, "db", "recall.sqlite");
   const sinceMs = now() - cfg.lookback_days * 86_400_000;
   let sample: SampledAsk[];
   try {

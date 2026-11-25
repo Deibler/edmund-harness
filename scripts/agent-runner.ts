@@ -62,7 +62,7 @@ if (!store.claimRunning(id, process.pid)) {
   process.exit(0);
 }
 
-const mcpConfig = join(dataDir, "mcp.json");
+const mcpConfig = join(dataDir, "run", "mcp.json");
 const teamShared = process.env.AGENT_TEAM_SHARED;
 const teamId = process.env.AGENT_TEAM_ID;
 const role = process.env.AGENT_ROLE;

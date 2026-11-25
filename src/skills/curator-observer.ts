@@ -34,7 +34,7 @@ export type SkillCuratorDeps = CuratorDeps & { consentDbPath: string };
 type CuratorState = { last_run_ms: number; last_created: string | null };
 
 function statePath(dataDir: string): string {
-  return join(dataDir, "skill-curator.json");
+  return join(dataDir, "state", "skill-curator.json");
 }
 
 export function readCuratorState(dataDir: string): CuratorState {

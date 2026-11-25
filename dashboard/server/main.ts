@@ -27,6 +27,7 @@ import { ContactBook } from "../../src/sessions/contacts.ts";
 import { StateStore } from "../../src/sessions/store.ts";
 import { SpendLedger } from "../../src/spend/ledger.ts";
 import { withAccessLog } from "../../src/util/access-log.ts";
+import { prepareDataFolder } from "../../src/util/data-migrate.ts";
 import { installLogSink } from "../../src/util/log-sink.ts";
 import { loadOrCreateSecret } from "./auth.ts";
 import { authMiddleware } from "./middleware/auth.ts";
@@ -68,12 +69,18 @@ const BRAND_MEDIA = resolve(REPO_ROOT, "dashboard/web/media");
 
 async function main() {
   const config = loadConfig();
-  hardenHarnessPermissions(REPO_ROOT, resolve(config.paths.data_dir));
+  hardenHarnessPermissions(
+    REPO_ROOT,
+    resolve(config.paths.data_dir),
+    resolve(config.paths.logs_dir),
+  );
   mkdirSync(config.paths.data_dir, { recursive: true });
 
   // Dashboard has its own log sink so daemon.log stays clean. Prefix makes
   // dashboard-originated lines easy to grep out later if needed.
-  installLogSink(config.paths.data_dir, "[dash] ", "dashboard.log", {
+  prepareDataFolder(resolve(config.paths.data_dir));
+  process.env.EDMUND_LOGS_DIR = resolve(config.paths.logs_dir);
+  installLogSink(resolve(config.paths.logs_dir), "[dash] ", "dashboard.log", {
     rotate: true,
     retentionDays: config.logs.retention_days,
   });
@@ -93,7 +100,7 @@ async function main() {
   // into OpenRouter limits (immediately after a webhook, and on a sweep).
   const credits = new CreditStore(config.paths.data_dir);
 
-  const tail = new LogTail(resolve(config.paths.data_dir, "daemon.log"));
+  const tail = new LogTail(resolve(config.paths.logs_dir, "daemon.log"));
   tail.start();
 
   const app = new Hono();

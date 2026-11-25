@@ -87,7 +87,7 @@ describe("a process that logs to files", () => {
       .map((channel) => {
         try {
           return readFileSync(
-            join(dir, "logs", channel, `${new Date().toISOString().slice(0, 10)}.jsonl`),
+            join(dir, channel, `${new Date().toISOString().slice(0, 10)}.jsonl`),
             "utf8",
           );
         } catch {

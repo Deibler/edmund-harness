@@ -4,17 +4,18 @@
 # Starts a free TryCloudflare quick tunnel pointing at the public-only
 # listener (127.0.0.1:4749 — token-gated /u + /a routes ONLY; the PIN
 # dashboard is not reachable through it). Captures the randomly-assigned
-# https://*.trycloudflare.com URL into data/portal-tunnel-url, which
+# https://*.trycloudflare.com URL into data/run/portal-tunnel-url, which
 # portalBaseUrl() reads at send time — so newly-sent links always use the
 # CURRENT tunnel even after a restart rotates the hostname.
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 PORT="${PORTAL_PUBLIC_PORT:-4749}"
-URL_FILE="$REPO/data/portal-tunnel-url"
-LOG="$REPO/data/portal-tunnel.log"
+URL_FILE="$REPO/data/run/portal-tunnel-url"
+LOG="$REPO/logs/services/portal-tunnel.log"
 # Seconds without an edge connection before giving up on this tunnel.
 DEAD_SECS="${PORTAL_TUNNEL_DEAD_SECS:-600}"
 
+mkdir -p "$REPO/logs/services" "$REPO/data/run"
 rm -f "$URL_FILE"
 : > "$LOG"
 

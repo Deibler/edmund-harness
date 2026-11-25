@@ -2,7 +2,7 @@
  * `edmund review [--days 7] [--sample 40]` — write this week's review sheet:
  * reply times, unanswered DMs, every correction people sent, leaked control
  * words, background failures, and a sample of real exchanges to mark pass or
- * fail. Read-only; the sheet goes to data/reviews/<date>.md.
+ * fail. Read-only; the sheet goes to data/evals/reviews/<date>.md.
  */
 
 import { loadConfig } from "../../src/config/config.ts";
@@ -34,6 +34,7 @@ export async function reviewCommand(p: Parsed): Promise<void> {
   const body = buildWeeklyReview({
     chatDb,
     dataDir: config.paths.data_dir,
+    logsDir: config.paths.logs_dir,
     days,
     sample,
     label,

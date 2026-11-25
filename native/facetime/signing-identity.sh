@@ -8,12 +8,12 @@
 # keeps the permission.
 #
 # Self-signed, and used for nothing but this helper. It lives in its own
-# keychain under data/signing (gitignored), opened with a password kept beside
+# keychain under data/secrets/signing (gitignored), opened with a password kept beside
 # it, so a build never needs the login keychain or anyone's password.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
-dir="$root/data/signing"
+dir="$root/data/secrets/signing"
 keychain="$dir/edmund-signing.keychain-db"
 name="Edmund Call Audio Signing"
 

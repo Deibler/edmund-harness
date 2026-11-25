@@ -62,7 +62,8 @@ export class AnnouncementStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = new Database(join(dataDir, "announcements.db"));
+    mkdirSync(join(dataDir, "db"), { recursive: true });
+    this.db = new Database(join(dataDir, "db", "announcements.db"));
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec("PRAGMA journal_mode = WAL");
     this.migrate();

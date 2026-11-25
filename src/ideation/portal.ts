@@ -26,7 +26,7 @@ export type PortalIdeas = {
 const EMPTY: PortalIdeas = { threads: [], pages: [] };
 
 export function portalIdeas(dataDir: string, sessionKey: string): PortalIdeas {
-  if (!existsSync(join(dataDir, "ideations.db"))) return EMPTY;
+  if (!existsSync(join(dataDir, "db", "ideations.db"))) return EMPTY;
   const store = new IdeationStore(dataDir);
   try {
     const threads = store
@@ -58,7 +58,7 @@ export function portalIdeas(dataDir: string, sessionKey: string): PortalIdeas {
 
 /** Delete every page, run and thread kept for this person. Returns pages removed. */
 export function eraseIdeations(dataDir: string, sessionKey: string): number {
-  if (!existsSync(join(dataDir, "ideations.db"))) return 0;
+  if (!existsSync(join(dataDir, "db", "ideations.db"))) return 0;
   const store = new IdeationStore(dataDir);
   try {
     const rows = store.listForSession(sessionKey);

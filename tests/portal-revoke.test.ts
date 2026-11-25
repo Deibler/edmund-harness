@@ -45,7 +45,7 @@ describe("portal link revocation", () => {
       other,
     );
     // The file is private and survives a garbage line.
-    const file = join(dir, "portal-generations.json");
+    const file = join(dir, "state", "portal-generations.json");
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(file, "utf8"))[key]).toBe(2);
   });

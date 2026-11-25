@@ -33,12 +33,12 @@
     <integer>30</integer>
 
     <!-- launchctl-managed logs. The app also writes its own structured log to
-         data/daemon.log; these capture anything printed BEFORE logging init
+         logs/daemon.log; these capture anything printed BEFORE logging init
          (stderr from bun, pre-log errors, etc.). -->
     <key>StandardOutPath</key>
-    <string>__HARNESS_ROOT__/data/launchd.out.log</string>
+    <string>__HARNESS_ROOT__/logs/services/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HARNESS_ROOT__/data/launchd.err.log</string>
+    <string>__HARNESS_ROOT__/logs/services/launchd.err.log</string>
 
     <!-- PATH needs ~/.local/bin for `claude`, Homebrew for bun/imsg/gifgrep
          /summarize/magick/rsvg-convert, plus the system dirs. Codex and other

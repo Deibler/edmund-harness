@@ -36,7 +36,7 @@
  * here can be one production would have suppressed as a repeat.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { recallSightSince } from "../src/boot/wire-recall.ts";
 import { loadConfig } from "../src/config/config.ts";
 import { ChatDb } from "../src/imessage/db.ts";
@@ -114,7 +114,7 @@ if (fromLog) {
 function compactionsFromLog(session: string): Compaction[] {
   const marker = `[claude-worker] compacted session=${session} `;
   // Every day still on disk; lines older than [logs] retention_days are in the archive.
-  return readOpsLog(dataDir, 0)
+  return readOpsLog(resolve(config.paths.logs_dir), 0)
     .split("\n")
     .filter((l) => l.includes(marker))
     .map((l) => ({
@@ -137,7 +137,7 @@ const mr = config.memory_recall;
 const chatDb = new ChatDb(config.paths.chat_db);
 const contacts = new ContactBook(config.contacts, new AddressBook(), new LearnedNames(dataDir));
 const threadDeps = { config, chatDb, contacts, state: null };
-const store = new VectorStore(join(dataDir, mr.index_db));
+const store = new VectorStore(join(dataDir, "db", mr.index_db));
 const provider = makeProvider({
   provider: mr.provider,
   model: mr.model,

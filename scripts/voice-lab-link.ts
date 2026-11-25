@@ -14,7 +14,7 @@ import { lanAddresses } from "../src/calls/providers/web/server.ts";
 import { loadConfig } from "../src/config/config.ts";
 
 const config = loadConfig();
-const keyPath = join(config.paths.data_dir, "voice-lab", "key");
+const keyPath = join(config.paths.data_dir, "secrets", "voice-lab", "key");
 if (!config.voice_lab.enabled) {
   console.error("The voice lab is off: set [voice_lab] enabled = true in config.toml.");
   process.exit(1);

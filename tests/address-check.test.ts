@@ -157,9 +157,9 @@ function makeConfig(
 function freshConfig(rates?: RateBand[]) {
   const d = mkdtempSync(join(dir, "fresh-"));
   if (rates) {
-    mkdirSync(join(d, "addressing"), { recursive: true });
+    mkdirSync(join(d, "evals", "addressing"), { recursive: true });
     writeFileSync(
-      join(d, "addressing", `calibration-${ADDRESS_QUESTIONS_VERSION}.json`),
+      join(d, "evals", "addressing", `calibration-${ADDRESS_QUESTIONS_VERSION}.json`),
       JSON.stringify({ version: ADDRESS_QUESTIONS_VERSION, rates }),
     );
   }
@@ -393,7 +393,7 @@ describe("the checker", () => {
   });
 
   test("the decision record keeps scores and the row id, never the text", () => {
-    const records = readFileSync(join(dir, "addressing.jsonl"), "utf8");
+    const records = readFileSync(join(dir, "state", "addressing.jsonl"), "utf8");
     expect(records).toContain('"row":4');
     expect(records).not.toContain("when does it stop");
     expect(records).not.toContain("+1555");
@@ -504,8 +504,8 @@ describe("measured rates", () => {
 
   test("a table measured on another wording is not used", () => {
     const d = mkdtempSync(join(dir, "cal-"));
-    mkdirSync(join(d, "addressing"));
-    const path = join(d, "addressing", `calibration-${ADDRESS_QUESTIONS_VERSION}.json`);
+    mkdirSync(join(d, "evals", "addressing"), { recursive: true });
+    const path = join(d, "evals", "addressing", `calibration-${ADDRESS_QUESTIONS_VERSION}.json`);
     writeFileSync(path, JSON.stringify({ version: "older", rates: [band(0.7, 25, 15)] }));
     expect(loadCalibration(d)).toBeNull();
     writeFileSync(

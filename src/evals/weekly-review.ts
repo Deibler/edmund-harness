@@ -16,7 +16,7 @@ import { readOpsLog } from "../util/log-files.ts";
  * that reading a weekly habit with the counts beside it.
  *
  * Read-only: chat.db, state.db and daemon.log. The sheet goes to
- * data/reviews/, which is private to this machine.
+ * data/evals/reviews/, which is private to this machine.
  */
 
 export type ReviewMsg = { fromMe: boolean; text: string; ms: number };
@@ -101,7 +101,7 @@ export function countLogSignals(logText: string, sinceIso: string): Map<string, 
 type Chat = { sessionKey: string; chatGuid: string; isGroup: boolean };
 
 function listChats(dataDir: string): Chat[] {
-  const path = join(dataDir, "state.db");
+  const path = join(dataDir, "db", "state.db");
   if (!existsSync(path)) return [];
   const db = new Database(path, { readonly: true });
   try {
@@ -173,6 +173,8 @@ function minutes(ms: number | null): string {
 export function buildWeeklyReview(deps: {
   chatDb: ChatDb;
   dataDir: string;
+  /** Where the operational log and its earlier days are. */
+  logsDir: string;
   days: number;
   sample: number;
   nowMs?: number;
@@ -231,7 +233,7 @@ export function buildWeeklyReview(deps: {
 
   // The week's lines: the rotated days that hold them and today's file. This
   // used to read the whole of daemon.log, 1.2 GB of it by November 2026.
-  const logText = readOpsLog(deps.dataDir, since);
+  const logText = readOpsLog(deps.logsDir, since);
   const signals = logText
     ? countLogSignals(logText, new Date(since).toISOString())
     : new Map<string, number>();
@@ -272,7 +274,7 @@ export function buildWeeklyReview(deps: {
 }
 
 export function writeWeeklyReview(dataDir: string, body: string, nowMs = Date.now()): string {
-  const dir = join(dataDir, "reviews");
+  const dir = join(dataDir, "evals", "reviews");
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${new Date(nowMs).toISOString().slice(0, 10)}.md`);
   writeFileSync(path, body, { mode: 0o600 });

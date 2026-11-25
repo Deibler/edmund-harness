@@ -119,7 +119,7 @@ export function typingTools(ctx: ToolContext): ToolDef[] {
         }
 
         const dataDir = process.env.EDMUND_DATA_DIR ?? resolve("data");
-        const heartbeatDir = join(dataDir, "typing-heartbeats");
+        const heartbeatDir = join(dataDir, "run", "typing-heartbeats");
         if (!existsSync(heartbeatDir)) mkdirSync(heartbeatDir, { recursive: true });
         const sanitizedKey = ctx.sessionKey.replace(/[^a-zA-Z0-9]+/g, "_");
         const pidFile = join(heartbeatDir, `${sanitizedKey}.pid`);

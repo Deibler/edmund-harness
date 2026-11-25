@@ -13,7 +13,7 @@ import { type IndexRow, VectorStore, normalize } from "../src/memory/vector-stor
 
 function tempStore(): { store: VectorStore; path: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "recall-test-"));
-  const path = join(dir, "recall.sqlite");
+  const path = join(dir, "db", "recall.sqlite");
   const store = new VectorStore(path);
   return {
     store,
@@ -106,7 +106,7 @@ describe("VectorStore basics", () => {
 
   test("an FTS rebuild also repairs a same-sized stale rowid map", async () => {
     const dir = mkdtempSync(join(tmpdir(), "recall-test-"));
-    const path = join(dir, "recall.sqlite");
+    const path = join(dir, "db", "recall.sqlite");
     let store: VectorStore | null = new VectorStore(path);
     try {
       const v = await embed("stable dense vector");
@@ -160,7 +160,7 @@ describe("VectorStore basics", () => {
 
   test("a store opened without repair leaves a drifted shadow for the daemon", async () => {
     const dir = mkdtempSync(join(tmpdir(), "recall-test-"));
-    const path = join(dir, "recall.sqlite");
+    const path = join(dir, "db", "recall.sqlite");
     try {
       const v = await embed("stable dense vector");
       const first = new VectorStore(path);
@@ -198,7 +198,7 @@ describe("VectorStore basics", () => {
 
   test("repair catches a same-sized map pointing at the wrong documents", async () => {
     const dir = mkdtempSync(join(tmpdir(), "recall-test-"));
-    const path = join(dir, "recall.sqlite");
+    const path = join(dir, "db", "recall.sqlite");
     try {
       const v = await embed("stable dense vector");
       const first = new VectorStore(path);
@@ -432,7 +432,7 @@ describe("the search cache", () => {
 
   test("warms a slice at a time, yielding between slices", async () => {
     const dir = mkdtempSync(join(tmpdir(), "recall-warm-"));
-    const path = join(dir, "recall.sqlite");
+    const path = join(dir, "db", "recall.sqlite");
     const writer = new VectorStore(path);
     await twelve(writer);
     writer.close();
@@ -451,7 +451,7 @@ describe("the search cache", () => {
 
   test("a search part-way through a warm-up sees every row", async () => {
     const dir = mkdtempSync(join(tmpdir(), "recall-warm-"));
-    const path = join(dir, "recall.sqlite");
+    const path = join(dir, "db", "recall.sqlite");
     const writer = new VectorStore(path);
     await twelve(writer);
     writer.close();
@@ -470,7 +470,7 @@ describe("the search cache", () => {
 
   test("the daemon keeps its cache and warms it at boot", () => {
     const wire = readFileSync(join(import.meta.dir, "../src/boot/wire-recall.ts"), "utf8");
-    expect(wire).toMatch(/new VectorStore\(`[^`]+`, 0, \{/);
+    expect(wire).toMatch(/new VectorStore\(\s*resolve\([^)]+\),\s*0,\s*\{/);
     expect(wire).toContain(".warmCache()");
   });
 });

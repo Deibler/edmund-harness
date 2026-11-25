@@ -36,7 +36,7 @@ Terms as the code uses them. One sentence each.
 - **Operator**: the human who runs the daemon, reachable at `alerts.operator_handle`.
 - **Orchestrator**: a named persona with its own session namespace, persona overrides and sandbox.
 - **Outbox**: one undelivered reply per session, drained before any new model call for that session.
-- **Pending queue**: messages parked in `data/pending/` behind a turn in flight.
+- **Pending queue**: messages parked in `data/state/pending/` behind a turn in flight.
 - **Persona**: the `persona/` directory: identity, rules, venue behaviour and memory as markdown.
 - **Persona fingerprint**: a hash of the shared persona files; a change forces a fresh worker.
 - **Person file**: `persona/people/<slug>.md`, injected whole into that person's DM turns.

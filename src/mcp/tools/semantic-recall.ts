@@ -118,7 +118,7 @@ export function semanticRecallTools(ctx: ToolContext): ToolDef[] {
   };
   const getStore = (): VectorStore => {
     if (!storeSingleton) {
-      storeSingleton = new VectorStore(resolve(ctx.dataDir, cfg.index_db));
+      storeSingleton = new VectorStore(resolve(ctx.dataDir, "db", cfg.index_db));
     }
     return storeSingleton;
   };

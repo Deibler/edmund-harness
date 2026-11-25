@@ -71,7 +71,7 @@ export class SpendLedger {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "spend.db"));
+    this.db = openDb(join(dataDir, "db", "spend.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS turns (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

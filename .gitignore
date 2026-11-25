@@ -30,6 +30,7 @@ config.toml.bak*
 
 # ─── Runtime state & databases ───
 data/
+/logs/
 *.db
 *.db-journal
 *.db-wal

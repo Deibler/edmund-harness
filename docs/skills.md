@@ -60,7 +60,7 @@ actually exists.
 | Marketplace | `install_skill` from an allowlisted GitHub repository | every session | operator approval when scripts are present |
 
 The record for anything other than a shipped skill lives in
-`data/installed-skills.json`. A skill scoped to one chat answers "no such
+`data/state/installed-skills.json`. A skill scoped to one chat answers "no such
 skill" from any other chat, so its existence does not leak.
 
 ## Consent

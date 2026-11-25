@@ -6,7 +6,7 @@ import type { InboundMessage, UnnamedWake } from "../imessage/types.ts";
 /**
  * A parked inbound message — everything the coalesce gate needs to
  * reconstruct a faithful `InboundMessage` for the follow-up turn. Persisted
- * as one JSON line per message in `data/pending/<hash>.jsonl`.
+ * as one JSON line per message in `data/state/pending/<hash>.jsonl`.
  *
  * Fields beyond the original five (msgGuid, attachmentTranscripts,
  * replyToGuid, service, chatIdentifier, chatGuid, isGroup) were added later;
@@ -43,7 +43,7 @@ export type PendingEntry = {
 
 function pendingPath(dataDir: string, sessionKey: string): string {
   const hash = new Bun.CryptoHasher("sha256").update(sessionKey).digest("hex") as string;
-  return join(dataDir, "pending", `${hash.slice(0, 16)}.jsonl`);
+  return join(dataDir, "state", "pending", `${hash.slice(0, 16)}.jsonl`);
 }
 
 /**
@@ -59,7 +59,7 @@ export function writePending(
 ): void {
   try {
     const path = pendingPath(dataDir, sessionKey);
-    mkdirSync(join(dataDir, "pending"), { recursive: true });
+    mkdirSync(join(dataDir, "state", "pending"), { recursive: true });
     const entry: PendingEntry = { ...toPendingEntry(msg), ...(midTurnUuid ? { midTurnUuid } : {}) };
     appendFileSync(path, `${JSON.stringify(entry)}\n`);
   } catch (err) {

@@ -68,7 +68,7 @@ export class RefreshScriptStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "refresh.db"));
+    this.db = openDb(join(dataDir, "db", "refresh.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS refresh_scripts (
         id TEXT PRIMARY KEY,

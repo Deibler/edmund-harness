@@ -64,7 +64,7 @@ async function indexArtifact(args: IndexArtifactArgs): Promise<boolean> {
     return false;
   }
 
-  const dbPath = resolve(args.config.paths.data_dir, cfg.index_db);
+  const dbPath = resolve(args.config.paths.data_dir, "db", cfg.index_db);
   const store = new VectorStore(dbPath);
   try {
     store.upsert([

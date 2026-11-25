@@ -143,7 +143,7 @@ resets with time, because in a real runaway the errors reinforce each other.
 **Derived, not stored.** Each check reads the streak from the records:
 
 - chat.db gives the last message that named him or swipe-replied to him;
-- `data/addressing.jsonl` gives the wakes after it, with the rate each was
+- `data/state/addressing.jsonl` gives the wakes after it, with the rate each was
   judged at.
 
 A restart loses nothing, and there is no counter to drift. Checks in one chat
@@ -171,14 +171,14 @@ better input, not a lower budget.
 
 ## Recalibrating
 
-1. Label messages in `data/addressing/labels.json`, which is gitignored:
+1. Label messages in `data/evals/addressing/labels.json`, which is gitignored:
    `{"labels": [{"row": <chat.db ROWID>, "label": "yes" | "yes-ish" | "ambiguous" | "no"}]}`.
-   Live decisions in `data/addressing.jsonl` carry the row id, so the messages
+   Live decisions in `data/state/addressing.jsonl` carry the row id, so the messages
    people corrected him on make good labels.
 2. Run `bun scripts/addressing-calibrate.ts`. It rebuilds each row as of its
    own moment, asks Jev exactly what production asks, prints the table for
    several thresholds, and writes
-   `data/addressing/calibration-<version>.json`. That file includes the `rates`
+   `data/evals/addressing/calibration-<version>.json`. That file includes the `rates`
    the daemon uses. It costs about $0.00005 per candidate.
 3. Restart the daemon to load the new rates.
 
@@ -191,7 +191,7 @@ daemon logs that it has done so.
 
 ## What is recorded
 
-For each decision, `data/addressing.jsonl` holds:
+For each decision, `data/state/addressing.jsonl` holds:
 
 - the row id and chat;
 - the mode and the question version;

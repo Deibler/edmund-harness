@@ -353,7 +353,7 @@ export function eraseAll(args: {
 
   // 4. Search index rows for this chat (+ any artifact rows under the sandbox).
   try {
-    const vecPath = join(args.config.paths.data_dir, "vector.db");
+    const vecPath = join(args.config.paths.data_dir, "db", "vector.db");
     if (existsSync(vecPath)) {
       const db = new Database(vecPath);
       try {

@@ -25,7 +25,7 @@ that was never built.
 Changes to either are local to the machine and are not recoverable from the
 remote. `config.example.toml` *is* tracked; document new config there.
 Gitignored state also escapes `git revert`, so a revert can leave the system in
-a mixed state: sweep `persona/` and `data/state.db` session bindings too.
+a mixed state: sweep `persona/` and `data/db/state.db` session bindings too.
 
 **Never paste a real key into `config.example.toml`.** It is tracked and
 pushed. It has happened by hand and was caught only by reading the diff. Check
@@ -117,7 +117,7 @@ worker that loaded `@huggingface/transformers` and was let go after a minute
 idle: the next one's import answered "Cannot find module" until the daemon
 restarted (four outages, 364 turns without recall, 2026-10-30 to 2026-11-16)
 or segfaulted the daemon (8 of the 13 crash reports in
-`data/launchd.err.log`). The package was on disk the whole time. Reproduced
+`logs/services/launchd.err.log`). The package was on disk the whole time. Reproduced
 outside the daemon on 2026-11-25: 5 of 30 processes. Bun 1.4.5 did not
 reproduce it; 1.3.14 instead dies when a worker holding an ONNX model is
 terminated, so "a newer Bun" is not one thing.
@@ -136,7 +136,7 @@ Automation): launchd starts it through `/bin/bash`, which holds them, and a
 versioned Cellar path and do not follow an upgrade, which matters only for a
 `bun` started outside launchd and outside a terminal that has its own.
 
-Two things about runtime crashes. The report is in `data/launchd.err.log`,
+Two things about runtime crashes. The report is in `logs/services/launchd.err.log`,
 not `daemon.log`; the boot after one now logs `[boot] the previous run ended
 in a runtime crash`. And a report decodes without the vendor's site: the
 `bun-darwin-aarch64-profile` release has the symbols, and the addresses in the
@@ -183,8 +183,8 @@ Cron arithmetic stays in absolute time. `setSeconds`, `setMinutes` and
 name the earlier of two instants.
 
 ## Logs: one line, two places, and hooks that are process-wide
-`log.info(tag, …)` writes the line to `data/daemon.log` and a record to the
-tag's channel under `data/logs/` (`src/util/log-channels.ts`). A new tag
+`log.info(tag, …)` writes the line to `logs/daemon.log` and a record to the
+tag's channel under `logs/` (`src/util/log-channels.ts`). A new tag
 needs a channel there or `tests/log-channels.test.ts` fails. Outbound
 requests, child processes and fatal exceptions are recorded by hooks installed
 with the log sink (`src/util/log-instrument.ts`): `node:child_process` runs
@@ -200,7 +200,13 @@ place a query is kept is `browse`, where it is often the page; it goes
 through `loggableUrl`, which hides the values of credential-like parameters.
 
 A path built under the data folder needs an entry in
-`src/util/data-layout.ts` (`tests/data-layout.test.ts`).
+`src/util/data-layout.ts` (`tests/data-layout.test.ts`), and nothing goes
+loose at the top of it: databases in `db/`, files rewritten at every start
+in `run/`, tokens in `secrets/`, small durable files in `state/`, a feature's
+own files in a folder named for it. Logs are not in `data/` at all; they are
+in `logs/` at the top of the checkout. A service refuses to start on a data
+folder still in the old flat layout (`edmund data migrate`): opening
+`db/state.db` beside an unmoved `state.db` would be two copies of the state.
 
 ## stdout is sacred in MCP servers
 `src/mcp/server.ts` speaks JSON-RPC over stdout. A stray `console.log` corrupts

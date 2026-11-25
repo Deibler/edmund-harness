@@ -4,7 +4,7 @@
 # Starts a free TryCloudflare quick tunnel pointing at the daemon's Grok MCP
 # listener (127.0.0.1:[grok].port, default 4796 — token-gated /mcp only). The
 # randomly-assigned https://*.trycloudflare.com URL is written to
-# data/grok-tunnel-url, and the full connector URL to data/grok-connector-url.
+# data/run/grok-tunnel-url, and the full connector URL to data/grok-connector-url.
 #
 # The hostname CHANGES every time this restarts, so the connector URL pasted into
 # Grok goes stale then. A named tunnel (stable hostname) needs a Cloudflare token
@@ -12,9 +12,10 @@
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 PORT="${GROK_PORT:-4796}"
-URL_FILE="$REPO/data/grok-tunnel-url"
-LOG="$REPO/data/grok-tunnel.log"
+URL_FILE="$REPO/data/run/grok-tunnel-url"
+LOG="$REPO/logs/services/grok-tunnel.log"
 
+mkdir -p "$REPO/logs/services" "$REPO/data/run"
 rm -f "$URL_FILE"
 : > "$LOG"
 

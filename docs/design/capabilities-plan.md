@@ -49,10 +49,10 @@ fastest delivery vehicle for them.
   - `search_marketplace(query, source?)` → list of `{name, source, description, version}`
   - `install_skill(name, source)` → writes `skills/<name>/`, refuses if name exists
   - `uninstall_skill(name)` → moves to `skills/.trash/<name>.<ts>/`
-  - `list_installed_skills()` → reads `data/installed-skills.json`
+  - `list_installed_skills()` → reads `data/state/installed-skills.json`
 - Hot-reload: the existing `list_skills` reads the dir each call, so no
   loader changes needed.
-- Persistence: `data/installed-skills.json` records `{name, source, sha, installed_at, first_used_at}`.
+- Persistence: `data/state/installed-skills.json` records `{name, source, sha, installed_at, first_used_at}`.
 
 **Safety (non-negotiable).**
 

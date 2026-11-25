@@ -11,9 +11,9 @@ paths, and the `edmund` command wraps it.
 
 | Label | Runs | Log |
 |---|---|---|
-| `com.edmund-harness` | the daemon, through `run-daemon.sh` which sources `.env` | `data/daemon.log` |
-| `com.edmund-harness.dashboard` | operator dashboard and portal | `data/dashboard.log` |
-| `com.edmund-harness.fishing` | a separate data platform | `data/fishing.launchd.out.log` |
+| `com.edmund-harness` | the daemon, through `run-daemon.sh` which sources `.env` | `logs/daemon.log` |
+| `com.edmund-harness.dashboard` | operator dashboard and portal | `logs/dashboard.log` |
+| `com.edmund-harness.fishing` | a separate data platform | `logs/services/fishing.launchd.out.log` |
 
 Two things about the daemon plist. It launches `bun` through a bash wrapper
 because launching bun directly as the program hung at startup. And it sets
@@ -36,7 +36,7 @@ fight over the watcher.
 
 There are two kinds of log, written from the same events.
 
-**The operational log**, `data/daemon.log`, is every line in the order it
+**The operational log**, `logs/daemon.log`, is every line in the order it
 happened: the daemon, the MCP servers (prefixed `mcp[<session>]`) and
 sub-agents (prefixed `agent[<id>]`). Each line is a timestamp, a level, a
 scope tag, and key value pairs. Read it with `edmund logs`, which shows who
@@ -51,7 +51,7 @@ memory restart held back until a running turn ends. What stays visible is
 what did not resolve: the alert-level failure, the restart that happened,
 recall that cannot run.
 
-**The channels**, `data/logs/<channel>/<day>.jsonl`, hold the same events
+**The channels**, `logs/<channel>/<day>.jsonl`, hold the same events
 filed by subject, one JSON record a line with its fields intact, plus the
 things that are recorded and never printed. `edmund logs channels` lists them
 with their sizes.
@@ -128,18 +128,18 @@ two samples appears as its exit record only when this process started it.
 ### Rotation and size
 
 Days are UTC, like the timestamps. When the day changes `daemon.log` is moved
-to `data/logs/daemon/<day>.log` and a new one started; `edmund logs` and the
+to `logs/daemon/<day>.log` and a new one started; `edmund logs` and the
 dashboard follow the new file. `[logs]` in the config sets the rest: files
 are compressed after `compress_after_days` (2), removed after
-`retention_days` (30), and the whole of `data/logs` is held under
+`retention_days` (30), and the whole of `logs/` (the archive excluded) is held under
 `max_total_mb` (2048) by dropping the oldest days. The daemon does this
 hourly; `edmund logs tidy` does it now.
 
-`data/logs/archive/` holds what predates rotation and what was copied out of
+`logs/archive/` holds what predates rotation and what was copied out of
 a log some other program appends to. Nothing removes it but you.
 
-launchd keeps the daemon's raw output in `data/launchd.out.log` and
-`data/launchd.err.log`. Under launchd the daemon no longer prints its log
+launchd keeps the daemon's raw output in `logs/services/launchd.out.log` and
+`logs/services/launchd.err.log`. Under launchd the daemon no longer prints its log
 lines there as well, so those files hold only what bypassed the logger: lines
 from before logging started, a child's inherited output, and a runtime crash
 report. One over `capture_max_mb` (20) is compressed into the archive and
@@ -157,19 +157,34 @@ and reinstalls; remember to turn it off before committing.
 
 ## The data folder
 
-`edmund data audit` lists what is at the top of `data/` against the declared
-layout (`src/util/data-layout.ts`): what each entry is and what writes it,
-what a removed feature left behind, what is a backup somebody made by hand,
-what is stale (undeclared, and either empty for 30 days or a log untouched
-for 90), and what nothing accounts for. `edmund data clean` shows what it
-would move aside and `--apply` does it: retired and stale entries and backups
-older than 30 days go to `data/.trash/<day>/` and are deleted 30 days later,
-and old files in a declared cache are removed. An entry the layout does not know is listed and
-never touched, and neither is a file a process still has open.
+Nothing sits loose at the top of `data/`: databases are in `db/`, files
+rewritten at every start in `run/`, tokens and certificates in `secrets/`,
+small durable files in `state/`, and each feature that keeps files has a
+folder of its own ([architecture](architecture.md#what-is-on-disk) lists them).
+Logs are not in it at all; they are in `logs/`.
+
+`edmund data audit` holds the folder against the declared layout
+(`src/util/data-layout.ts`): what each entry is and what writes it, what is
+still in the old flat layout, what a removed feature left behind, what is a
+backup somebody made by hand, what is stale (undeclared, and empty for 30
+days), and what nothing accounts for. `edmund data clean` shows what it would
+move aside and `--apply` does it: retired and stale entries and backups older
+than 30 days go to `data/.trash/<day>/` and are deleted 30 days later, and old
+files in a declared cache are removed. An entry the layout does not know is
+listed and never touched, and neither is a file a process still has open.
+
+A folder from before 2026-11-25 has everything at the top. The daemon, the
+dashboard and the public router refuse to start on one, because opening the
+databases where they now belong would find nothing there. Stop every service,
+then `edmund data migrate` to see the moves and `edmund data migrate --apply`
+to make them. It is renames on one disk, overwrites nothing, stops before
+moving anything if a database is open somewhere, and can be run again. A log
+some other program still has open (a tunnel that was not restarted) is left
+in place and moves the next time, once that program has restarted.
 
 ## Spend
 
-`data/spend.db` has one row per model invocation with the CLI's own cost
+`data/db/spend.db` has one row per model invocation with the CLI's own cost
 figure, the session, the subsystem (turn, cron, agent, ghost, maintainer,
 catch-up and so on), duration and measured context. A daily rollup table sits
 beside it. The dashboard Overview reads both. There is no estimation anywhere;
@@ -186,7 +201,7 @@ and outbound, the provider thread id, and the last failure class with heal
 attempts. `edmund sessions pending` shows orphaned inbound acks, which is what
 a message that never got a turn looks like.
 
-State is in `data/state.db`. Do not edit it by hand while the daemon runs.
+State is in `data/db/state.db`. Do not edit it by hand while the daemon runs.
 
 ## Interventions
 
@@ -214,7 +229,7 @@ eight hours. A Claude CLI update that fails the canary alerts too.
 
 ## Weekly review
 
-`edmund review [--days 7] [--sample 40]` writes `data/reviews/<date>.md`: DM
+`edmund review [--days 7] [--sample 40]` writes `data/evals/reviews/<date>.md`: DM
 reply times, DMs unanswered after a day, every correction people sent,
 control words that reached a person, background failures from the log, and a
 sample of real exchanges to mark pass or fail with the first thing that went

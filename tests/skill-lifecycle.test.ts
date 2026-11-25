@@ -83,7 +83,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "lifecycle-"));
   skillsRoot = join(dir, "skills");
   mkdirSync(skillsRoot, { recursive: true });
-  dbPath = join(dir, "installed-skills.json");
+  dbPath = join(dir, "state", "installed-skills.json");
   // Schema defaults, so the test pins the shipped numbers rather than its own.
   config = loadConfig(join(import.meta.dir, "..", "config.example.toml"));
 });
@@ -186,7 +186,7 @@ describe("the retention trap", () => {
       e.skill === "old-read" ? { ...e, at_ms: now - 500 * DAY } : e,
     );
     writeFileSync(
-      join(dir, "skill-usage.jsonl"),
+      join(dir, "state", "skill-usage.jsonl"),
       events.map((e) => `${JSON.stringify(e)}\n`).join(""),
     );
 
@@ -209,7 +209,9 @@ describe("the usage log", () => {
 
   test("a torn line from a crashed append does not lose the rest of the log", () => {
     recordSkillRead(dir, "before", "chatA");
-    writeFileSync(join(dir, "skill-usage.jsonl"), `${'{"skill":"before"'}\n`, { flag: "a" });
+    writeFileSync(join(dir, "state", "skill-usage.jsonl"), `${'{"skill":"before"'}\n`, {
+      flag: "a",
+    });
     recordSkillRead(dir, "after", "chatA");
     const skills = readUsageEvents(dir).map((e) => e.skill);
     expect(skills).toContain("before");
@@ -327,7 +329,8 @@ describe("a review verdict of revise", () => {
       mkdirSync(skillsRoot, { recursive: true });
       setup();
       const state = new StateStore(dir);
-      const recall = new Database(join(dir, "recall.sqlite"));
+      mkdirSync(join(dir, "db"), { recursive: true });
+      const recall = new Database(join(dir, "db", "recall.sqlite"));
       recall.exec(
         `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
                             ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,

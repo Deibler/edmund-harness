@@ -33,10 +33,10 @@ import {
 } from "../../src/util/log-files.ts";
 import type { Parsed } from "../args.ts";
 import { getString, hasFlag } from "../args.ts";
-import { REPO } from "../services/paths.ts";
+import { LOGS_DIR, REPO } from "../services/paths.ts";
 import { color, fail, info, ok, print, table } from "../ui.ts";
 
-const dataDir = (): string => process.env.EDMUND_DATA_DIR ?? resolve(REPO, "data");
+const logsDir = (): string => LOGS_DIR;
 
 export function isLogSubcommand(word: string | undefined): boolean {
   return (
@@ -159,7 +159,7 @@ function passes(record: ChannelRecord, f: Filters): boolean {
 // --- one channel -----------------------------------------------------------
 
 async function showChannel(p: Parsed, channel: Channel): Promise<void> {
-  const dir = dataDir();
+  const dir = logsDir();
   const filters = filtersFrom(p);
   const json = hasFlag(p, "json");
   const count = Number(getString(p, "lines", "n") ?? "200");
@@ -233,7 +233,7 @@ function sizeOf(path: string): number {
 // --- what there is ---------------------------------------------------------
 
 function listChannels(): void {
-  const dir = dataDir();
+  const dir = logsDir();
   const today = utcDay();
   const rows: string[][] = [];
   let total = 0;
@@ -254,7 +254,7 @@ function listChannels(): void {
   const archived = folderBytes(archiveDir(dir));
   print();
   const inArchive = archived > 0 ? `, ${bytes(archived)} in the archive` : "";
-  print(`${bytes(total)} in channels under ${color.dim(resolve(dir, "logs"))}${inArchive}`);
+  print(`${bytes(total)} in channels under ${color.dim(dir)}${inArchive}`);
   print(color.dim("edmund logs <channel> [--since 2h] [-f] [--session NAME] [--grep RE] [--json]"));
 }
 
@@ -346,7 +346,7 @@ function trace(p: Parsed, what: string | undefined): void {
     process.exit(1);
   }
   const minutes = Number(getString(p, "minutes", "m") ?? (atText ? "5" : "10"));
-  const result = collectTrace(dataDir(), what, {
+  const result = collectTrace(logsDir(), what, {
     atMs: atMs ?? undefined,
     minutes,
     all: hasFlag(p, "all", "a"),
@@ -389,7 +389,7 @@ async function tidy(): Promise<void> {
   } catch {
     // No config: the defaults.
   }
-  const report = await runLogJanitor(dataDir(), policy);
+  const report = await runLogJanitor(logsDir(), policy);
   ok(
     `filed ${report.settled.files} rotated log(s) into ${report.settled.days} day(s), compressed ${report.compressed}, removed ${report.removed} (${bytes(report.removedBytes)})`,
   );

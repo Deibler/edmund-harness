@@ -39,7 +39,7 @@ export async function persistEpisodicSummary(args: {
         openaiKey: args.config.keys.openai,
       });
     }
-    if (!store) store = new VectorStore(resolve(args.dataDir, cfg.index_db));
+    if (!store) store = new VectorStore(resolve(args.dataDir, "db", cfg.index_db));
 
     const from = new Date(args.sinceMs).toISOString().slice(0, 10);
     const to = new Date(args.untilMs).toISOString().slice(0, 10);

@@ -42,7 +42,7 @@ export class BgJobStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "bg_jobs.db"));
+    this.db = openDb(join(dataDir, "db", "bg_jobs.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bg_jobs (
         id TEXT PRIMARY KEY,

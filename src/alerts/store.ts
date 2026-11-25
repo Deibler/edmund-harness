@@ -31,7 +31,7 @@ export class AlertStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "alerts.db"));
+    this.db = openDb(join(dataDir, "db", "alerts.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

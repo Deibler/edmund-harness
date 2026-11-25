@@ -101,7 +101,7 @@ EMAIL — adding the phone number makes any group green by SMS's nature.
    (<tunnel-uuid>) runs under
    com.edmund-harness.sms-tunnel; https://sms.example.com maps to
    127.0.0.1:4790, verified end-to-end (200 with a listener, 502 without,
-   catch-all 404). Token: data/sms-tunnel-token (600). Expect 502 until the
+   catch-all 404). Token: data/secrets/sms-tunnel-token (600). Expect 502 until the
    daemon starts its listener; 530/1033 would mean the tunnel itself is down.
 3. `config.toml` → `[sms] enabled = true`.
 4. Restart the daemon. Boot log should show `[sms] webhook listener on

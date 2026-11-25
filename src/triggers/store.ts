@@ -88,7 +88,7 @@ export class DataTriggerStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "triggers.db"));
+    this.db = openDb(join(dataDir, "db", "triggers.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS triggers (
         id TEXT PRIMARY KEY,

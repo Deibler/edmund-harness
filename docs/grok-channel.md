@@ -376,7 +376,7 @@ Text Edmund: "Give my Grok Bot a quick task: reply with the word pong." He calls
 
 ```
 scripts/launchd/service.sh grok-tunnel install
-cat data/grok-tunnel-url        # https://<random>.trycloudflare.com
+cat data/run/grok-tunnel-url        # https://<random>.trycloudflare.com
 ```
 
 The connector URL is `<tunnel url>/mcp?key=<token>`, or `<tunnel url>/mcp` with

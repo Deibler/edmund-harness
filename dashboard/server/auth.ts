@@ -3,22 +3,23 @@
  *
  * - PIN hash lives in config.toml under `[dashboard] pin_hash`. Hashed with
  *   Bun.password (argon2id by default).
- * - Server-side secret used to sign cookies lives at `data/dashboard.secret`.
+ * - Server-side secret used to sign cookies lives at `data/secrets/dashboard.secret`.
  *   Auto-created with 0600 permissions on first boot.
  * - Cookie payload is `base64url({v:1, sub:"user", exp:<ms>})`. Signature is
  *   hex HMAC-SHA256 of the payload using the secret.
  */
 
 import { createHmac, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export function loadOrCreateSecret(dataDir: string): Buffer {
-  const secretPath = join(dataDir, "dashboard.secret");
+  const secretPath = join(dataDir, "secrets", "dashboard.secret");
   if (existsSync(secretPath)) {
     return Buffer.from(readFileSync(secretPath, "utf8").trim(), "hex");
   }
   const secret = randomBytes(32);
+  mkdirSync(dirname(secretPath), { recursive: true, mode: 0o700 });
   writeFileSync(secretPath, secret.toString("hex"), { encoding: "utf8", mode: 0o600 });
   try {
     chmodSync(secretPath, 0o600);

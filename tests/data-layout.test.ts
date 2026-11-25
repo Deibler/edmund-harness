@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DATA_LAYOUT,
+  GROUP_FOLDERS,
   RETIRED_DATA,
   applyClean,
   auditDataDir,
@@ -44,15 +45,19 @@ function put(name: string, ageDays = 0, bytes = 10): string {
 }
 
 describe("every path the code builds under the data folder is declared", () => {
-  /** First path segment after the data folder, wherever the code joins or interpolates one. */
+  /**
+   * The path the code builds after the data folder, wherever it joins or
+   * interpolates one: the first segment, and for the four group folders the
+   * one inside it (`db/state.db`), since those are declared file by file.
+   */
   function namesInCode(): Map<string, string> {
     const found = new Map<string, string>();
     const patterns = [
       // join(dataDir, "x"), join(resolve(config.paths.data_dir), "x"), join(dataDir(), "x")
       // The data folder itself must be the first argument: join(printerDir(dataDir), "x") is a path
       // inside a folder that is already declared.
-      /(?:join|resolve)\(\s*(?:resolve\(\s*)?[\w.]*?(?:data_dir|dataDir|DATA_DIR)(?:\(\))?\s*\)?\s*,\s*"([^"]+)"/g,
-      /\$\{[^}]*(?:data_dir|dataDir)[^}]*\}\/([A-Za-z0-9_.\-]+)/g,
+      /(?:join|resolve)\(\s*(?:resolve\(\s*)?[\w.]*?(?:data_dir|dataDir|DATA_DIR)(?:\(\))?\s*\)?\s*,\s*"([^"]+)"(?:\s*,\s*"([^"]+)")?/g,
+      /\$\{[^}]*(?:data_dir|dataDir)[^}]*\}\/([A-Za-z0-9_.\-]+)(?:\/([A-Za-z0-9_.\-]+))?/g,
     ];
     for (const top of ["src", "scripts", "cli", "dashboard/server", "integrations"]) {
       for (const rel of new Bun.Glob("**/*.ts").scanSync({ cwd: join(ROOT, top) })) {
@@ -60,11 +65,16 @@ describe("every path the code builds under the data folder is declared", () => {
         if (file.includes(".test.") || file.includes("/test/") || file.includes("node_modules")) {
           continue;
         }
+        // The migration names the old places on purpose.
+        if (file === "src/util/data-migrate.ts") continue;
         const text = readFileSync(join(ROOT, file), "utf8");
         for (const pattern of patterns) {
           for (const m of text.matchAll(pattern)) {
-            const name = m[1]!.split("/")[0]!;
-            if (name) found.set(name, file);
+            const first = m[1]!.split("/")[0]!;
+            if (!first) continue;
+            const inside = m[1]!.split("/")[1] ?? m[2];
+            const grouped = (GROUP_FOLDERS as readonly string[]).includes(first) && inside;
+            found.set(grouped ? `${first}/${inside}` : first, file);
           }
         }
       }
@@ -72,13 +82,9 @@ describe("every path the code builds under the data folder is declared", () => {
     return found;
   }
 
-  // Arguments that follow a data folder in a call and are not paths in it.
-  const NOT_A_PATH = new Set(["[dash] ", "public-router", ""]);
-
   test("no undeclared name", () => {
     const undeclared: string[] = [];
     for (const [name, file] of namesInCode()) {
-      if (NOT_A_PATH.has(name)) continue;
       // A name the code only completes later (`grok-connector-url.`) matches by its prefix.
       const declared =
         entryFor(name) ?? DATA_LAYOUT.find((e) => e.name.includes("*") && e.name.startsWith(name));
@@ -89,10 +95,26 @@ describe("every path the code builds under the data folder is declared", () => {
 
   test("the scan finds the paths it is meant to", () => {
     const names = namesInCode();
-    for (const expected of ["state.db", "daemon.log", "cron.db", "logs", "turn-workers"]) {
+    for (const expected of [
+      "db/state.db",
+      "db/cron.db",
+      "run/turn-workers",
+      "run/pool-stats.json",
+      "secrets/dashboard.secret",
+      "state/skill-usage.jsonl",
+      "printer",
+    ]) {
       expect(names.has(expected)).toBe(true);
     }
-    expect(names.size).toBeGreaterThan(50);
+    expect(names.size).toBeGreaterThan(45);
+  });
+
+  test("nothing the code builds is at the top of the data folder but a folder", () => {
+    // The old layout: a database, a token or a log directly under data/.
+    const loose = [...namesInCode().keys()].filter(
+      (name) => !name.includes("/") && entryFor(name)?.kind !== "folder",
+    );
+    expect(loose).toEqual([]);
   });
 
   test("nothing is both declared and retired", () => {
@@ -103,40 +125,44 @@ describe("every path the code builds under the data folder is declared", () => {
 });
 
 describe("auditing a folder", () => {
-  test("sorts entries into known, retired, backup and unknown", () => {
-    put("state.db");
-    put("state.db-wal");
-    put("portal-tunnel-url");
-    put("portal-tunnel.log");
-    put("mcp-guest.json");
+  test("sorts entries into known, retired, backup, stale and unknown", () => {
+    put("db/state.db");
+    put("db/state.db-wal");
+    put("run/portal-tunnel-url");
+    put("run/mcp-guest.json");
+    put("run/people-maintainer.kick");
+    put("secrets/dashboard.secret");
+    put("state/pending/abc.jsonl");
+    put("kitchen/tenants.json");
     put("trading.db");
     put("trading.db-shm");
     put("mcp-trading.json");
-    put("one-off-notes.log", 120);
-    put("fresh-notes.log", 5);
+    put("db/stray.db");
     put("typo.db", 45, 0);
     put("typo-today.db", 1, 0);
     put("spend.db.bak-2026-09-24T22-41-28-609Z");
     put("mystery/chrome-profile/Cookies", 0, 500);
-    put("logs/cron/2026-11-25.jsonl");
     const byName = new Map(auditDataDir(dir).map((f) => [f.name, f]));
-    expect(byName.get("state.db")!.entry!.kind).toBe("database");
-    expect(byName.get("state.db-wal")!.status).toBe("known");
-    expect(byName.get("portal-tunnel-url")!.entry!.kind).toBe("state");
-    expect(byName.get("portal-tunnel.log")!.entry!.kind).toBe("log");
-    expect(byName.get("mcp-guest.json")!.status).toBe("known");
+    expect(byName.get("db")!.entry!.kind).toBe("folder");
+    expect(byName.get("db/state.db")!.entry!.kind).toBe("database");
+    expect(byName.get("db/state.db-wal")!.status).toBe("known");
+    expect(byName.get("run/portal-tunnel-url")!.status).toBe("known");
+    expect(byName.get("run/mcp-guest.json")!.status).toBe("known");
+    expect(byName.get("run/people-maintainer.kick")!.status).toBe("known");
+    expect(byName.get("secrets/dashboard.secret")!.entry!.kind).toBe("secret");
+    expect(byName.get("state/pending")!.status).toBe("known");
+    expect(byName.get("kitchen")!.status).toBe("known");
     expect(byName.get("trading.db")!.status).toBe("retired");
     expect(byName.get("trading.db-shm")!.status).toBe("retired");
-    // Declared configs match `mcp-*.json`; the removed feature's is named as retired and that wins.
+    // A removed feature's config is named as retired, and that wins over where configs moved to.
     expect(byName.get("mcp-trading.json")!.status).toBe("retired");
-    // What no list could name: undeclared, and empty or a log, and long untouched.
-    expect(byName.get("one-off-notes.log")!.status).toBe("stale");
-    expect(byName.get("fresh-notes.log")!.status).toBe("unknown");
+    // Inside a group folder everything is declared one by one.
+    expect(byName.get("db/stray.db")!.status).toBe("unknown");
+    // What no list could name: undeclared, empty, and long untouched.
     expect(byName.get("typo.db")!.status).toBe("stale");
     expect(byName.get("typo-today.db")!.status).toBe("unknown");
     expect(byName.get("spend.db.bak-2026-09-24T22-41-28-609Z")!.status).toBe("backup");
     expect(byName.get("mystery")).toMatchObject({ status: "unknown", bytes: 500, isFolder: true });
-    expect(byName.get("logs")!.status).toBe("known");
   });
 });
 

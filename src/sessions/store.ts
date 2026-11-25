@@ -74,7 +74,7 @@ export class StateStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    const path = join(dataDir, "state.db");
+    const path = join(dataDir, "db", "state.db");
     mkdirSync(dirname(path), { recursive: true });
     this.db = openDb(path);
     this.migrate();
@@ -163,7 +163,7 @@ export class StateStore {
       -- A row that survives a boot means the daemon died between "cursor
       -- committed" and "turn ran" (e.g. inside the debounce window) — boot
       -- replays it through the normal catch-up coalescer. entry_json is a
-      -- PendingEntry (same shape as data/pending/*.jsonl lines).
+      -- PendingEntry (same shape as data/state/pending/*.jsonl lines).
       CREATE TABLE IF NOT EXISTS inbound_ack (
         row_id       INTEGER PRIMARY KEY,
         session_key  TEXT NOT NULL,

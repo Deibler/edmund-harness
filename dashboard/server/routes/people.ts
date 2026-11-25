@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
-import { existsSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { Hono } from "hono";
 import type { Config } from "../../../src/config/config.ts";
 import type { ChatDb } from "../../../src/imessage/db.ts";
@@ -26,7 +26,7 @@ export function peopleRoutes(deps: {
 }): Hono {
   const app = new Hono();
   const peopleDir = resolve(deps.repoRoot, "persona", "people");
-  const kickPath = resolve(deps.config.paths.data_dir, "people-maintainer.kick");
+  const kickPath = resolve(deps.config.paths.data_dir, "run", "people-maintainer.kick");
   const labelDeps = { contacts: deps.contacts, chatDb: deps.chatDb };
 
   app.get("/", (c) => {
@@ -74,6 +74,7 @@ export function peopleRoutes(deps: {
 
   app.post("/run", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { sessionKey?: string };
+    mkdirSync(dirname(kickPath), { recursive: true });
     writeFileSync(
       kickPath,
       JSON.stringify({ at: Date.now(), sessionKey: body.sessionKey ?? null }),

@@ -1,5 +1,5 @@
 /**
- * data/calls.db — every call, both sides of what was said, the notes taken,
+ * data/db/calls.db — every call, both sides of what was said, the notes taken,
  * and the queue of calls the model has asked for.
  *
  * Two processes write here: the daemon (calls, utterances, notes) and the MCP
@@ -112,7 +112,7 @@ function toRecord(row: CallRow): CallRecord {
 }
 
 export function callsDbPath(dataDir: string): string {
-  return join(dataDir, "calls.db");
+  return join(dataDir, "db", "calls.db");
 }
 
 export class CallStore {

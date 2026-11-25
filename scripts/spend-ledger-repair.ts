@@ -32,7 +32,7 @@ import { SpendLedger, localDay } from "../src/spend/ledger.ts";
 const apply = process.argv.includes("--apply");
 const dirFlag = process.argv.indexOf("--dir");
 const dataDir = dirFlag > 0 ? process.argv[dirFlag + 1]! : loadConfig().paths.data_dir;
-const path = join(dataDir, "spend.db");
+const path = join(dataDir, "db", "spend.db");
 // A dry run only reads. --apply opens through SpendLedger first, which adds
 // the session_total_usd / model_session_id columns if this ledger predates them.
 if (apply) new SpendLedger(dataDir).close();

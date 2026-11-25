@@ -27,7 +27,7 @@ import { gateInbound, isAssistantMentioned } from "./allowlist.ts";
  */
 
 /** Bump when the questions, criteria or state shape change: scores shift with
- *  wording, and the measured rates in data/addressing/calibration-<version>.json
+ *  wording, and the measured rates in data/evals/addressing/calibration-<version>.json
  *  belong to one wording. */
 export const ADDRESS_QUESTIONS_VERSION = "2026-09-24.2";
 
@@ -317,7 +317,12 @@ export function measuredRate(
 
 /** The measured table for the current wording, or null when there is none. */
 export function loadCalibration(dataDir: string): Calibration | null {
-  const path = join(dataDir, "addressing", `calibration-${ADDRESS_QUESTIONS_VERSION}.json`);
+  const path = join(
+    dataDir,
+    "evals",
+    "addressing",
+    `calibration-${ADDRESS_QUESTIONS_VERSION}.json`,
+  );
   if (!existsSync(path)) return null;
   try {
     const f = JSON.parse(readFileSync(path, "utf8")) as { version?: string; rates?: RateBand[] };
@@ -442,7 +447,7 @@ export type AddressCheckerOptions = {
 
 /**
  * Runs the check off the inbound path: the watcher has already moved on when
- * the answer arrives. Every decision is appended to data/addressing.jsonl
+ * the answer arrives. Every decision is appended to data/state/addressing.jsonl
  * (row id, scores, question version — never the text, which chat.db holds) so
  * thresholds can be recalibrated against what people did next.
  */
@@ -561,7 +566,7 @@ export class AddressChecker {
   private loggedWakes(chat: string): { row: number; rate: number }[] {
     if (!this.wakes) {
       this.wakes = new Map();
-      const path = join(this.o.config.paths.data_dir, "addressing.jsonl");
+      const path = join(this.o.config.paths.data_dir, "state", "addressing.jsonl");
       if (existsSync(path)) {
         for (const line of readFileSync(path, "utf8").split("\n")) {
           if (!line.trim()) continue;
@@ -699,7 +704,7 @@ export class AddressChecker {
       ...(d.error ? { err: d.error } : {}),
     });
     try {
-      const path = join(this.o.config.paths.data_dir, "addressing.jsonl");
+      const path = join(this.o.config.paths.data_dir, "state", "addressing.jsonl");
       mkdirSync(dirname(path), { recursive: true });
       appendFileSync(
         path,

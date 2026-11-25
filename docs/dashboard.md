@@ -25,7 +25,7 @@ one a tunnel should point at.
 
 The PIN is hashed with argon2 into `[dashboard].pin_hash`. A successful login
 sets an HMAC signed cookie whose secret is generated into
-`data/dashboard.secret` on first run. Every `/api/*` route except login checks
+`data/secrets/dashboard.secret` on first run. Every `/api/*` route except login checks
 it. The portal and payment routes use signed tokens instead and never see the
 PIN.
 
@@ -62,7 +62,7 @@ Both processes open the same SQLite files. For actions, the dashboard drops a
 sentinel file in `data/` (`pool-flush.kick`, `people-maintainer.kick`,
 `recall-reindex.kick`, `recovery-sweep.kick`) and the daemon acts within a few
 seconds. Daemon control shells out to the same `service.sh` the CLI uses.
-Worker pool state comes from `data/pool-stats.json`, rewritten every five
+Worker pool state comes from `data/run/pool-stats.json`, rewritten every five
 seconds.
 
 ## Exposing it

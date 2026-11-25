@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CronStore } from "../src/cron/store.ts";
@@ -56,7 +56,8 @@ describe("CronStore", () => {
       schedule: { kind: "once", atMs: Date.now() + 5_000 },
     });
     // Reach into the raw DB and corrupt one row + insert a totally bogus one.
-    const raw = new Database(join(dir, "cron.db"));
+    mkdirSync(join(dir, "db"), { recursive: true });
+    const raw = new Database(join(dir, "db", "cron.db"));
     raw.query("UPDATE jobs SET schedule_json = ? WHERE id = ?").run("not json at all", good.id);
     raw
       .query(
@@ -81,7 +82,8 @@ describe("CronStore", () => {
     expect(store.listActive()).toEqual([]);
 
     // And they've been flipped to 'canceled' in the DB (won't be retried).
-    const check = new Database(join(dir, "cron.db"));
+    mkdirSync(join(dir, "db"), { recursive: true });
+    const check = new Database(join(dir, "db", "cron.db"));
     const byId = new Map(
       (
         check.query("SELECT id, status FROM jobs").all() as Array<{ id: string; status: string }>
@@ -152,8 +154,9 @@ describe("CronStore", () => {
 
   test("jobs saved before the column existed read as not written by the harness", () => {
     store.close();
-    rmSync(join(dir, "cron.db"));
-    const old = new Database(join(dir, "cron.db"));
+    rmSync(join(dir, "db", "cron.db"));
+    mkdirSync(join(dir, "db"), { recursive: true });
+    const old = new Database(join(dir, "db", "cron.db"));
     old.exec(`CREATE TABLE jobs (
       id TEXT PRIMARY KEY, session_key TEXT NOT NULL, system_event TEXT NOT NULL,
       schedule_json TEXT NOT NULL, next_fire_ms INTEGER NOT NULL, created_at INTEGER NOT NULL,

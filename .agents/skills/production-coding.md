@@ -39,7 +39,7 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   for structured logging, `src/util/ids.ts` (`genId`) for idempotency keys,
   and `src/sessions/key.ts` (`SessionKey`, `chatIdFromKey`) for routing keys.
 - **Investigate before inventing.** Read `config.toml`, the live `data/`
-  directory, and `data/daemon.log` before writing a fix. The running daemon's
+  directory, and `logs/daemon.log` before writing a fix. The running daemon's
   state (SQLite rows, session JSONL files, cursor position) is the ground
   truth — not the config defaults.
 - **Keep files feature-scoped.** New MCP tools go in `src/mcp/tools/<name>.ts`
@@ -303,7 +303,7 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
   Template at `config.example.toml`.
 - **Secrets**: API keys in `[keys]` section of config.toml. Exported to env
   vars (EDMUND_OPENAI_KEY, etc.) by main.ts for subprocess inheritance.
-- **Logs**: `data/daemon.log` via `src/util/log-sink.ts` (overwrites on each
+- **Logs**: `logs/daemon.log` via `src/util/log-sink.ts` (overwrites on each
   boot). Structured: `[timestamp] [LEVEL] [tag] message {key: value}`.
   View with `bun run logs` (tail -F).
 
@@ -362,7 +362,7 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 - **Don't edit the wrong data directory.** The daemon writes to
   `./data/` relative to the harness root. The dashboard reads the same
   directory. Fixes that only touch source code and never verify against the
-  live `data/daemon.log` and SQLite files look correct and change nothing.
+  live `logs/daemon.log` and SQLite files look correct and change nothing.
 - **Don't put fixed `sleep`s in the hot path** — wait on real process exit
   (`imsg launch` completion), readiness (`PRAGMA data_version` changes,
   session lock release), or cache state (richBridgeAvailable probe TTL).
@@ -414,7 +414,7 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 
 ### Agent behaviour
 - **Don't thrash shared accounts or production while "figuring it out."**
-  Diagnose from `data/daemon.log`, `data/*.sqlite`, and
+  Diagnose from `logs/daemon.log`, `data/*.sqlite`, and
   `~/.claude/debug/<session-id>.txt` (Claude Code debug logs). One
   intentional probe, not a loop.
 - **Don't generalise from a single failure** to "this is permanently broken."
@@ -455,10 +455,10 @@ Everything is TypeScript, Bun-native SQLite for state, and Claude Code
 | MCP tools (server-side) | `src/mcp/server.ts`, `src/mcp/tools/*.ts` |
 | Persona files | `persona/IDENTITY.md`, `persona/SOUL.md`, `persona/HOME.md`, `persona/VENUE_*.md` |
 | Persona maintainer | `src/persona/maintainer-observer.ts` |
-| Live runtime state | `data/daemon.log`, `data/*.sqlite`, `data/pool-stats.json` |
+| Live runtime state | `logs/daemon.log`, `data/*.sqlite`, `data/run/pool-stats.json` |
 | Claude debug logs | `~/.claude/debug/<session-id>.txt` |
 | Restart | `launchctl kickstart -k gui/<uid>/com.edmund-harness` |
-| Logs | `bun run logs` (tail -F data/daemon.log) |
+| Logs | `bun run logs` (tail -F logs/daemon.log) |
 | Test suite | `bun test tests` |
 | TypeScript check | `bun run typecheck` (tsc --noEmit) |
 | Dependencies | `package.json` (Bun, @huggingface/transformers, @modelcontextprotocol/sdk, hono, zod, smol-toml) |

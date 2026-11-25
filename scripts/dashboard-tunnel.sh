@@ -25,10 +25,11 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${DASHBOARD_PORT:-4747}"
 CMD="${1:-up}"
 TTL="${2:-14400}"
-URL_FILE="$REPO/data/dashboard-tunnel-url"
-PID_FILE="$REPO/data/dashboard-tunnel.pid"
-LOG_FILE="$REPO/data/dashboard-tunnel.log"
+URL_FILE="$REPO/data/run/dashboard-tunnel-url"
+PID_FILE="$REPO/data/run/dashboard-tunnel.pid"
+LOG_FILE="$REPO/logs/services/dashboard-tunnel.log"
 HELPER="$REPO/scripts/cloudflared-quick-tunnel.sh"
+mkdir -p "$REPO/logs/services" "$REPO/data/run"
 
 # The helper (and the cloudflared under it) still running?
 alive() {

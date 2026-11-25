@@ -18,7 +18,7 @@ export type Mounts = Record<string, number>;
 const FILE = "web-mounts.json";
 
 function path(dataDir: string): string {
-  return join(dataDir, FILE);
+  return join(dataDir, "state", FILE);
 }
 
 export function readMounts(dataDir: string): Mounts {

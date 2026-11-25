@@ -23,9 +23,9 @@
     <integer>10</integer>
 
     <key>StandardOutPath</key>
-    <string>__HARNESS_ROOT__/data/kitchen-host.log</string>
+    <string>__HARNESS_ROOT__/logs/services/kitchen-host.log</string>
     <key>StandardErrorPath</key>
-    <string>__HARNESS_ROOT__/data/kitchen-host.log</string>
+    <string>__HARNESS_ROOT__/logs/services/kitchen-host.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

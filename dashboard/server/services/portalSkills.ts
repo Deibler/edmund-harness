@@ -56,9 +56,17 @@ export function listPortalSkills(sessionKey: SessionKey, deps: PortalSkillsDeps)
   const skillsRoot = resolve(deps.repoRoot, "skills");
   if (!existsSync(skillsRoot)) return [];
 
-  const dbPath = resolve(deps.config.paths.data_dir, deps.config.skills_marketplace.installed_db);
+  const dbPath = resolve(
+    deps.config.paths.data_dir,
+    "state",
+    deps.config.skills_marketplace.installed_db,
+  );
   const db = readDb(dbPath);
-  const consentDbPath = resolve(deps.config.paths.data_dir, deps.config.public_skills.consent_db);
+  const consentDbPath = resolve(
+    deps.config.paths.data_dir,
+    "state",
+    deps.config.public_skills.consent_db,
+  );
   const hidden = unavailableIntegrationSkills(deps.config);
 
   const out: PortalSkill[] = [];

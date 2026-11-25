@@ -1,5 +1,12 @@
 import { exec } from "node:child_process";
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -114,6 +121,7 @@ import { StateStore } from "./sessions/store.ts";
 import { defaultProbe } from "./triggers/evaluate.ts";
 import { DataTriggerStore } from "./triggers/store.ts";
 import { DataTriggerWatcher } from "./triggers/watcher.ts";
+import { prepareDataFolder } from "./util/data-migrate.ts";
 import { runLogJanitor } from "./util/log-files.ts";
 import { withoutProcessLog } from "./util/log-instrument.ts";
 import { installLogSink } from "./util/log-sink.ts";
@@ -130,16 +138,25 @@ async function main() {
   // Private umask and a sweep of what is already on disk: databases, logs,
   // secrets and the persona directory are for this account only.
   {
-    const report = hardenHarnessPermissions(process.cwd(), resolve(config.paths.data_dir));
+    const report = hardenHarnessPermissions(
+      process.cwd(),
+      resolve(config.paths.data_dir),
+      resolve(config.paths.logs_dir),
+    );
     if (report.errors.length > 0)
       console.warn("[boot] permission hardening", report.errors.join("; "));
   }
+  // Before anything opens a database: a folder in the old layout is moved by
+  // hand, with the services stopped, never guessed at.
+  prepareDataFolder(resolve(config.paths.data_dir));
   // Build the integration registry from [integrations] before anything asks
   // for tools or runtimes.
   initRegistryFromConfig(config);
   // Under launchd the terminal is a file: printing there as well wrote every
   // line twice. With a terminal attached (`bun src/main.ts`) lines still print.
-  const logPath = installLogSink(config.paths.data_dir, "", "daemon.log", {
+  // Every process this one starts logs to the same folder.
+  process.env.EDMUND_LOGS_DIR = resolve(config.paths.logs_dir);
+  const logPath = installLogSink(resolve(config.paths.logs_dir), "", "daemon.log", {
     echo: "tty",
     rotate: true,
     retentionDays: config.logs.retention_days,
@@ -318,8 +335,8 @@ async function main() {
     config,
     dataDir: config.paths.data_dir,
     skillsRoot: resolve(import.meta.dir, "..", "skills"),
-    dbPath: resolve(config.paths.data_dir, config.skills_marketplace.installed_db),
-    consentDbPath: resolve(config.paths.data_dir, config.public_skills.consent_db),
+    dbPath: resolve(config.paths.data_dir, "state", config.skills_marketplace.installed_db),
+    consentDbPath: resolve(config.paths.data_dir, "state", config.public_skills.consent_db),
     contacts,
     chatDb,
   });
@@ -335,8 +352,8 @@ async function main() {
   // an embedder that stays broken looked like messages with nothing to
   // recall; now the operator hears about it, and about its end.
   const { crashes, alert: alertCrash } = crashesSinceLastBoot({
-    stderrPath: join(config.paths.data_dir, "launchd.err.log"),
-    cursorPath: join(config.paths.data_dir, "runtime-crash-cursor.json"),
+    stderrPath: join(config.paths.logs_dir, "services", "launchd.err.log"),
+    cursorPath: join(config.paths.data_dir, "state", "runtime-crash-cursor.json"),
     entry: "main.ts",
   });
   for (const crash of crashes) {
@@ -470,7 +487,7 @@ async function main() {
   // `{ at, sessionKey }`. If sessionKey is null we run every enrolled
   // session sequentially (cheap — runNow is async and the maintainer
   // already has its own min-interval guard, which we bypass).
-  const peopleKickPath = `${config.paths.data_dir}/people-maintainer.kick`;
+  const peopleKickPath = `${config.paths.data_dir}/run/people-maintainer.kick`;
   const peopleKickTimer = setInterval(async () => {
     if (!existsSync(peopleKickPath)) return;
     let body: { sessionKey: string | null } = { sessionKey: null };
@@ -495,7 +512,7 @@ async function main() {
 
   const poolStatsTimer = setInterval(async () => {
     try {
-      const flushPath = `${config.paths.data_dir}/pool-flush.kick`;
+      const flushPath = `${config.paths.data_dir}/run/pool-flush.kick`;
       if (existsSync(flushPath)) {
         try {
           unlinkSync(flushPath);
@@ -505,13 +522,14 @@ async function main() {
       }
       const stats = getWorkerPoolStats();
       if (stats) {
-        const path = `${config.paths.data_dir}/pool-stats.json`;
+        const path = `${config.paths.data_dir}/run/pool-stats.json`;
         const payload = {
           ...stats,
           enabled: config.claude.pool.enabled,
           maxWorkers: config.claude.pool.max_workers,
           windowStartMs: Date.now(),
         };
+        mkdirSync(dirname(path), { recursive: true });
         writeFileSync(`${path}.tmp`, JSON.stringify(payload));
         renameSync(`${path}.tmp`, path);
       }
@@ -548,7 +566,7 @@ async function main() {
         const timer = setTimeout(() => process.kill(process.pid, "SIGTERM"), 250);
         timer.unref?.();
       },
-      writeStatus: atomicStatusWriter(`${config.paths.data_dir}/resource-status.json`),
+      writeStatus: atomicStatusWriter(`${config.paths.data_dir}/run/resource-status.json`),
       now: Date.now,
       log: (level, message) => console[level](message),
     },
@@ -577,7 +595,7 @@ async function main() {
     captureMaxMb: config.logs.capture_max_mb,
   };
   const tidyLogs = () =>
-    void runLogJanitor(resolve(config.paths.data_dir), logPolicy)
+    void runLogJanitor(resolve(config.paths.logs_dir), logPolicy)
       .then((report) => {
         const did =
           report.settled.files + report.compressed + report.removed + report.captured.length;
@@ -705,7 +723,7 @@ async function main() {
       // tunnel, someday) wins; otherwise the quick-tunnel URL file written by
       // run-sms-tunnel.sh is read PER REQUEST, because that hostname rotates
       // on every tunnel restart and a boot-time snapshot would go stale.
-      const tunnelUrlFile = `${config.paths.data_dir}/sms-tunnel-url`;
+      const tunnelUrlFile = `${config.paths.data_dir}/run/sms-tunnel-url`;
       const publicBase = (): string | null => {
         if (config.sms.public_base_url) return config.sms.public_base_url;
         try {

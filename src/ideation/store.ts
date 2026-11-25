@@ -8,7 +8,7 @@ import { openDb } from "../db/open.ts";
  * What Edmund built for people, and why: one row per page made for a
  * recurring interest, one row per pass of the ideator (so "why was nothing
  * built" can be read back), and the interest threads the last pass verified
- * (the portal's summary). Lives in data/ideations.db; the pages themselves in
+ * (the portal's summary). Lives in data/db/ideations.db; the pages themselves in
  * data/ideations/<id>/. The kitchen host reads it to serve pages and count
  * opens; the daemon writes everything else.
  */
@@ -137,7 +137,7 @@ export class IdeationStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "ideations.db"));
+    this.db = openDb(join(dataDir, "db", "ideations.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS ideations (
         id            TEXT PRIMARY KEY,

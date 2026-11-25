@@ -12,7 +12,7 @@ set -euo pipefail
 
 app=$1
 root=$(cd "$(dirname "$0")/../.." && pwd)
-dir="$root/data/signing"
+dir="$root/data/secrets/signing"
 keychain="$dir/edmund-signing.keychain-db"
 name="Edmund Call Audio Signing"
 

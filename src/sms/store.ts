@@ -118,7 +118,7 @@ export class SmsStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "state.db"));
+    this.db = openDb(join(dataDir, "db", "state.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sms_messages (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,

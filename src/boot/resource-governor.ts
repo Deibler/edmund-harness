@@ -1,7 +1,7 @@
 import { FFIType, dlopen, ptr } from "bun:ffi";
 import { execFile } from "node:child_process";
-import { renameSync, writeFileSync } from "node:fs";
-import { basename } from "node:path";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
 
 const MIB = 1024 * 1024;
 
@@ -220,6 +220,7 @@ export function defaultFootprintReader(): FootprintReader {
 export function atomicStatusWriter(path: string): (status: ResourceStatus) => void {
   return (status) => {
     const tmp = `${path}.tmp`;
+    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(tmp, `${JSON.stringify(status)}\n`);
     renameSync(tmp, path);
   };

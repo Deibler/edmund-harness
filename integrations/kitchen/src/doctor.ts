@@ -38,7 +38,7 @@ export type Report = { account: string; title: string; findings: Finding[] };
 const ok = (what: string, detail: string): Finding => ({ level: "ok", what, detail });
 
 const HOST_FIX =
-  "check `scripts/launchd/service.sh kitchen-host status` and data/kitchen-host.log; kitchen_site re-publishes it";
+  "check `scripts/launchd/service.sh kitchen-host status` and logs/services/kitchen-host.log; kitchen_site re-publishes it";
 const absent = (what: string, detail: string, fix?: string): Finding => ({
   level: "absent",
   what,

@@ -1,9 +1,9 @@
 /**
  * The log channels, and which channel each log tag belongs to.
  *
- * `data/daemon.log` stays the one operational log, every line in the order it
+ * `logs/daemon.log` stays the one operational log, every line in the order it
  * happened. Each line is also written, as a JSON record, to a channel file
- * under `data/logs/<channel>/<day>.jsonl`, so one subject can be read on its
+ * under `logs/<channel>/<day>.jsonl`, so one subject can be read on its
  * own: only the model's turns, only the scheduler, only what came in over the
  * network. Some channels hold records that never reach daemon.log because
  * there are too many of them to read in passing (`net-out`, `net-in`, `proc`,

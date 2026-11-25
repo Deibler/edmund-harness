@@ -27,7 +27,7 @@ export class CronStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "cron.db"));
+    this.db = openDb(join(dataDir, "db", "cron.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,

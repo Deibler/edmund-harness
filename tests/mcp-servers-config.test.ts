@@ -6,7 +6,15 @@
  * tokens are readable by this user alone.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexMcpConfigArgs } from "../src/codex/config.ts";
@@ -87,11 +95,13 @@ describe("configured MCP servers", () => {
   });
 
   test("every generated file is readable by this user only, even one that existed before", () => {
-    writeFileSync(join(dir, "mcp.json"), "{}", { mode: 0o644 });
+    mkdirSync(join(dir, "run"), { recursive: true });
+    writeFileSync(join(dir, "run", "mcp.json"), "{}", { mode: 0o644 });
     ensureMcpConfig(config({ skycam }));
-    const files = readdirSync(dir).filter((f) => f.startsWith("mcp") && f.endsWith(".json"));
+    const run = join(dir, "run");
+    const files = readdirSync(run).filter((f) => f.startsWith("mcp") && f.endsWith(".json"));
     expect(files.length).toBe(5);
-    for (const f of files) expect(statSync(join(dir, f)).mode & 0o777).toBe(0o600);
+    for (const f of files) expect(statSync(join(run, f)).mode & 0o777).toBe(0o600);
   });
 
   test("Codex gets the same server, with its headers", () => {

@@ -1,5 +1,5 @@
-import { existsSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { Hono } from "hono";
 import type { Config } from "../../../src/config/config.ts";
 import type { ChatDb } from "../../../src/imessage/db.ts";
@@ -15,7 +15,7 @@ export function recoveryRoutes(deps: {
   config: Config;
 }): Hono {
   const app = new Hono();
-  const kickPath = resolve(deps.config.paths.data_dir, "recovery-sweep.kick");
+  const kickPath = resolve(deps.config.paths.data_dir, "run", "recovery-sweep.kick");
   const labelDeps = { contacts: deps.contacts, chatDb: deps.chatDb };
 
   app.get("/", (c) => {
@@ -41,6 +41,7 @@ export function recoveryRoutes(deps: {
   });
 
   app.post("/sweep", (c) => {
+    mkdirSync(dirname(kickPath), { recursive: true });
     writeFileSync(kickPath, String(Date.now()));
     return c.json({ kicked: true });
   });

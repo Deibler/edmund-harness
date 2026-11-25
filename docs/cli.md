@@ -42,7 +42,7 @@ edmund logs trace <turn id | part of a name> [--at 14:05] [--minutes 5] [--all] 
 edmund logs tidy
 ```
 
-Tails `data/daemon.log` as a story of what the model is doing and for whom:
+Tails `logs/daemon.log` as a story of what the model is doing and for whom:
 
 ```
 20:23:46  INFO  message   Axolotl crew          ← Sam Rivera          2 msgs, 1 attachment
@@ -86,6 +86,7 @@ before the flags: `-f net-out` reads as "-f, with the value net-out".
 ```
 edmund data audit [--all]
 edmund data clean [--apply]
+edmund data migrate [--apply]
 ```
 
 `audit` holds `data/` against the declared layout: what each entry is and
@@ -95,6 +96,8 @@ what nothing accounts for. `clean` lists what it would move to
 than 30 days) and which
 expired cache files it would delete; `--apply` does it. Nothing the layout
 does not know is touched, and a file a process has open stays where it is.
+`migrate` moves a folder from the old flat layout into the grouped one and its
+logs out to `logs/`: stop every service first ([operations](operations.md#the-data-folder)).
 
 ## Sessions
 

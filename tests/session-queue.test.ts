@@ -81,7 +81,7 @@ describe("session-queue", () => {
     // A real write creates the pending dir + file with a deterministic name.
     writePending(KEY, inbound({ rowId: 1 }), dir);
     const { readdirSync } = require("node:fs") as typeof import("node:fs");
-    const file = join(dir, "pending", readdirSync(join(dir, "pending"))[0]!);
+    const file = join(dir, "state", "pending", readdirSync(join(dir, "state", "pending"))[0]!);
     // Append a line shaped like an older build wrote it (original 5 fields only).
     const legacy = {
       rowId: 7,

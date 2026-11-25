@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { Hono } from "hono";
 import type { ResourceStatus } from "../../../src/boot/resource-governor.ts";
 import type { Config } from "../../../src/config/config.ts";
@@ -7,14 +7,14 @@ import type { PoolStatsDto } from "../types.ts";
 
 /**
  * Claude worker-pool live state. The daemon writes a snapshot to
- * `${data_dir}/pool-stats.json` every 30s (see main.ts); we just read it.
+ * `${data_dir}/run/pool-stats.json` every 30s (see main.ts); we just read it.
  * Flushing the pool sends a kick file the daemon's main loop consumes.
  */
 export function poolRoutes(deps: { config: Config }): Hono {
   const app = new Hono();
-  const statsPath = resolve(deps.config.paths.data_dir, "pool-stats.json");
-  const resourcePath = resolve(deps.config.paths.data_dir, "resource-status.json");
-  const flushPath = resolve(deps.config.paths.data_dir, "pool-flush.kick");
+  const statsPath = resolve(deps.config.paths.data_dir, "run", "pool-stats.json");
+  const resourcePath = resolve(deps.config.paths.data_dir, "run", "resource-status.json");
+  const flushPath = resolve(deps.config.paths.data_dir, "run", "pool-flush.kick");
 
   const resources = (): ResourceStatus | null => {
     try {
@@ -55,6 +55,7 @@ export function poolRoutes(deps: { config: Config }): Hono {
   });
 
   app.post("/flush", (c) => {
+    mkdirSync(dirname(flushPath), { recursive: true });
     writeFileSync(flushPath, String(Date.now()));
     return c.json({ kicked: true });
   });

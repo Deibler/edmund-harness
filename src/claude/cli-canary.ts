@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { OperatorAlert } from "../alerts/operator-alert.ts";
 import { ISOLATED_SETTINGS_ARGS, directClaudeEnv } from "../model/direct-env.ts";
 import { log } from "../util/log.ts";
@@ -60,9 +60,9 @@ export function parseCliVersion(text: string): string | null {
   return text.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null;
 }
 
-/** The last version a canary ran against, from data/cli-version.json. */
+/** The last version a canary ran against, from data/state/cli-version.json. */
 export function readVersionRecord(dataDir: string): CliVersionRecord | null {
-  const path = join(dataDir, "cli-version.json");
+  const path = join(dataDir, "state", "cli-version.json");
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf8")) as CliVersionRecord;
@@ -171,7 +171,9 @@ export async function checkCliVersion(deps: {
     canary: result.ok ? "ok" : "failed",
     ...(result.ok ? {} : { detail: `${result.step}: ${result.detail}` }),
   };
-  writeFileSync(join(deps.dataDir, "cli-version.json"), `${JSON.stringify(record, null, 2)}\n`);
+  const recordPath = join(deps.dataDir, "state", "cli-version.json");
+  mkdirSync(dirname(recordPath), { recursive: true });
+  writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
   if (result.ok) {
     log.info("cli-canary", "Claude CLI checked", {
       version,

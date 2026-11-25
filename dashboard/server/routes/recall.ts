@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { Hono } from "hono";
 import type { Config } from "../../../src/config/config.ts";
 import { VectorStore } from "../../../src/memory/vector-store.ts";
@@ -14,8 +14,8 @@ import type { RecallCoverage } from "../types.ts";
 export function recallRoutes(deps: { config: Config; repoRoot: string }): Hono {
   const app = new Hono();
   const dataDir = deps.config.paths.data_dir;
-  const dbPath = resolve(dataDir, deps.config.memory_recall.index_db);
-  const kickPath = resolve(dataDir, "recall-reindex.kick");
+  const dbPath = resolve(dataDir, "db", deps.config.memory_recall.index_db);
+  const kickPath = resolve(dataDir, "run", "recall-reindex.kick");
 
   let store: VectorStore | null = null;
   function getStore(): VectorStore | null {
@@ -72,6 +72,7 @@ export function recallRoutes(deps: { config: Config; repoRoot: string }): Hono {
     // Sentinel the daemon's wire-recall loop checks at each tick. The daemon
     // unlinks it once handled. The dashboard never reindexes directly to
     // avoid double-writer contention even though WAL would handle it.
+    mkdirSync(dirname(kickPath), { recursive: true });
     writeFileSync(kickPath, String(Date.now()));
     return c.json({ kicked: true, path: kickPath });
   });

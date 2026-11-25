@@ -48,7 +48,7 @@ ${color.bold("Usage:")}
 
 function opts() {
   const cfg = loadConfig();
-  const dbPath = resolve(cfg.paths.data_dir, cfg.skills_marketplace.installed_db);
+  const dbPath = resolve(cfg.paths.data_dir, "state", cfg.skills_marketplace.installed_db);
   const skillsRoot = resolve(REPO, "skills");
   return {
     cfg,
@@ -297,7 +297,7 @@ async function curateNow(): Promise<void> {
     dataDir: cfg.paths.data_dir,
     skillsRoot: install.skillsRoot,
     dbPath,
-    consentDbPath: resolve(cfg.paths.data_dir, cfg.public_skills.consent_db),
+    consentDbPath: resolve(cfg.paths.data_dir, "state", cfg.public_skills.consent_db),
     contacts,
   });
   section("curator pass");
@@ -322,7 +322,7 @@ async function curateNow(): Promise<void> {
 function listConsent(): void {
   const { cfg, dbPath } = opts();
   const db = readDb(dbPath);
-  const consent = readConsentDb(resolve(cfg.paths.data_dir, cfg.public_skills.consent_db));
+  const consent = readConsentDb(resolve(cfg.paths.data_dir, "state", cfg.public_skills.consent_db));
 
   const published = Object.values(db.skills).filter((r) => categoryOf(r) === "public");
   section("published skills");

@@ -1,17 +1,17 @@
 /**
  * Where log lines go once a process has a data folder to write to.
  *
- * Every line goes two places. The operational log (`data/daemon.log`) gets
+ * Every line goes two places. The operational log (`logs/daemon.log`) gets
  * the line as text, in the order things happened; that is what `edmund logs`
- * follows. A channel file (`data/logs/<channel>/<day>.jsonl`) gets the same
+ * follows. A channel file (`logs/<channel>/<day>.jsonl`) gets the same
  * event as a JSON record with its fields intact and the conversation and turn
  * it belongs to, so one subject can be read alone and one turn can be traced
  * across all of them (`edmund logs trace`). Channel-only records, such as
  * every outbound request, go to their channel and not to the operational log.
  *
- * Installed by main.ts at boot, and by each subprocess that inherits
- * EDMUND_DATA_DIR (MCP servers, agent and background runners), which append to
- * the same files. Hooks `console.*` directly: Bun's console bypasses
+ * Installed by main.ts at boot, and by each subprocess the daemon starts (MCP
+ * servers, agent and background runners), which are told the logs folder in
+ * EDMUND_LOGS_DIR and append to the same files. Hooks `console.*` directly: Bun's console bypasses
  * `process.stdout.write`, so stream-level hooks miss it.
  */
 import { appendFileSync, mkdirSync } from "node:fs";
@@ -23,6 +23,7 @@ import {
   DEFAULT_LOG_POLICY,
   channelFile,
   dayBefore,
+  defaultLogsDir,
   rotateOpsLog,
   settleRotations,
   utcDay,
@@ -68,7 +69,7 @@ export type LogEntry = {
 };
 
 type Sink = {
-  dataDir: string;
+  logsDir: string;
   /** Null for a process whose printed lines something else already keeps. */
   opsPath: string | null;
   prefix: string;
@@ -98,16 +99,16 @@ function procName(prefix: string, filename: string): string {
 }
 
 export function installLogSink(
-  dataDir: string,
+  logsDir: string,
   prefix = "",
   filename = "daemon.log",
   options: SinkOptions = {},
 ): string {
-  const path = join(dataDir, filename);
+  const path = join(logsDir, filename);
   mkdirSync(dirname(path), { recursive: true });
   const today = utcDay();
   sink = {
-    dataDir,
+    logsDir,
     opsPath: path,
     prefix,
     proc: procName(prefix, filename),
@@ -131,12 +132,12 @@ export function installLogSink(
  * filed under their channels.
  */
 export function installChannelSink(
-  dataDir: string,
+  logsDir: string,
   proc: string,
   options: Pick<SinkOptions, "session" | "instrument"> = {},
 ): void {
   sink = {
-    dataDir,
+    logsDir,
     opsPath: null,
     prefix: "",
     proc,
@@ -188,18 +189,16 @@ export function uninstallLogSink(): void {
 }
 
 /**
- * Install the log sink using EDMUND_DATA_DIR from the environment. Used
- * by subprocesses (MCP server, agent-runner) that inherit env from the
- * parent daemon. Silent no-op if the env var isn't set — safe to call
- * unconditionally at entry.
+ * Install the log sink in the folder the parent daemon named in
+ * EDMUND_LOGS_DIR, or in this checkout's `logs/` when it named none. Used by
+ * subprocesses (MCP server, agent-runner); safe to call unconditionally at
+ * entry.
  *
  * The prefix tags lines so you can tell which subprocess wrote them in
  * the shared file (e.g. `mcp[+17175551212] ` or `agent[abc123] `).
  */
-export function installLogSinkFromEnv(prefix = "", options: SinkOptions = {}): string | null {
-  const dataDir = process.env.EDMUND_DATA_DIR;
-  if (!dataDir) return null;
-  return installLogSink(resolve(dataDir), prefix, "daemon.log", options);
+export function installLogSinkFromEnv(prefix = "", options: SinkOptions = {}): string {
+  return installLogSink(resolve(defaultLogsDir()), prefix, "daemon.log", options);
 }
 
 function splitTag(text: string): { tag: string; body: string } {
@@ -210,8 +209,8 @@ function splitTag(text: string): { tag: string; body: string } {
 function rotate(s: Sink, today: string): void {
   s.day = today;
   const opsPath = s.opsPath;
-  if (!opsPath || !rotateOpsLog(opsPath, s.dataDir, today)) return;
-  void settleRotations(s.dataDir, basename(opsPath), dayBefore(today, s.retentionDays)).catch(
+  if (!opsPath || !rotateOpsLog(opsPath, s.logsDir, today)) return;
+  void settleRotations(s.logsDir, basename(opsPath), dayBefore(today, s.retentionDays)).catch(
     () => {
       // The moved file stays where it is and the janitor files it later.
     },
@@ -389,7 +388,7 @@ function writeOne(s: Sink, now: number, entry: LogEntry, channel: Channel): void
 }
 
 function appendTo(s: Sink, channel: Channel, day: string, line: string): void {
-  const path = channelFile(s.dataDir, channel, day);
+  const path = channelFile(s.logsDir, channel, day);
   const dir = dirname(path);
   if (!madeDirs.has(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });

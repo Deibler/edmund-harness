@@ -1,17 +1,22 @@
 /**
  * Where log files live, and how they are rotated, compressed and removed.
  *
- *   data/daemon.log                     the operational log, today's lines
- *   data/logs/daemon/2026-11-24.log     an earlier day of it (.gz once older)
- *   data/logs/<channel>/<day>.jsonl     one channel, one day (.gz once older)
- *   data/logs/archive/                  what predates rotation; never removed here
+ * Everything is under one folder, `logs/` at the top of the checkout
+ * (`[paths] logs_dir`), and nothing that is a log is anywhere else:
+ *
+ *   logs/daemon.log                the operational log, today's lines
+ *   logs/daemon/2026-11-24.log     an earlier day of it (.gz once older)
+ *   logs/<channel>/<day>.jsonl     one channel, one day (.gz once older)
+ *   logs/services/                 what launchd and the tunnel scripts capture
+ *   logs/archive/                  what predates rotation; never removed here
  *
  * Days are UTC, like the timestamps in the lines, so a file's name and its
  * contents agree and no clock change can put a line in the wrong day.
  *
- * Until 2026-11-25 nothing was ever rotated: daemon.log held every line since
- * the first boot and reached 1.2 GB, 1.06 GB of it one repeated line from one
- * night. The weekly review read the whole file into memory to count a week.
+ * Until 2026-11-25 nothing was ever rotated and the logs sat among the
+ * databases: daemon.log held every line since the first boot and reached
+ * 1.2 GB, 1.06 GB of it one repeated line from one night. The weekly review
+ * read the whole file into memory to count a week.
  */
 import {
   appendFileSync,
@@ -29,7 +34,7 @@ import {
   truncateSync,
   unlinkSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { Channel } from "./log-channels.ts";
 import { withoutProcessLog } from "./log-instrument.ts";
 
@@ -44,25 +49,34 @@ export function dayBefore(day: string, days: number): string {
   return utcDay(Date.parse(`${day}T00:00:00Z`) - days * DAY_MS);
 }
 
-function logsRoot(dataDir: string): string {
-  return join(dataDir, "logs");
+/**
+ * The logs folder for a process that has no config to read it from: the one
+ * its parent named, or `logs/` at the top of this checkout.
+ */
+export function defaultLogsDir(): string {
+  return process.env.EDMUND_LOGS_DIR ?? resolve(import.meta.dir, "..", "..", "logs");
 }
 
-export function channelDir(dataDir: string, channel: Channel): string {
-  return join(logsRoot(dataDir), channel);
+export function channelDir(logsDir: string, channel: Channel): string {
+  return join(logsDir, channel);
 }
 
-export function channelFile(dataDir: string, channel: Channel, day: string): string {
-  return join(channelDir(dataDir, channel), `${day}.jsonl`);
+export function channelFile(logsDir: string, channel: Channel, day: string): string {
+  return join(channelDir(logsDir, channel), `${day}.jsonl`);
+}
+
+/** What launchd and the tunnel scripts write: this process does not own these files. */
+function servicesDir(logsDir: string): string {
+  return join(logsDir, "services");
 }
 
 /** Earlier days of an operational log: `daemon.log` rotates into `logs/daemon/`. */
-function rotatedDir(dataDir: string, opsFile: string): string {
-  return join(logsRoot(dataDir), basename(opsFile).replace(/\.log$/, ""));
+function rotatedDir(logsDir: string, opsFile: string): string {
+  return join(logsDir, basename(opsFile).replace(/\.log$/, ""));
 }
 
-export function archiveDir(dataDir: string): string {
-  return join(logsRoot(dataDir), "archive");
+export function archiveDir(logsDir: string): string {
+  return join(logsDir, "archive");
 }
 
 const ROTATING = /^\.rotating-.*\.log$/;
@@ -114,7 +128,7 @@ function dayAt(buf: Buffer, pos: number): string | null {
  * the new file; `settleRotations` then files the old one by day. Returns the
  * path it was moved to, or null when there was nothing to move.
  */
-export function rotateOpsLog(opsPath: string, dataDir: string, today = utcDay()): string | null {
+export function rotateOpsLog(opsPath: string, logsDir: string, today = utcDay()): string | null {
   let size = 0;
   try {
     size = statSync(opsPath).size;
@@ -123,7 +137,7 @@ export function rotateOpsLog(opsPath: string, dataDir: string, today = utcDay())
   }
   if (size === 0) return null;
   if (firstDayOf(opsPath) === today) return null;
-  const dir = rotatedDir(dataDir, opsPath);
+  const dir = rotatedDir(logsDir, opsPath);
   mkdirSync(dir, { recursive: true });
   const target = join(dir, `.rotating-${Date.now()}-${process.pid}.log`);
   try {
@@ -170,11 +184,11 @@ export type SettleReport = { files: number; days: number; archivedBytes: number 
  * and its half-written pieces in a folder this deletes before starting again.
  */
 export async function settleRotations(
-  dataDir: string,
+  logsDir: string,
   opsFile: string,
   keepFromDay: string,
 ): Promise<SettleReport> {
-  const dir = rotatedDir(dataDir, opsFile);
+  const dir = rotatedDir(logsDir, opsFile);
   const report: SettleReport = { files: 0, days: 0, archivedBytes: 0 };
   let names: string[];
   try {
@@ -245,7 +259,7 @@ export async function settleRotations(
     }
     if (archived.length > 0) {
       archived.sort();
-      const out = archiveDir(dataDir);
+      const out = archiveDir(logsDir);
       mkdirSync(out, { recursive: true });
       const stem = `${basename(opsFile).replace(/\.log$/, "")}-${archived[0]}_to_${archived[archived.length - 1]}`;
       let target = join(out, `${stem}.log`);
@@ -266,10 +280,10 @@ export async function settleRotations(
  * days that can hold them, then today's file. For readers that used to read
  * the whole of daemon.log to look at its last week.
  */
-export function readOpsLog(dataDir: string, sinceMs: number, opsFile = "daemon.log"): string {
+export function readOpsLog(logsDir: string, sinceMs: number, opsFile = "daemon.log"): string {
   const sinceDay = utcDay(sinceMs);
   const parts: string[] = [];
-  for (const file of dayFiles(rotatedDir(dataDir, opsFile))) {
+  for (const file of dayFiles(rotatedDir(logsDir, opsFile))) {
     if (file.day < sinceDay) continue;
     try {
       parts.push(readMaybeGz(file));
@@ -278,7 +292,7 @@ export function readOpsLog(dataDir: string, sinceMs: number, opsFile = "daemon.l
     }
   }
   try {
-    parts.push(readFileSync(join(dataDir, opsFile), "utf8"));
+    parts.push(readFileSync(join(logsDir, opsFile), "utf8"));
   } catch {}
   return parts.join("");
 }
@@ -300,7 +314,7 @@ export type ChannelRecord = {
 
 /** One channel's records between two instants, oldest first. Unreadable lines are skipped. */
 export function readChannel(
-  dataDir: string,
+  logsDir: string,
   channel: Channel,
   sinceMs: number,
   untilMs: number = Number.POSITIVE_INFINITY,
@@ -308,7 +322,7 @@ export function readChannel(
   const sinceDay = utcDay(sinceMs);
   const untilDay = Number.isFinite(untilMs) ? utcDay(untilMs) : "9999-12-31";
   const out: ChannelRecord[] = [];
-  for (const file of dayFiles(channelDir(dataDir, channel))) {
+  for (const file of dayFiles(channelDir(logsDir, channel))) {
     if (file.day < sinceDay || file.day > untilDay) continue;
     let text: string;
     try {
@@ -363,11 +377,11 @@ async function gzip(path: string): Promise<boolean> {
 }
 
 /** Every folder under logs/ that holds day files: the channels and the rotated operational logs. */
-function dayDirs(dataDir: string): string[] {
+function dayDirs(logsDir: string): string[] {
   try {
-    return readdirSync(logsRoot(dataDir), { withFileTypes: true })
-      .filter((e) => e.isDirectory() && e.name !== "archive")
-      .map((e) => join(logsRoot(dataDir), e.name));
+    return readdirSync(logsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name !== "archive" && e.name !== "services")
+      .map((e) => join(logsDir, e.name));
   } catch {
     return [];
   }
@@ -381,20 +395,20 @@ function dayDirs(dataDir: string): string[] {
  * `lsof +fg` shows AP), so the writer carries on at the new end.
  */
 async function trimCaptures(
-  dataDir: string,
-  ownedByASink: string[],
+  logsDir: string,
   maxBytes: number,
   report: JanitorReport,
 ): Promise<void> {
+  const dir = servicesDir(logsDir);
   let names: string[];
   try {
-    names = readdirSync(dataDir);
+    names = readdirSync(dir);
   } catch {
     return;
   }
   for (const name of names) {
-    if (!name.endsWith(".log") || ownedByASink.includes(name)) continue;
-    const path = join(dataDir, name);
+    if (!name.endsWith(".log")) continue;
+    const path = join(dir, name);
     let size = 0;
     try {
       const stat = statSync(path);
@@ -404,7 +418,7 @@ async function trimCaptures(
       continue;
     }
     if (size <= maxBytes) continue;
-    const out = archiveDir(dataDir);
+    const out = archiveDir(logsDir);
     mkdirSync(out, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const target = join(out, `${name.replace(/\.log$/, "")}-until-${stamp}.log.gz`);
@@ -432,7 +446,7 @@ async function trimCaptures(
  * here (`daemon.log`, `dashboard.log`).
  */
 export async function runLogJanitor(
-  dataDir: string,
+  logsDir: string,
   policy: LogPolicy = DEFAULT_LOG_POLICY,
   opsFiles: string[] = ["daemon.log", "dashboard.log"],
   now: number = Date.now(),
@@ -450,7 +464,7 @@ export async function runLogJanitor(
 
   for (const opsFile of opsFiles) {
     try {
-      const settled = await settleRotations(dataDir, opsFile, keepFrom);
+      const settled = await settleRotations(logsDir, opsFile, keepFrom);
       report.settled.files += settled.files;
       report.settled.days += settled.days;
       report.settled.archivedBytes += settled.archivedBytes;
@@ -461,7 +475,7 @@ export async function runLogJanitor(
 
   // Past retention: gone. Past the plain-text window: compressed.
   const compressBefore = dayBefore(today, policy.compressAfterDays);
-  for (const dir of dayDirs(dataDir)) {
+  for (const dir of dayDirs(logsDir)) {
     for (const file of dayFiles(dir)) {
       if (file.day >= today) continue;
       if (file.day < keepFrom) {
@@ -483,14 +497,14 @@ export async function runLogJanitor(
 
   // The archive is kept, and is small once compressed.
   try {
-    for (const name of readdirSync(archiveDir(dataDir))) {
+    for (const name of readdirSync(archiveDir(logsDir))) {
       if (!name.endsWith(".log")) continue;
-      if (await gzip(join(archiveDir(dataDir), name))) report.compressed++;
+      if (await gzip(join(archiveDir(logsDir), name))) report.compressed++;
     }
   } catch {}
 
   // Over the cap: whole days go, oldest first, across every channel at once.
-  const all = dayDirs(dataDir).flatMap((dir) => dayFiles(dir));
+  const all = dayDirs(logsDir).flatMap((dir) => dayFiles(dir));
   let total = all.reduce((sum, f) => sum + f.bytes, 0);
   const cap = policy.maxTotalMb * 1024 * 1024;
   if (total > cap) {
@@ -505,6 +519,6 @@ export async function runLogJanitor(
     }
   }
 
-  await trimCaptures(dataDir, opsFiles, policy.captureMaxMb * 1024 * 1024, report);
+  await trimCaptures(logsDir, policy.captureMaxMb * 1024 * 1024, report);
   return report;
 }

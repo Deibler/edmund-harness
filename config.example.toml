@@ -176,7 +176,7 @@ enabled = false
 # close to his name, or arrives soon after he spoke; Jev decides whether it is
 # for him, and he decides whether to answer. Needs [keys].openrouter, and the
 # checked message plus the eight before it go to OpenRouter. "shadow" only
-# records decisions to data/addressing.jsonl. Rerun
+# records decisions to data/state/addressing.jsonl. Rerun
 # scripts/addressing-calibrate.ts after changing the model.
 # Extra MCP servers for the assistant's workers. Workers run with
 # --strict-mcp-config, so a server added with `claude mcp add` never reaches
@@ -246,7 +246,7 @@ enabled = true
 # dir = "/path/to/data/kitchen"   # default: <data_dir>/kitchen
 # Every household's site is served from this one address by the kitchen host
 # (scripts/launchd/service.sh kitchen-host install), through a named tunnel
-# whose token lives in data/kitchen-tunnel-token. Unset: sites are rendered but
+# whose token lives in data/secrets/kitchen-tunnel-token. Unset: sites are rendered but
 # not published.
 # site_origin = "https://kitchen.example.com"
 # host_port = 4795                 # the host's local router, which the tunnel points at
@@ -311,7 +311,7 @@ messaging_service_sid = "MG..."
 # Public origin Twilio dials — must byte-match the webhook URL configured in
 # Twilio or every signature validation fails. With a stable named tunnel set
 # this; left unset, the daemon falls back to the quick-tunnel URL file
-# (data/sms-tunnel-url) and re-points Twilio automatically on rotation.
+# (data/run/sms-tunnel-url) and re-points Twilio automatically on rotation.
 public_base_url = "https://sms.example.com"
 # Loopback port for the daemon's webhook listener (tunnel target).
 webhook_port = 4790
@@ -440,7 +440,7 @@ quiet_check_seconds = 12
 # A page on the local network for talking to Edmund the way a FaceTime call
 # does (same conversation, model, voice and turn-taking) and for tuning his
 # voice. Whoever opens it talks to him as the operator: it needs the key in
-# data/voice-lab/key (bun scripts/voice-lab-link.ts prints the link) and a
+# data/secrets/voice-lab/key (bun scripts/voice-lab-link.ts prints the link) and a
 # private address.
 [voice_lab]
 enabled = false

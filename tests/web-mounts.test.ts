@@ -18,7 +18,10 @@ describe("path mounts on the public host", () => {
   test("bad prefixes are refused, and a hand-edited bad entry is ignored", () => {
     expect(() => registerMount(dir, "/../", 1)).toThrow();
     expect(() => registerMount(dir, "print", 1)).toThrow();
-    writeFileSync(join(dir, "web-mounts.json"), JSON.stringify({ "/": 9, "/ok/": 2, "/x/": "no" }));
+    writeFileSync(
+      join(dir, "state", "web-mounts.json"),
+      JSON.stringify({ "/": 9, "/ok/": 2, "/x/": "no" }),
+    );
     expect(readMounts(dir)).toEqual({ "/ok/": 2 });
   });
 

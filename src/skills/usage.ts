@@ -38,7 +38,7 @@ export type UsageSummary = {
 };
 
 function usageLogPath(dataDir: string): string {
-  return join(dataDir, "skill-usage.jsonl");
+  return join(dataDir, "state", "skill-usage.jsonl");
 }
 
 /**

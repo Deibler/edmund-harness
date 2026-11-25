@@ -22,7 +22,7 @@ export function controlSocketPath(dataDir?: string): string {
       `no ${CONTROL_SOCKET_ENV} in the environment and no data_dir given, so the Messages control socket cannot be located`,
     );
   }
-  return resolve(dataDir, "bridge-control.sock");
+  return resolve(dataDir, "run", "bridge-control.sock");
 }
 
 /** Publishes the resolved path so spawned subprocesses inherit it. */

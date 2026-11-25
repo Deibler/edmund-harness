@@ -58,7 +58,7 @@ let ledger: string | null = null;
  * running, then start writing its own down under a watchdog.
  */
 export async function guardTurnWorkers(dataDir: string): Promise<TurnWorkerEntry[]> {
-  const dir = join(resolve(dataDir), "turn-workers");
+  const dir = join(resolve(dataDir), "run", "turn-workers");
   let stopped: TurnWorkerEntry[] = [];
   try {
     mkdirSync(dir, { recursive: true });

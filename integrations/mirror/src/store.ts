@@ -84,7 +84,7 @@ export class MirrorStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "mirror.db"));
+    this.db = openDb(join(dataDir, "db", "mirror.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS mirror_meta_v2 (
         key TEXT PRIMARY KEY,

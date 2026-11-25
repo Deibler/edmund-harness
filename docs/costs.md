@@ -2,7 +2,7 @@
 
 What costs money, what drives it, and which levers actually move it. Figures
 are deliberately absent from this page: your model, your conversations and
-your prices differ. The shape is what transfers, and `data/spend.db` lets you
+your prices differ. The shape is what transfers, and `data/db/spend.db` lets you
 measure your own.
 
 ## What you pay for
@@ -77,7 +77,7 @@ where subsystem = 'turn' and session_key like 'imessage:dm:%'
 group by bucket_k order by bucket_k;
 ```
 
-Run it against `data/spend.db` with any SQLite client. Compare the buckets. If
+Run it against `data/db/spend.db` with any SQLite client. Compare the buckets. If
 the top one is many times the bottom, your conversations are living in
 expensive territory and the levers above are where to start.
 

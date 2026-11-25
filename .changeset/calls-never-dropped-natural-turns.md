@@ -2,7 +2,7 @@
 "edmund-harness": minor
 ---
 
-Calls are not cut off by the daemon, do not open on silence, and leave less dead air. Measured from all 43 calls and 79 exchanges in `data/calls.db` and the daemon log, 2026-10-29 to 11-12.
+Calls are not cut off by the daemon, do not open on silence, and leave less dead air. Measured from all 43 calls and 79 exchanges in `data/db/calls.db` and the daemon log, 2026-10-29 to 11-12.
 
 **Calls that were dropped**
 

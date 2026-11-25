@@ -10,7 +10,7 @@ import type { ToolDef, ToolResult } from "./types.ts";
 
 /**
  * FaceTime tools. They run in the turn's own MCP process, which cannot reach
- * the daemon's call manager, so they queue requests in data/calls.db and the
+ * the daemon's call manager, so they queue requests in data/db/calls.db and the
  * daemon acts on them within a fraction of a second. The daemon re-checks
  * every rule before dialling: the checks here are for a fast, clear answer to
  * the model, not the boundary.

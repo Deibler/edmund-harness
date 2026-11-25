@@ -23,9 +23,9 @@
     <integer>30</integer>
 
     <key>StandardOutPath</key>
-    <string>__HARNESS_ROOT__/data/dashboard.launchd.out.log</string>
+    <string>__HARNESS_ROOT__/logs/services/dashboard.launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HARNESS_ROOT__/data/dashboard.launchd.err.log</string>
+    <string>__HARNESS_ROOT__/logs/services/dashboard.launchd.err.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

@@ -23,9 +23,9 @@
     <integer>30</integer>
 
     <key>StandardOutPath</key>
-    <string>__HARNESS_ROOT__/data/fishing.launchd.out.log</string>
+    <string>__HARNESS_ROOT__/logs/services/fishing.launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HARNESS_ROOT__/data/fishing.launchd.err.log</string>
+    <string>__HARNESS_ROOT__/logs/services/fishing.launchd.err.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

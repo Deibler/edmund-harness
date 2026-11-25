@@ -5,7 +5,7 @@ Local, LAN-reachable, PIN-gated web UI for the iMessage assistant daemon.
 ## Layout
 
 - `server/` — Bun + Hono HTTP server. Reads the harness's existing SQLite stores
-  (`data/state.db`, `data/cron.db`, `data/agents.db`) and `data/daemon.log`.
+  (`data/db/state.db`, `data/db/cron.db`, `data/db/agents.db`) and `logs/daemon.log`.
   Writes config changes back through the same ConfigSchema the daemon uses.
 - `web/` — React + Vite SPA. TanStack Query for server state, React Router for
   routing, Tailwind for styles, Radix primitives for dialogs/tabs/toasts.

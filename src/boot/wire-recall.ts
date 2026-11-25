@@ -100,9 +100,13 @@ export function wireRecall(args: {
     // the whole index synchronously: 19% of turns over 14 days (265 of 1,362)
     // waited over 5 s, every other chat waiting with them. The idle eviction
     // is for the per-session MCP servers, which each hold their own copy.
-    store = new VectorStore(`${config.paths.data_dir}/${config.memory_recall.index_db}`, 0, {
-      repair: true,
-    });
+    store = new VectorStore(
+      resolve(config.paths.data_dir, "db", config.memory_recall.index_db),
+      0,
+      {
+        repair: true,
+      },
+    );
     // Loaded in slices at boot, so no turn pays for the load in one block.
     const warming = store;
     setTimeout(() => {
@@ -165,7 +169,7 @@ export function wireRecall(args: {
       PERSONA_DIR,
     );
     const adaptiveThreshold = config.memory_recall.adaptive_retick_threshold;
-    const kickPath = resolve(config.paths.data_dir, "recall-reindex.kick");
+    const kickPath = resolve(config.paths.data_dir, "run", "recall-reindex.kick");
     let lastCoverageLogAt = 0;
     const runTick = async () => {
       try {
@@ -252,7 +256,11 @@ export function wireRecall(args: {
     const out = new Set(unavailableIntegrationSkills(config));
     if (!sessionKey) return out;
     try {
-      const dbPath = resolve(config.paths.data_dir, config.skills_marketplace.installed_db);
+      const dbPath = resolve(
+        config.paths.data_dir,
+        "state",
+        config.skills_marketplace.installed_db,
+      );
       for (const [name, record] of Object.entries(readDb(dbPath).skills)) {
         if (!skillVisibleTo(record, sessionKey)) out.add(name);
       }

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { SpendLedger } from "../../../src/spend/ledger.ts";
 
 /**
- * Spend/latency metrics from data/spend.db (see src/spend/ledger.ts).
+ * Spend/latency metrics from data/db/spend.db (see src/spend/ledger.ts).
  *
  *   GET /api/metrics?days=14   → daily rollups + per-subsystem and
  *                                per-session totals for the window

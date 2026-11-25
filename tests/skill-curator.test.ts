@@ -319,7 +319,8 @@ describe("sampling across conversations", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "curator-"));
-    dbPath = join(dir, "recall.sqlite");
+    dbPath = join(dir, "db", "recall.sqlite");
+    mkdirSync(join(dir, "db"), { recursive: true });
     const db = new Database(dbPath);
     db.exec(
       `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
@@ -432,7 +433,8 @@ describe("where curated skills are written", () => {
       mkdirSync(dataDir, { recursive: true });
       mkdirSync(skillsRoot, { recursive: true });
 
-      const db = new Database(join(dataDir, "recall.sqlite"));
+      mkdirSync(join(dataDir, "db"), { recursive: true });
+      const db = new Database(join(dataDir, "db", "recall.sqlite"));
       db.exec(
         `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
                             ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
@@ -472,7 +474,7 @@ describe("where curated skills are written", () => {
         config,
         dataDir,
         skillsRoot,
-        dbPath: join(dataDir, "installed-skills.json"),
+        dbPath: join(dataDir, "state", "installed-skills.json"),
         contacts,
         now: () => 10_000,
         runModel: async (opts) => {
@@ -511,7 +513,9 @@ describe("where curated skills are written", () => {
       // Chats are opaque tags in the prompt, never a prefix of the guid.
       expect(prompt).toContain(`chat ${chatTag("chatA")},`);
       expect(prompt).not.toMatch(/chat chat[AB]/);
-      const saved = JSON.parse(readFileSync(join(dataDir, "installed-skills.json"), "utf8"));
+      const saved = JSON.parse(
+        readFileSync(join(dataDir, "state", "installed-skills.json"), "utf8"),
+      );
       const provenance = (saved.skills["race-week-plan"].provenance as string[]).join("\n");
       expect(provenance).toContain(`msg:a1 (chat ${chatTag("chatA")})`);
       expect(provenance).not.toContain("(chat chatA)");
@@ -531,7 +535,7 @@ describe("at the ceiling", () => {
     const root = mkdtempSync(join(tmpdir(), "curator-ceiling-"));
     try {
       const config = loadConfig(join(import.meta.dir, "..", "config.example.toml"));
-      const dbPath = join(root, "installed-skills.json");
+      const dbPath = join(root, "state", "installed-skills.json");
       const skills: Record<string, InstallRecord> = {};
       for (let i = 0; i < config.skill_curator.max_curated_skills; i++) {
         skills[`curated-${i}`] = {
@@ -582,7 +586,8 @@ describe("who counts as one person", () => {
   test("two people in one chat are nothing to compare either", async () => {
     const root = mkdtempSync(join(tmpdir(), "curator-room-"));
     try {
-      const db = new Database(join(root, "recall.sqlite"));
+      mkdirSync(join(root, "db"), { recursive: true });
+      const db = new Database(join(root, "db", "recall.sqlite"));
       db.exec(
         `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
                             ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
@@ -611,7 +616,7 @@ describe("who counts as one person", () => {
         config: loadConfig(join(import.meta.dir, "..", "config.example.toml")),
         dataDir: root,
         skillsRoot: root,
-        dbPath: join(root, "installed-skills.json"),
+        dbPath: join(root, "state", "installed-skills.json"),
         contacts,
         now: () => 10_000,
         runModel: async () => {
@@ -629,7 +634,8 @@ describe("who counts as one person", () => {
   test("the curator resolves people through the operator's books", async () => {
     const root = mkdtempSync(join(tmpdir(), "curator-people-"));
     try {
-      const db = new Database(join(root, "recall.sqlite"));
+      mkdirSync(join(root, "db"), { recursive: true });
+      const db = new Database(join(root, "db", "recall.sqlite"));
       db.exec(
         `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
                             ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
@@ -651,7 +657,7 @@ describe("who counts as one person", () => {
         config: loadConfig(join(import.meta.dir, "..", "config.example.toml")),
         dataDir: root,
         skillsRoot: root,
-        dbPath: join(root, "installed-skills.json"),
+        dbPath: join(root, "state", "installed-skills.json"),
         contacts: withCards,
         now: () => 10_000,
         runModel: async () => {
@@ -706,7 +712,8 @@ describe("group membership comes from chat.db", () => {
       w.exec(`INSERT INTO handle (ROWID, id) VALUES (1, '+15550001111'), (2, '+15550002222')`);
       w.exec("INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (1, 1), (1, 2)");
       w.close();
-      const recall = new Database(join(root, "recall.sqlite"));
+      mkdirSync(join(root, "db"), { recursive: true });
+      const recall = new Database(join(root, "db", "recall.sqlite"));
       recall.exec(
         `CREATE TABLE rows (ref TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_guid TEXT, sender TEXT,
                             ts INTEGER NOT NULL, text TEXT NOT NULL, vec BLOB, model TEXT, dim INTEGER)`,
@@ -737,7 +744,7 @@ describe("group membership comes from chat.db", () => {
           config: loadConfig(join(import.meta.dir, "..", "config.example.toml")),
           dataDir: root,
           skillsRoot: root,
-          dbPath: join(root, "installed-skills.json"),
+          dbPath: join(root, "state", "installed-skills.json"),
           contacts,
           chatDb,
           now: () => 10_000,

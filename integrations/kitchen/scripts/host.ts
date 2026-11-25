@@ -17,6 +17,8 @@ import { serveIdeation } from "../../../src/ideation/serve.ts";
 import { IdeationStore } from "../../../src/ideation/store.ts";
 import { serveShelf } from "../../../src/shelf/serve.ts";
 import { withAccessLog } from "../../../src/util/access-log.ts";
+import { prepareDataFolder } from "../../../src/util/data-migrate.ts";
+import { defaultLogsDir } from "../../../src/util/log-files.ts";
 import { installChannelSink } from "../../../src/util/log-sink.ts";
 import { mountFor } from "../../../src/web/mounts.ts";
 import { baseDir } from "../src/accounts.ts";
@@ -55,11 +57,12 @@ let ideations: IdeationStore | null = null;
 const server = join(ROOT, "skills", "instant-share", "scripts", "secure_server.py");
 const shareConfig = join(baseDir(), "host-share");
 mkdirSync(shareConfig, { recursive: true, mode: 0o700 });
-const tokenFile = join(dataDir(), "kitchen-tunnel-token");
+const tokenFile = join(dataDir(), "secrets", "kitchen-tunnel-token");
 
 // launchd keeps what this process prints (kitchen-host.log). The channels get
 // what it never printed: every request that reaches the public address.
-installChannelSink(dataDir(), "public-router");
+prepareDataFolder(dataDir());
+installChannelSink(defaultLogsDir(), "public-router");
 
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 

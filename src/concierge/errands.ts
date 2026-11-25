@@ -56,7 +56,7 @@ export class ErrandStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "errands.db"));
+    this.db = openDb(join(dataDir, "db", "errands.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS errands (
         id TEXT PRIMARY KEY,

@@ -7,7 +7,16 @@
  * reading the launchd stderr file by hand, weeks later. At boot this reads
  * what that file gained since the previous boot and says so.
  */
-import { closeSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname } from "node:path";
 
 export type RuntimeCrash = {
   /** e.g. "Bun v1.3.9". */
@@ -122,6 +131,7 @@ export function crashesSinceLastBoot(opts: {
   }
   const alert = crashes.length > 0 && now - (cursor?.alertedAtMs ?? 0) >= CRASH_ALERT_EVERY_MS;
   try {
+    mkdirSync(dirname(opts.cursorPath), { recursive: true });
     writeFileSync(
       opts.cursorPath,
       JSON.stringify({ size, alertedAtMs: alert ? now : (cursor?.alertedAtMs ?? 0) }),

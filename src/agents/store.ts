@@ -19,7 +19,7 @@ export class AgentStore {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = openDb(join(dataDir, "agents.db"));
+    this.db = openDb(join(dataDir, "db", "agents.db"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,

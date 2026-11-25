@@ -106,6 +106,8 @@ function launchAgent(
     AGENT_RESULT: agent.resultPath,
     AGENT_LOG: agent.logPath,
     EDMUND_DATA_DIR: resolve(dataDir),
+    // The runner logs beside the daemon (log-sink.ts).
+    ...(process.env.EDMUND_LOGS_DIR ? { EDMUND_LOGS_DIR: process.env.EDMUND_LOGS_DIR } : {}),
   };
   if (teamSharedDir) env.AGENT_TEAM_SHARED = teamSharedDir;
   if (agent.role) env.AGENT_ROLE = agent.role;

@@ -263,7 +263,7 @@ export function settleIdeationBuild(
   dataDir: string,
   agent: Pick<Agent, "id" | "status" | "teamId">,
 ): boolean {
-  if (agent.teamId || !existsSync(join(dataDir, "ideations.db"))) return false;
+  if (agent.teamId || !existsSync(join(dataDir, "db", "ideations.db"))) return false;
   const store = new IdeationStore(dataDir);
   try {
     if (!store.byAgent(agent.id)) return false;
@@ -317,7 +317,7 @@ export function pageStillToGive(
   chatDb?: ChatDb,
 ): boolean {
   const id = systemEvent.match(PAGE_ID_IN_EVENT)?.[1];
-  if (!id || !existsSync(join(config.paths.data_dir, "ideations.db"))) return true;
+  if (!id || !existsSync(join(config.paths.data_dir, "db", "ideations.db"))) return true;
   let store: IdeationStore | null = null;
   try {
     store = new IdeationStore(config.paths.data_dir);
@@ -340,7 +340,7 @@ export function pageStillToGive(
 
 /** Their last message in this chat, from the daemon's session table (read only). */
 function lastInboundMs(dataDir: string, sessionKey: string): number | null {
-  const path = join(dataDir, "state.db");
+  const path = join(dataDir, "db", "state.db");
   if (!existsSync(path)) return null;
   let db: Database | null = null;
   try {

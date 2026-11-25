@@ -270,8 +270,10 @@ export const ConfigSchema = z.object({
     .object({
       chat_db: z.string().default("~/Library/Messages/chat.db"),
       data_dir: z.string().default("./data"),
+      /** Every log: the operational log, the channels, and what launchd captures. */
+      logs_dir: z.string().default("./logs"),
     })
-    .default({ chat_db: "~/Library/Messages/chat.db", data_dir: "./data" }),
+    .default({ chat_db: "~/Library/Messages/chat.db", data_dir: "./data", logs_dir: "./logs" }),
   resources: z
     .object({
       /** Start releasing reconstructable caches and idle workers here. */
@@ -293,7 +295,7 @@ export const ConfigSchema = z.object({
       retention_days: z.number().int().min(1).default(30),
       /** Days a file stays plain text before it is compressed. */
       compress_after_days: z.number().int().min(1).default(2),
-      /** Everything under data/logs except the archive stays below this. */
+      /** Everything under logs/ except the archive stays below this. */
       max_total_mb: z.number().int().min(50).default(2048),
       /** A log launchd or a tunnel appends to is archived and emptied past this. */
       capture_max_mb: z.number().int().min(1).default(20),
@@ -532,7 +534,7 @@ export const ConfigSchema = z.object({
        *  conversation's own model. */
       model: z.string().default("claude-sonnet-5-5"),
       /** Keep the last 30 audio clips the turn detector scored, with their
-       *  scores, in data/facetime/turn-clips, to tune turn-taking. These are
+       *  scores, in data/run/facetime/turn-clips, to tune turn-taking. These are
        *  recordings of callers: leave off unless diagnosing. */
       keep_turn_clips: z.boolean().default(false),
       /** Kokoro voice for Edmund. Empty means bm_daniel, his mirror voice. */
@@ -555,7 +557,7 @@ export const ConfigSchema = z.object({
    * The voice lab (src/calls/providers/web/): a page on the local network for
    * talking to Edmund the way a call does (same conversation, model, voice and
    * turn-taking) without FaceTime, and for tuning his voice. Whoever opens it
-   * talks to him as the operator, so it needs the key in data/voice-lab/key
+   * talks to him as the operator, so it needs the key in data/secrets/voice-lab/key
    * and a private network address. Off by default.
    */
   voice_lab: z
@@ -1062,7 +1064,7 @@ export const ConfigSchema = z.object({
    * close to his name, or a message soon after he spoke); Jev decides whether
    * it is for him; he decides whether to answer. Candidates' text and the
    * eight messages before them go to Jev through OpenRouter ([keys].openrouter).
-   * "shadow" only records decisions in data/addressing.jsonl.
+   * "shadow" only records decisions in data/state/addressing.jsonl.
    */
   group_addressing: z
     .object({

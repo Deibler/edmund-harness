@@ -135,7 +135,7 @@ each default are in [group-addressing.md](group-addressing.md).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mode` | `"off"` | `"off"`, `"shadow"` (record decisions in `data/addressing.jsonl`, wake nobody) or `"on"` |
+| `mode` | `"off"` | `"off"`, `"shadow"` (record decisions in `data/state/addressing.jsonl`, wake nobody) or `"on"` |
 | `model` | `"typesafe/jev-1.13"` | The decision model, through OpenRouter (`[keys].openrouter`) |
 | `window_minutes` | `10` | A message this soon after he spoke is a candidate |
 | `reply_threshold` | `0.7` | Wake when "wants a reply" reaches this |
@@ -253,7 +253,8 @@ Which rich actions the model may use. On by default: `effects`,
 | Key | Default | Meaning |
 |---|---|---|
 | `chat_db` | `~/Library/Messages/chat.db` | The message store |
-| `data_dir` | `./data` | Everything the runtime writes. Relative to the repo; the CLI pins the working directory |
+| `data_dir` | `./data` | State: databases, generated configs, secrets and each feature's files. Relative to the repo; the CLI pins the working directory |
+| `logs_dir` | `./logs` | Every log: the operational log, the channels, and what launchd captures |
 
 ### `[resources]`
 
@@ -273,7 +274,7 @@ Where the files are and what each channel holds is in [operations](operations.md
 |---|---|---|
 | `retention_days` | `30` | Days a channel file or a rotated day of `daemon.log` is kept |
 | `compress_after_days` | `2` | Days a file stays plain text before it is gzipped |
-| `max_total_mb` | `2048` | Cap on `data/logs` (the archive excluded); oldest days go first |
+| `max_total_mb` | `2048` | Cap on `logs/` (the archive excluded); oldest days go first |
 | `capture_max_mb` | `20` | A log launchd or a tunnel appends to is archived and emptied past this size |
 | `resource_sample_seconds` | `60` | How often memory, CPU, GPU, disk and the process tree are recorded; `0` turns it off |
 
@@ -290,7 +291,7 @@ Where the files are and what each channel holds is in [operations](operations.md
 | `ollama_endpoint` | `http://127.0.0.1:11434` | For the Ollama provider |
 | `batch_size` | `128` | Rows embedded per batch |
 | `chunk_size` | `2000` | Characters per chunk |
-| `index_db` | `recall.sqlite` | File under `data_dir` |
+| `index_db` | `recall.sqlite` | File under `data_dir/db` |
 | `max_chars`, `min_chars` | `4000`, `8` | Row length bounds |
 | `backfill_days` | `365` | How far back to index at first boot |
 | `backfill_on_boot` | `true` | |
@@ -377,7 +378,7 @@ Where the files are and what each channel holds is in [operations](operations.md
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Allow publishing self skills to other conversations |
-| `consent_db` | `skill-consent.json` | Under `data_dir` |
+| `consent_db` | `skill-consent.json` | Under `data_dir/state` |
 
 ### `[skills_marketplace]`
 
@@ -578,5 +579,5 @@ transcript. A hosted video model is used only when `analyze_video` names one.
 Not pinned on purpose: `claude update` reaches Edmund underneath. On boot and
 every 30 minutes the daemon reads `claude --version`; a version it has not
 checked gets a canary through a one-shot and a stream-json worker turn, and a
-failure alerts the operator. The last result is in `data/cli-version.json`.
+failure alerts the operator. The last result is in `data/state/cli-version.json`.
 
