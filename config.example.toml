@@ -575,8 +575,9 @@ api_token  = ""
 # operator.
 # ════════════════════════════════════════════════════════════════════════════
 
-# The human operator who runs this assistant. Surfaced in the system prompt
-# (e.g. "an AI that <name> built"). Leave blank to use the generic "your operator".
+# The human operator who runs this assistant. The system prompt tells the
+# assistant who that is, and tells it not to give the name out when it explains
+# itself. Leave blank to use the generic "your operator".
 [owner]
 name = ""
 

@@ -17,7 +17,9 @@ import type { Watch } from "./store.ts";
  * Progress and layer watches belong to one print (`printKey`); a watch set
  * while nothing is printing binds to the next print that starts, and never
  * carries over to the one after. A finish watch fires on the edge into
- * FINISH or FAILED, not on a printer that is merely sitting finished. A
+ * FINISH or FAILED, not on a printer that is merely sitting finished. State
+ * and error watches tied to a print (the ones every start sets) speak only
+ * for that print, its own end included; unbound ones cover every print. A
  * filament watch waits for the AMS to settle, because a spool swap reads
  * as several changes while the RFID and colour are read.
  */
@@ -41,6 +43,8 @@ export function evaluateWatch(
   ctx: EvalContext,
 ): string | null {
   const samePrint = !w.printKey || w.printKey === ctx.printKey;
+  // A watch tied to an earlier print must not speak for this one.
+  if ((w.kind === "state" || w.kind === "error") && !samePrint) return null;
   switch (w.kind) {
     case "progress":
       if (!isActive(cur) || !samePrint || w.threshold === null || cur.percent === null) return null;

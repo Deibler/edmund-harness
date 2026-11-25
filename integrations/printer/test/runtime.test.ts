@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Config } from "../../../src/config/config.ts";
 import { mountFor } from "../../../src/web/mounts.ts";
 import { PrinterLink } from "../src/link.ts";
+import { type PrinterState, normalize } from "../src/report.ts";
 import { PrinterRuntime } from "../src/runtime.ts";
 import { readRuntimeInfo } from "../src/settings.ts";
 
@@ -216,6 +217,41 @@ describe("the runtime over its own HTTP surface", () => {
   test("the public host is told where the page lives", () => {
     expect(mountFor(dir, "/print/abc/")).toBe(Number(new URL(base).port));
     expect(mountFor(dir, "/api/state")).toBeNull();
+  });
+
+  // While a start is underway the printer can report the last print's FINISH
+  // once more. That report used to end the new job before it had begun.
+  test("a print that has not begun is not ended by the last one's finish", async () => {
+    const job = rt.store.createJob({
+      title: "Bracket",
+      requester: "",
+      requesterHandle: "",
+      originSession: "s",
+      originChat: "",
+      file: "",
+      source: "",
+      plate: 1,
+      plateType: "",
+      needs: [],
+      estimateS: 0,
+      weightG: 0,
+      settings: {},
+      preview: "",
+    });
+    rt.store.updateJob(job.id, { status: "starting" });
+    const report = (gcode_state: string): PrinterState =>
+      normalize({ command: "push_status", gcode_state, subtask_name: "Earlier print" });
+    const follow = (
+      rt as unknown as { followJob(st: PrinterState, prev: PrinterState | null): Promise<void> }
+    ).followJob.bind(rt);
+    try {
+      expect(rt.store.job(job.id)?.startedMs).toBeNull();
+      await follow(report("FINISH"), report("RUNNING"));
+      expect(rt.store.job(job.id)?.status).toBe("starting");
+      expect(rt.store.job(job.id)?.endedMs).toBeNull();
+    } finally {
+      rt.store.updateJob(job.id, { status: "cancelled" });
+    }
   });
 });
 

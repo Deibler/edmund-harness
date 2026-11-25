@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { trayFingerprint } from "../src/filament.ts";
 import { loadErrorDb } from "../src/hms.ts";
 import { type PrinterState, normalize } from "../src/report.ts";
-import type { Watch } from "../src/store.ts";
+import { PrinterStore, type Watch } from "../src/store.ts";
 import { allTrays, evaluateWatch, formatMinutes, statusLine } from "../src/watches.ts";
 
 const db = loadErrorDb();
@@ -85,6 +88,64 @@ describe("wake-ups", () => {
       "printing to paused",
     );
     expect(evaluateWatch(w, st({}), st({}), ctx())).toBeNull();
+  });
+
+  test("state and error watches tied to a print speak only for that print", () => {
+    // Every start sets these; they used to fire for every later print too.
+    const state = watch({ kind: "state", repeat: true, auto: true, printKey: "P1" });
+    const error = watch({ kind: "error", repeat: true, auto: true, printKey: "P1" });
+    const err = { attr: 0x05000200, code: 0x0003000a };
+    // Its own print, its own end included.
+    expect(evaluateWatch(state, st({}), st({ gcode_state: "FINISH" }), ctx())).toContain(
+      "printing to finished",
+    );
+    expect(evaluateWatch(error, st({}), st({ hms: [err] }), ctx())).not.toBeNull();
+    // Idle afterwards, and the next print.
+    expect(evaluateWatch(error, st({}), st({ hms: [err] }), ctx(""))).toBeNull();
+    expect(
+      evaluateWatch(
+        state,
+        st({ gcode_state: "FINISH" }),
+        st({ gcode_state: "PREPARE" }),
+        ctx("P2"),
+      ),
+    ).toBeNull();
+    expect(evaluateWatch(state, st({}), st({ gcode_state: "FINISH" }), ctx("P2"))).toBeNull();
+    // One set by hand with no print covers every print.
+    const any = watch({ kind: "state", repeat: true });
+    expect(evaluateWatch(any, st({}), st({ gcode_state: "FINISH" }), ctx("P2"))).not.toBeNull();
+  });
+
+  test("a new print retires the watches bound to earlier ones", () => {
+    const dir = mkdtempSync(join(tmpdir(), "printer-watches-"));
+    const store = new PrinterStore(dir);
+    try {
+      const old = ["state", "error", "finish"].map(
+        (kind) =>
+          store.addWatch({
+            sessionKey: "s",
+            kind: kind as Watch["kind"],
+            printKey: "P1",
+            auto: true,
+            repeat: kind !== "finish",
+          }).id,
+      );
+      const mine = store.addWatch({
+        sessionKey: "s",
+        kind: "state",
+        printKey: "P2",
+        auto: true,
+        repeat: true,
+      }).id;
+      const unbound = store.addWatch({ sessionKey: "s", kind: "error", repeat: true }).id;
+      store.retireEarlierPrintWatches("P2");
+      const active = store.activeWatches().map((w) => w.id);
+      expect(active).toEqual([mine, unbound]);
+      expect(old.some((id) => active.includes(id))).toBe(false);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("error fires on a new code only, in Bambu's words", () => {

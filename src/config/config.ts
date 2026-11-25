@@ -129,9 +129,10 @@ export const ConfigSchema = z.object({
   identity: z.object({
     names: z.array(z.string()).default(["claude"]),
   }),
-  /** The human operator who runs this assistant. Surfaced in the system prompt
-   *  (e.g. "an AI that <name> built") via the `{{owner}}` token; empty ⇒ the
-   *  prompt falls back to the generic "your operator". */
+  /** The human operator who runs this assistant. The system prompt tells the
+   *  assistant who that is via the `{{owner}}` token, and tells it not to give
+   *  the name out when it explains itself; empty ⇒ the prompt falls back to
+   *  the generic "your operator". */
   owner: z
     .object({
       name: z.string().default(""),

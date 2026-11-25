@@ -14,6 +14,7 @@ import { recordSpend } from "../spend/ledger.ts";
  *   format  — obeys the iMessage hard limits (no markdown, no bullet
  *             spam, no section labels, no em-dashes)
  *   length  — texting-sized replies; long only when depth was asked for
+ *             or the message plainly needed it
  *   persona — sounds like Edmund texting a friend, not an assistant
  */
 
@@ -38,7 +39,8 @@ ${OUTPUT_RULES}
 Score three axes, each an integer 1-10 (10 = flawless, 5 = clearly flawed, 1 = egregious):
 - "format": hard-limit compliance — markdown characters, bullet lists without being asked,
   section labels, em-dashes, multi-bubble structure abuse.
-- "length": replies sized like texts; long answers only where the human asked for depth.
+- "length": replies sized like texts, one to three sentences; long only where the human asked
+  for depth or the message plainly needed it (the contract's on-the-go rule).
 - "persona": voice — texting a friend vs assistant-speak ("Let me know if...", "I'd be happy to..."),
   hedging boilerplate, narrating tools, breaking character.
 

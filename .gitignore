@@ -105,6 +105,9 @@ skills/lancaster-loop/
 # Written by Edmund in the operator's DM and scoped to it: it drives a CLI in
 # that DM's sandbox, whose path carries the operator's phone number.
 skills/draftkings/
+# How this deployment's assistant explains itself: its own talking points,
+# with figures from one live deployment. Pointed at from persona/IDENTITY.md.
+skills/explain-yourself/
 skills/radaromega/scripts/.cams511.json
 skills/radaromega/scripts/.stations.json
 
