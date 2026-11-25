@@ -182,7 +182,36 @@ export type AutoRecallResult = {
   embedMs: number;
   /** Vector search duration (ms). 0 when no search ran. */
   searchMs: number;
+  /** Set when recall could not run for this message. The result is still
+   *  empty, because a reply never waits on recall, but it is not the same as
+   *  nothing found: a broken embedder read as "no subject" in the log for
+   *  364 turns in autumn 2026 before anyone looked. */
+  error?: string;
 };
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+/**
+ * The recall part of the daemon's one-line inbound log: hits by lane, a
+ * search that found nothing, a search that could not run, or nothing at all
+ * when the message had no subject to look up.
+ */
+export function recallLogSegment(
+  result: Pick<AutoRecallResult, "embedMs" | "searchMs" | "error">,
+  total: number,
+  lanes: string[],
+): string {
+  if (result.error) return "recall=ERR";
+  if (total > 0) {
+    return `recall=${total}[${lanes.join("/")}] (${result.embedMs}+${result.searchMs}ms)`;
+  }
+  if (result.embedMs > 0 || result.searchMs > 0) {
+    return `recall=0 (${result.embedMs}+${result.searchMs}ms)`;
+  }
+  return "";
+}
 
 const EMPTY: AutoRecallResult = {
   senderInChat: [],
@@ -216,8 +245,12 @@ export async function autoRecall(
     const r = await embedQuery(provider, [text]);
     if (r.vectors.length === 0) return EMPTY;
     qvec = normalize(r.vectors[0]!);
-  } catch {
-    return EMPTY;
+  } catch (error) {
+    return {
+      ...EMPTY,
+      embedMs: Date.now() - embedStart,
+      error: `embed: ${describeError(error)}`,
+    };
   }
   const embedMs = Date.now() - embedStart;
   const searchStart = Date.now();
@@ -271,8 +304,13 @@ export async function autoRecall(
       contextCutoffMs: opts.contextCutoffMs,
       outsideContextBoost: opts.outsideContextBoost,
     });
-  } catch {
-    return EMPTY;
+  } catch (error) {
+    return {
+      ...EMPTY,
+      embedMs,
+      searchMs: Date.now() - searchStart,
+      error: `search: ${describeError(error)}`,
+    };
   }
   recent = recent
     .filter((h) => !opts.excludeRefs?.has(h.ref) && !isLiveProfileChunk(h.ref))

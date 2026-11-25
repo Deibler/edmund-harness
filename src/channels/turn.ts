@@ -39,7 +39,7 @@ import { integrationExport } from "../integrations/optional.ts";
 import { isTranscribableMedia, isVideoPath } from "../media/media-kind.ts";
 import { AUTO_TRANSCRIBE_MAX_DURATION_S, sttBackend } from "../media/transcribe.ts";
 import { describeVideo } from "../media/video-probe.ts";
-import type { AutoRecallResult } from "../memory/auto-recall.ts";
+import { type AutoRecallResult, recallLogSegment } from "../memory/auto-recall.ts";
 import { type ModelBackend, backendForModel, transitionModelSession } from "../model/backend.ts";
 import { modelProfileForSession } from "../model/profile.ts";
 import { compactConfigFor, dropRefusedThread, runModel } from "../model/runner.ts";
@@ -1158,6 +1158,12 @@ async function handleBatchInner(
     let autoRecallDeepLines: string[] | undefined;
     let autoRecallTimeLines: string[] | undefined;
     const recallResult = await autoRecallPromise;
+    if (recallResult.error) {
+      log.warn("recall", "recall could not run for this message; replying without it", {
+        session: shortSession(key),
+        err: recallResult.error,
+      });
+    }
     if (recallResult.timeScopedLines.length > 0) autoRecallTimeLines = recallResult.timeScopedLines;
     if (recallResult.senderInChatLines.length > 0)
       autoRecallSenderLines = recallResult.senderInChatLines;
@@ -1274,12 +1280,7 @@ async function handleBatchInner(
     if (autoRecallSenderLines?.length) recallBits.push(`${autoRecallSenderLines.length}s`);
     if (autoRecallLines?.length) recallBits.push(`${autoRecallLines.length}r`);
     if (autoRecallDeepLines?.length) recallBits.push(`${autoRecallDeepLines.length}d`);
-    const recallSeg =
-      recallTotal > 0
-        ? `recall=${recallTotal}[${recallBits.join("/")}] (${recallResult.embedMs}+${recallResult.searchMs}ms)`
-        : recallResult.embedMs > 0 || recallResult.searchMs > 0
-          ? `recall=0 (${recallResult.embedMs}+${recallResult.searchMs}ms)`
-          : "";
+    const recallSeg = recallLogSegment(recallResult, recallTotal, recallBits);
     const parts: string[] = [
       `${messages.length}msg${messages.length === 1 ? "" : "s"}`,
       `env=${envelope.length}ch ~${envTokens}tok`,

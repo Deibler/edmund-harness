@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { INDEX_EMBED_BATCH, TransformersEmbedProvider } from "../src/memory/embed-provider.ts";
 
-const workerUrl = new URL("./fixtures/fake-embed-worker.ts", import.meta.url);
+const workerUrl = new URL("./fixtures/fake-embed-child.ts", import.meta.url);
 let provider: TransformersEmbedProvider;
 
 afterEach(() => provider?.trimIdleWorker());
@@ -62,8 +62,8 @@ describe("local embedding batches", () => {
     expect(provider.trimIdleWorker()).toBe(false);
     provider.warm();
     provider.warm();
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    // The warm-up spawned the worker and finished, leaving it idle and loaded.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    // The warm-up started the process and finished, leaving it idle and loaded.
     expect(provider.trimIdleWorker()).toBe(true);
   });
 

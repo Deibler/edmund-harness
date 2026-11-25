@@ -18,7 +18,7 @@ speaking.
 | Requirement | Why | Check |
 |---|---|---|
 | macOS on Apple Silicon | Only configuration that has been run. Tested on macOS 26. | `sw_vers` |
-| Bun 1.2 or newer | Runtime for the daemon, CLI and dashboard | `bun --version` |
+| Bun 1.4.5 or newer | Runtime for the daemon, CLI and dashboard | `bun --version` |
 | Claude Code or Codex CLI, logged in | The chat brain. Install every provider you configure. Codex 0.147.0 or newer. | `claude --version`, `codex --version` |
 | Xcode Command Line Tools | Builds the bridge dylib | `xcode-select -p` |
 | Full Disk Access | Reading `chat.db` | System Settings, Privacy and Security |

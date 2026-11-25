@@ -71,7 +71,7 @@ learned the expensive way, most of which is not about messaging at all.
 - A Mac signed into Messages with the account the assistant will use. It has
   only been run on Apple Silicon and on macOS 26. Older releases may work;
   nobody has checked.
-- [Bun](https://bun.sh) 1.2 or newer.
+- [Bun](https://bun.sh) 1.4.5 or newer.
 - Claude Code, Codex CLI, or both, installed and logged in. Codex needs
   0.147.0 or newer.
 - Full Disk Access for your terminal and for `bun`, to read `chat.db`.

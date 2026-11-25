@@ -110,6 +110,38 @@ watchdog was first written on `process.ppid` and never fired; the test that
 caught it lets the watchdog run a while before killing the daemon, because a
 first read made after the parent died does return the new parent.
 
+## A Worker thread must not load a package
+On Bun 1.3.9, what a worker thread adds to the runtime's process-wide module
+cache dies once workers are created and terminated. The recall embedder was a
+worker that loaded `@huggingface/transformers` and was let go after a minute
+idle: the next one's import answered "Cannot find module" until the daemon
+restarted (four outages, 364 turns without recall, 2026-10-30 to 2026-11-16)
+or segfaulted the daemon (8 of the 13 crash reports in
+`data/launchd.err.log`). The package was on disk the whole time. Reproduced
+outside the daemon on 2026-11-25: 5 of 30 processes. Bun 1.4.5 did not
+reproduce it; 1.3.14 instead dies when a worker holding an ONNX model is
+terminated, so "a newer Bun" is not one thing.
+
+The embedder is a child process now (`src/memory/transformers-embed-child.ts`).
+Anything that needs a package or a native addon off the main thread goes in a
+process too; `tests/worker-thread-imports.test.ts` fails if a worker thread
+loads one. `scripts/bun-worker-churn/check.ts` tests a Bun before the daemon
+moves to it. The daemon moved to 1.4.5 on 2026-11-25; CI is pinned to match.
+
+A Homebrew upgrade moves the binary to a new path. That does not cost the
+daemon its privacy grants (Full Disk Access for `chat.db`, Accessibility,
+Automation): launchd starts it through `/bin/bash`, which holds them, and a
+1.4.5 binary at a path nothing had ever granted read `chat.db` under launchd
+(measured 2026-11-25). Grants made to the `bun` path itself are keyed to the
+versioned Cellar path and do not follow an upgrade, which matters only for a
+`bun` started outside launchd and outside a terminal that has its own.
+
+Two things about runtime crashes. The report is in `data/launchd.err.log`,
+not `daemon.log`; the boot after one now logs `[boot] the previous run ended
+in a runtime crash`. And a report decodes without the vendor's site: the
+`bun-darwin-aarch64-profile` release has the symbols, and the addresses in the
+`bun.report` link are VLQs relative to `0x100000000` for `atos`.
+
 ## `[security]` is the trust policy; tests build partial configs
 Host access, contact tier and the open-allowlist flags live in `[security]`
 (`src/security/policy.ts`). The helpers fail closed when the section is

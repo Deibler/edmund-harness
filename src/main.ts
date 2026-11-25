@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { finishedResult, isCompletionEvent, withInlineResults } from "./agents/messages.ts";
@@ -21,6 +21,7 @@ import {
   collectProcessTable,
   defaultFootprintReader,
 } from "./boot/resource-governor.ts";
+import { crashesSinceLastBoot, describeUptime } from "./boot/runtime-crash.ts";
 import { missingStorage } from "./boot/storage.ts";
 import { wireRecall } from "./boot/wire-recall.ts";
 import { wireRecovery } from "./boot/wire-recovery.ts";
@@ -110,7 +111,7 @@ import {
   warmOptionalExports,
 } from "./integrations/optional.ts";
 import { initRegistryFromConfig } from "./integrations/registry.ts";
-import { trimTransformerEmbeddingWorkers } from "./memory/embed-provider.ts";
+import { setEmbedHealthHook, trimTransformerEmbeddingWorkers } from "./memory/embed-provider.ts";
 import { guardTurnWorkers } from "./recovery/turn-workers.ts";
 import { RefreshWatcher, buildRefreshRepairEvent } from "./refresh/runner.ts";
 import { RefreshScriptStore } from "./refresh/store.ts";
@@ -120,6 +121,7 @@ import { defaultProbe } from "./triggers/evaluate.ts";
 import { DataTriggerStore } from "./triggers/store.ts";
 import { DataTriggerWatcher } from "./triggers/watcher.ts";
 import { installLogSink } from "./util/log-sink.ts";
+import { log } from "./util/log.ts";
 
 const CURSOR_KEY = "imessage_rowid";
 
@@ -327,6 +329,53 @@ async function main() {
     operatorHandle: config.alerts.operator_handle,
     minIntervalMinutes: config.alerts.min_interval_minutes,
     store: alertStore,
+  });
+  // Two failures that used to leave no trace in daemon.log. A runtime crash
+  // writes only to launchd's stderr, so the boot after it speaks for it. And
+  // an embedder that stays broken looked like messages with nothing to
+  // recall; now the operator hears about it, and about its end.
+  const { crashes, alert: alertCrash } = crashesSinceLastBoot({
+    stderrPath: join(config.paths.data_dir, "launchd.err.log"),
+    cursorPath: join(config.paths.data_dir, "runtime-crash-cursor.json"),
+    entry: "main.ts",
+  });
+  for (const crash of crashes) {
+    log.error("boot", "the previous run ended in a runtime crash", {
+      runtime: crash.runtime,
+      panic: crash.panic,
+      uptime: describeUptime(crash.uptimeMs),
+      report: crash.report ?? "none",
+    });
+  }
+  const lastCrash = crashes.at(-1);
+  if (lastCrash && alertCrash) {
+    void alert.notify({
+      category: "runtime-crash",
+      error: `${lastCrash.runtime} crashed and the daemon was restarted: ${lastCrash.panic}`,
+      context: { crashes: crashes.length, uptime: describeUptime(lastCrash.uptimeMs) },
+    });
+  }
+  setEmbedHealthHook((event) => {
+    const minutes = Math.round(event.failingForMs / 60_000);
+    if (event.kind === "recovered") {
+      log.info("recall", "the embedder is working again", {
+        model: event.model,
+        failures: event.failures,
+        minutes,
+      });
+      return;
+    }
+    log.error("recall", "the embedder keeps failing; replies are going out without recall", {
+      model: event.model,
+      failures: event.failures,
+      minutes,
+      err: event.error,
+    });
+    void alert.notify({
+      category: "recall-embedder",
+      error: `Recall is off: the embedder has failed ${event.failures} times in a row. ${event.error}`,
+      context: { model: event.model, minutes },
+    });
   });
   // Guest gate context for shouldAccept: the store plus the activation
   // alert ("<label> key activated by <handle>").

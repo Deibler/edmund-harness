@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autoRecall } from "../src/memory/auto-recall.ts";
+import { autoRecall, recallLogSegment } from "../src/memory/auto-recall.ts";
 import { HashEmbedProvider } from "../src/memory/embed-provider.ts";
 import { type IndexRow, VectorStore, normalize } from "../src/memory/vector-store.ts";
 
@@ -249,5 +249,63 @@ describe("autoRecall", () => {
     } finally {
       cleanup();
     }
+  });
+});
+
+describe("recall that could not run", () => {
+  const opts = { chatGuid: "chatA", limit: 10, minScore: 0.1, excludeRecentMs: 0 };
+
+  test("a broken embedder is reported, not passed off as nothing found", async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const broken = new HashEmbedProvider(64);
+      broken.embed = async () => {
+        throw new Error("Cannot find module '@huggingface/transformers'");
+      };
+      const r = await autoRecall("which restaurant had the patio", broken, store, opts);
+      // Still empty: a reply never waits on recall.
+      expect(r.recent).toEqual([]);
+      expect(r.recentLines).toEqual([]);
+      expect(r.error).toContain("embed: Error: Cannot find module");
+      expect(recallLogSegment(r, 0, [])).toBe("recall=ERR");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a search that fails is reported too", async () => {
+    const { store, cleanup } = tempStore();
+    const provider = new HashEmbedProvider(64);
+    store.close();
+    try {
+      const r = await autoRecall("which restaurant had the patio", provider, store, opts);
+      expect(r.error).toStartWith("search: ");
+      expect(recallLogSegment(r, 0, [])).toBe("recall=ERR");
+    } finally {
+      try {
+        cleanup();
+      } catch {}
+    }
+  });
+
+  test("a message with no subject, and a search that found nothing, are not errors", async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const provider = new HashEmbedProvider(64);
+      const noSubject = await autoRecall("hi", provider, store, opts);
+      expect(noSubject.error).toBeUndefined();
+      expect(recallLogSegment(noSubject, 0, [])).toBe("");
+      const nothing = await autoRecall("which restaurant had the patio", provider, store, opts);
+      expect(nothing.error).toBeUndefined();
+      expect(recallLogSegment({ embedMs: 3, searchMs: 12 }, 0, [])).toBe("recall=0 (3+12ms)");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("hits are logged by lane", () => {
+    expect(recallLogSegment({ embedMs: 4, searchMs: 96 }, 5, ["2s", "3r"])).toBe(
+      "recall=5[2s/3r] (4+96ms)",
+    );
   });
 });
