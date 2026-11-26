@@ -31,6 +31,7 @@ import {
   scanFolder,
 } from "../src/security/watch/gate.ts";
 import { readWatchState, updateWatchState } from "../src/security/watch/state.ts";
+import { doorPolicy } from "../src/watch/doors.ts";
 import { type Incident, alertMarker, alertText, readReply } from "../src/watch/incidents.ts";
 import { parseVerdict } from "../src/watch/judge.ts";
 import { type Shell, lockdownOff, lockdownOn } from "../src/watch/lockdown.ts";
@@ -149,6 +150,59 @@ describe("the publish gate", () => {
       now,
     );
     expect(isRegisteredTarget(dataDir, "http://127.0.0.1:62294/", now + 120_000)).toBe(true);
+  });
+});
+
+describe("a door that did not come through the gate", () => {
+  const listener = { command: "bun", pid: 1, address: "*", port: 3000 };
+  const quick = { pid: 2, kind: "quick" as const, target: "http://127.0.0.1:3000" };
+  const nobody = { registered: false, managed: false, assistants: false };
+
+  test("the assistant's own is closed and the operator is texted", () => {
+    expect(doorPolicy({ listener }, { ...nobody, assistants: true })).toEqual({
+      act: "raise",
+      tier: "serious",
+      close: true,
+      confirmAfterMs: 0,
+    });
+    expect(doorPolicy({ tunnel: quick }, { ...nobody, assistants: true })).toMatchObject({
+      close: true,
+    });
+  });
+
+  test("anyone's tunnel is the internet: texted, and left alone", () => {
+    expect(doorPolicy({ tunnel: quick }, nobody)).toEqual({
+      act: "raise",
+      tier: "serious",
+      close: false,
+      confirmAfterMs: 0,
+    });
+  });
+
+  test("someone else's listener is only put on the record, and only if it lasts", () => {
+    // The operator's dev server, or a test: Bun.serve listens on every interface by default.
+    expect(doorPolicy({ listener }, nobody)).toEqual({
+      act: "raise",
+      tier: "notable",
+      close: false,
+      confirmAfterMs: 20_000,
+    });
+  });
+
+  test("what the gate wrote down, a service of this checkout, and macOS's own are not doors", () => {
+    expect(doorPolicy({ tunnel: quick }, { ...nobody, registered: true })).toEqual({
+      act: "ignore",
+    });
+    expect(doorPolicy({ listener }, { ...nobody, managed: true })).toEqual({ act: "ignore" });
+    expect(
+      doorPolicy(
+        { listener: { ...listener, command: "rapportd" } },
+        { ...nobody, assistants: true },
+      ),
+    ).toEqual({
+      act: "ignore",
+    });
+    expect(doorPolicy({}, nobody)).toEqual({ act: "ignore" });
   });
 });
 

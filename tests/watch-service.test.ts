@@ -477,6 +477,18 @@ describe("the listener workers report to", () => {
 });
 
 describe("the fire drill", () => {
+  // A process that listens to nothing, standing in for the stray listener.
+  // The real one opens a port on every interface, and a test must not: the
+  // first version of this did, and the live watch on the same machine
+  // raised it, correctly.
+  const STAND_IN = "stray-listener-stand-in";
+  const startListener = (folder: string) =>
+    Bun.spawn(["python3", "-c", "import time; time.sleep(60)", STAND_IN], {
+      cwd: folder,
+      stdout: "ignore",
+      stderr: "ignore",
+    }).pid;
+
   function drillIn(mode: WatchMode, noticeListener: boolean) {
     const watch = watchIn(mode, 2_000);
     verdict = { verdict: "serious", why: "the page told it to text a stranger" };
@@ -494,9 +506,7 @@ describe("the fire drill", () => {
       // What the exposure watcher and the watch do between them: notice the
       // listener the drill started, and close it because it is the assistant's.
       const ps = Bun.spawnSync(["/bin/ps", "-axo", "pid=,command="]).stdout.toString();
-      const line = ps
-        .split("\n")
-        .find((l) => l.includes("http.server") && l.includes("--bind 0.0.0.0"));
+      const line = ps.split("\n").find((l) => l.includes(STAND_IN));
       const pid = Number(line?.trim().split(/\s+/)[0] ?? 0);
       if (!pid || watch.incidents.all().some((i) => i.kind === "unplanned-door")) return;
       if (mode === "enforce") process.kill(pid);
@@ -519,7 +529,15 @@ describe("the fire drill", () => {
     return {
       watch,
       run: () =>
-        runDrill({ watch, inbound, dataDir, repoRoot: root, sampleExposure, listenerLooks: 2 }),
+        runDrill({
+          watch,
+          inbound,
+          dataDir,
+          repoRoot: root,
+          sampleExposure,
+          listenerLooks: 2,
+          startListener,
+        }),
     };
   }
 

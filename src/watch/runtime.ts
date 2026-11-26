@@ -29,6 +29,7 @@ import { chatIdFromKey, isGroupSession } from "../sessions/key.ts";
 import { currentBlocks, unblock, useBlocklist } from "../util/blocklist.ts";
 import { log } from "../util/log.ts";
 import { ChangeWatch } from "./changes.ts";
+import { doorPolicy } from "./doors.ts";
 import { DRILL_FOLDER, drillSummary, lastDrillAt, runDrill } from "./drill.ts";
 import { InboundWatch } from "./inbound-watch.ts";
 import {
@@ -78,28 +79,6 @@ export type WatchRuntime = {
   setExposureSampler: (sample: () => Promise<void>) => void;
   stop: () => Promise<void>;
 };
-
-/**
- * Listeners macOS opens for its own services (AirPlay, Handoff, Screen
- * Sharing). They come and go on ports of their choosing, and are not doors
- * anyone here opened.
- */
-const SYSTEM_LISTENERS = new Set([
-  "rapportd",
-  "ControlCenter",
-  "ARDAgent",
-  "sharingd",
-  "AirPlayXPCHelper",
-  "identityservicesd",
-  "mDNSResponder",
-  "launchd",
-  "UniversalControl",
-  "remoted",
-  "screensharingd",
-  "cupsd",
-  "sshd",
-  "smbd",
-]);
 
 /** The launchd label that started a process, when one did. */
 function launchdLabel(pid: number): string | null {
@@ -251,12 +230,6 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
     if (mode === "off") return;
     const pid = opened.tunnel?.pid ?? opened.listener?.pid ?? 0;
     if (!pid) return;
-    if (opened.listener && SYSTEM_LISTENERS.has(opened.listener.command)) return;
-    if (opened.tunnel?.kind === "quick" && isRegisteredTarget(dataDir, opened.tunnel.target))
-      return;
-    // A service this checkout installed (the dashboard, the portal's tunnel) restarting.
-    if (launchdLabel(pid)) return;
-
     const what = opened.tunnel
       ? `a ${opened.tunnel.kind} tunnel to ${opened.tunnel.target}`
       : `${opened.listener!.command} listening on every interface, port ${opened.listener!.port}`;
@@ -268,12 +241,30 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
     const cwd = cwdOf(pid);
     const assistants =
       cwd !== "" && sandboxes.some((root) => cwd === root || cwd.startsWith(`${root}/`));
+    const policy = doorPolicy(opened, {
+      registered:
+        opened.tunnel?.kind === "quick" && isRegisteredTarget(dataDir, opened.tunnel.target),
+      managed: launchdLabel(pid) !== null,
+      assistants,
+    });
+    if (policy.act === "ignore") return;
+    if (policy.confirmAfterMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, policy.confirmAfterMs));
+      try {
+        process.kill(pid, 0);
+      } catch {
+        log.event("security", "watch", `${what}, and closed again within twenty seconds`, {
+          kind: "door-brief",
+        });
+        return;
+      }
+    }
     const incident: Incident = {
       id: newIncidentId(),
       at: Date.now(),
       where: cwd ? `started in ${cwd}` : `pid ${pid}`,
       kind: "unplanned-door",
-      tier: "serious",
+      tier: policy.tier,
       what: `${what} was opened without going through the publish gate`,
       verdict: "rule",
       judged: "",
@@ -283,12 +274,12 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
       status: "open",
       ...(cwd.includes(`/${DRILL_FOLDER}`) ? { drill: true as const } : {}),
     };
-    if (assistants && mode === "enforce") {
+    if (policy.close && mode === "enforce") {
       const command = runShell(["/bin/ps", "-o", "command=", "-p", String(pid)]).out;
       const closed = runShell(["kill", String(pid)]).ok;
       incident.did.push(closed ? "closed it" : "could not close it");
       if (closed && command) incident.undo.push({ kind: "restart", detail: what, command });
-    } else if (!assistants) {
+    } else if (!policy.close) {
       incident.did.push("left it open: it was not started from one of the assistant's folders");
     }
     await watch.record(incident);

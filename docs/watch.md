@@ -140,8 +140,12 @@ It works with the daemon down: the flag is a file every process reads.
 
 A tunnel or a non-loopback listener that appears without being written down
 is an incident. If it was started from one of the assistant's sandbox folders
-it is closed, with its command saved. If not, it is reported and left alone:
-the operator works on this machine too.
+it is closed, with its command saved, and you are texted. A tunnel anyone
+else opened is texted and left alone. A listener anyone else opened is only
+put on the record, and only if it is still there twenty seconds later: it
+reaches the local network, not the internet, and the operator runs dev
+servers on this machine too. (A server made with `Bun.serve` listens on every
+interface unless told otherwise.)
 
 A file published with `shelve` is read the same way, and refused if it holds
 a secret.

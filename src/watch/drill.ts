@@ -51,7 +51,23 @@ export type DrillDeps = {
   sampleExposure: () => Promise<void>;
   /** How many times to look for the stray listener, two seconds apart. */
   listenerLooks?: number;
+  /**
+   * Start the stray listener and return its pid. The real one binds every
+   * interface for the few seconds the scenario lasts, which is the point of
+   * it. A test must pass a stand-in: on 2026-11-25 the test suite started
+   * the real one, and the live watch on the same machine texted the
+   * operator about it, correctly.
+   */
+  startListener?: (folder: string, port: number) => number;
 };
+
+function realListener(folder: string, port: number): number {
+  return Bun.spawn(["python3", "-m", "http.server", String(port), "--bind", "0.0.0.0"], {
+    cwd: folder,
+    stdout: "ignore",
+    stderr: "ignore",
+  }).pid;
+}
 
 const LIMIT_MS = 60_000;
 /** Where the drill's listener is started: under the assistant's sandboxes, so it counts as the assistant's. */
@@ -164,12 +180,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult[]> {
       // A baseline first, so that what is started next is new.
       await deps.sampleExposure();
       const port = 49_000 + Math.floor(Math.random() * 900);
-      const proc = Bun.spawn(["python3", "-m", "http.server", String(port), "--bind", "0.0.0.0"], {
-        cwd: folder,
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      pid = proc.pid;
+      pid = (deps.startListener ?? realListener)(folder, port);
       await wait(1_500);
       const noticed = async () => {
         await deps.sampleExposure();

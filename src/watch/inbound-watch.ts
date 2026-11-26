@@ -171,8 +171,17 @@ export class InboundWatch {
     };
     every(10_000, () => void this.pump());
     every(10 * 60_000, () => this.saveBaseline());
-    every(3_600_000, () => void this.refresh());
-    void this.refresh();
+    // Hourly once everything is in hand; every few minutes until then. Not
+    // at the instant of starting: the daemon's first minute is busy enough
+    // that both the table download and the address lookup timed out
+    // (measured 2026-11-25), and an hour is a long time to wait to retry.
+    let lastTry = 0;
+    every(90_000, () => {
+      const complete = this.reputation.loaded.asn !== undefined && this.self.v4.length > 0;
+      if (this.now() - lastTry < (complete ? 3_600_000 : 5 * 60_000)) return;
+      lastTry = this.now();
+      void this.refresh();
+    });
   }
 
   stop(): void {
