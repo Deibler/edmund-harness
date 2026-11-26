@@ -134,6 +134,8 @@ It works with the daemon down: the flag is a file every process reads.
    that holds credentials (`.env`, `*.token`, a private key, `.git`, a link
    out of the folder) or contain a canary, a real credential or a vendor's key
    format.
+   A share that asks for longer is not started, and the operator is texted
+   the question once; `OK <id>` lets that folder through from then on.
 2. **Before the tunnel.** The door is written down by port.
 3. **After the tunnel is up.** The address is fetched with no key and must be
    refused.

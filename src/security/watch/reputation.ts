@@ -15,10 +15,9 @@
  *
  * IPv4 only. An IPv6 visitor is judged on what it does.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { atomicWriteFileSync } from "../../util/atomic-write.ts";
 
 type NetworkKind = "hosting" | "provider" | "tor" | "unknown";
 export type Standing = {
@@ -147,6 +146,8 @@ export class Reputation {
   private asn: AsnTable | null = null;
   /** What was loaded, for the log. */
   readonly loaded: Record<string, number> = {};
+  /** Lists that are on disk and could not be read, with why. */
+  unreadable: { name: string; why: string }[] = [];
 
   constructor(private readonly dir: string) {
     this.reload();
@@ -155,6 +156,7 @@ export class Reputation {
   /** Read whatever lists are in the folder. A missing list is simply not consulted. */
   reload(): void {
     this.lists = [];
+    this.unreadable = [];
     for (const source of REPUTATION_SOURCES) {
       const path = join(this.dir, source.file);
       if (!existsSync(path)) continue;
@@ -168,8 +170,9 @@ export class Reputation {
           if (source.name === "tor-exit") this.tor = ranges;
           else this.lists.push([source.name, ranges]);
         }
-      } catch {
-        // A list that does not read is not consulted; the next download replaces it.
+      } catch (err) {
+        // Not consulted until the next download replaces it, and said so.
+        this.unreadable.push({ name: source.name, why: (err as Error).message.slice(0, 120) });
       }
     }
   }
@@ -206,29 +209,51 @@ export class Reputation {
 const REFRESH_MS = 24 * 3_600_000;
 
 /**
- * Download every list that is missing or more than a day old. Returns the
- * names that were replaced. A download that fails leaves the old copy.
+ * Put a download in place whole or not at all. Not `atomicWriteFileSync`:
+ * that refuses anything over a megabyte, a guard for memory files, and the
+ * address table is 8.7 MB. It refused the table on the first live run, and
+ * a bare `catch` here hid that for an hour.
+ */
+function saveDownload(path: string, body: Buffer): void {
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, body);
+  renameSync(tmp, path);
+}
+
+export type Refreshed = { replaced: string[]; failed: { name: string; why: string }[] };
+
+/**
+ * Download every list that is missing or more than a day old. A download
+ * that fails leaves the old copy, and is reported: a list that silently
+ * never arrives is a lookup that silently never matches.
  */
 export async function refreshReputation(
   dir: string,
   fetcher: typeof fetch = fetch,
   now: number = Date.now(),
-): Promise<string[]> {
+): Promise<Refreshed> {
   const replaced: string[] = [];
+  const failed: Refreshed["failed"] = [];
   for (const source of REPUTATION_SOURCES) {
     const path = join(dir, source.file);
     try {
       if (existsSync(path) && now - statSync(path).mtimeMs < REFRESH_MS) continue;
-      const res = await fetcher(source.url, { signal: AbortSignal.timeout(60_000) });
-      if (!res.ok) continue;
+      const res = await fetcher(source.url, { signal: AbortSignal.timeout(120_000) });
+      if (!res.ok) {
+        failed.push({ name: source.name, why: `answered ${res.status}` });
+        continue;
+      }
       const body = Buffer.from(await res.arrayBuffer());
       // An error page is not a list.
-      if (body.length < 200) continue;
-      atomicWriteFileSync(path, body);
+      if (body.length < 200) {
+        failed.push({ name: source.name, why: `only ${body.length} bytes came back` });
+        continue;
+      }
+      saveDownload(path, body);
       replaced.push(source.name);
-    } catch {
-      // Tomorrow.
+    } catch (err) {
+      failed.push({ name: source.name, why: (err as Error).message.slice(0, 160) });
     }
   }
-  return replaced;
+  return { replaced, failed };
 }

@@ -22,7 +22,7 @@ import {
 import { isOperatorHandle } from "../security/policy.ts";
 import { plantCanaries } from "../security/watch/canary.ts";
 import type { Listener, Tunnel } from "../security/watch/exposure.ts";
-import { isRegisteredTarget } from "../security/watch/gate.ts";
+import { isRegisteredTarget, longSharePattern } from "../security/watch/gate.ts";
 import { readWatchState, updateWatchState, watchDir } from "../security/watch/state.ts";
 import type { ContactBook } from "../sessions/contacts.ts";
 import { chatIdFromKey, isGroupSession } from "../sessions/key.ts";
@@ -365,6 +365,34 @@ export function startWatch(deps: WatchRuntimeDeps): WatchRuntime {
       case "reload":
         watch.reloadSecrets();
         return { ok: true };
+      case "long-share": {
+        // The publish gate refused a share that asked to stay up past the
+        // limit. Only the operator can allow that, so they are asked once.
+        const folder = String(body.folder ?? "");
+        const minutes = Number(body.minutes ?? 0);
+        const pattern = longSharePattern(folder);
+        const open = watch.incidents.open().find((i) => i.pattern === pattern);
+        if (open) return { ok: true, id: open.id };
+        const asked: Incident = {
+          id: newIncidentId(),
+          at: Date.now(),
+          where: `the publish gate, for ${folder.split("/").slice(-2).join("/")}`,
+          kind: "long-share",
+          tier: "serious",
+          what:
+            minutes > 0
+              ? `a share asks to stay up ${Math.round(minutes / 1440)} days, and shares expire within ${config.watch.max_share_days}`
+              : `a share asks never to expire, and shares expire within ${config.watch.max_share_days} days`,
+          verdict: "rule",
+          judged: "",
+          pattern,
+          did: ["did not start it"],
+          undo: [],
+          status: "open",
+        };
+        await watch.record(asked);
+        return { ok: true, id: asked.id };
+      }
       case "drill":
         return { ok: true, mode, results: await drill(String(body.by ?? "the command line")) };
       default:

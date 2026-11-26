@@ -202,10 +202,16 @@ export class InboundWatch {
   /** Fetch the lists that are a day old, and find this machine's own addresses again. */
   async refresh(): Promise<void> {
     const fetcher = this.deps.fetch ?? fetch;
-    const replaced = await refreshReputation(this.dir, fetcher, this.now());
+    const { replaced, failed } = await refreshReputation(this.dir, fetcher, this.now());
     if (replaced.length > 0 || !existsSync(selfFile(this.deps.dataDir))) {
       this.reputation.reload();
       log.info("watch", "reputation lists loaded", this.reputation.loaded);
+    }
+    for (const f of failed) {
+      log.warn("watch", `reputation list ${f.name} could not be fetched`, { why: f.why });
+    }
+    for (const f of this.reputation.unreadable) {
+      log.warn("watch", `reputation list ${f.name} could not be read`, { why: f.why });
     }
     const self = await discoverSelf(fetcher);
     if (self.v4.length + self.v6.length > 0) {

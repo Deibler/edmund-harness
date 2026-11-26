@@ -16,8 +16,10 @@
  */
 import { resolve } from "node:path";
 import { loadConfig } from "../src/config/config.ts";
+import { readWatchAddress } from "../src/security/watch/address.ts";
 import { loadSecrets } from "../src/security/watch/canary.ts";
 import { expiryProblem, registerDoor, scanFolder } from "../src/security/watch/gate.ts";
+import { askWatch } from "../src/watch/server.ts";
 
 const REPO = resolve(import.meta.dir, "..");
 const [command, ...rest] = process.argv.slice(2);
@@ -38,7 +40,25 @@ if (command === "check") {
   const minutes = Number(flag("expire") ?? Number.NaN);
   const problems: string[] = [];
   const expiry = expiryProblem(minutes, config.watch.max_share_days, folder, dataDir);
-  if (expiry) problems.push(expiry);
+  if (expiry) {
+    problems.push(expiry);
+    // Longer needs the operator's yes: the running watch texts them the
+    // question, and their OK is what lets this folder through next time.
+    const asked = (await askWatch(
+      readWatchAddress(dataDir),
+      "long-share",
+      { folder, minutes },
+      10_000,
+    )) as {
+      ok?: boolean;
+      id?: string;
+    } | null;
+    if (asked?.ok && asked.id) {
+      problems.push(
+        `the operator has been asked (incident ${asked.id}); share again once they answer OK`,
+      );
+    }
+  }
   for (const p of scanFolder(folder, loadSecrets(config, dataDir, REPO))) {
     problems.push(`${p.file} ${p.why}`);
   }

@@ -99,31 +99,47 @@ describe("reputation, from lists kept on this machine", () => {
       network: "tor",
     });
     expect(reputation.lookup("203.0.113.5").listed).toEqual(["spamhaus-drop"]);
+    // A list that is on disk and does not read is said, not skipped in silence.
+    writeFileSync(join(dir, "ip2asn-v4.tsv.gz"), "this is not gzip");
+    const broken = new Reputation(dir);
+    expect(broken.unreadable.map((u) => u.name)).toEqual(["asn"]);
+    expect(broken.lookup("192.0.2.44").network).toBe("unknown");
     // Never an outside visitor, whatever a list says.
     expect(reputation.lookup("192.168.1.10")).toEqual(NOBODY);
     expect(reputation.lookup("2001:db8::1")).toEqual(NOBODY);
     expect(parseAsnTable("1.2.3.0\t1.2.3.255\t0\tNone\tNot routed").starts.length).toBe(0);
   });
 
-  test("a list is fetched when it is missing or a day old, and an error page is not a list", async () => {
+  test("a list is fetched when it is missing or a day old, and what failed is said", async () => {
     const dir = join(root, "reputation");
     mkdirSync(dir, { recursive: true });
     const asked: string[] = [];
+    // The address table is 8.7 MB. The shared file writer refuses anything
+    // over 1 MB, and the first live run lost the table to that in silence.
+    const table = gzipSync(
+      Buffer.alloc(3 * 1024 * 1024, "192.0.2.0\t192.0.2.255\t64500\tUS\tEXAMPLE\n"),
+      { level: 0 },
+    );
+    expect(table.length).toBeGreaterThan(2 * 1024 * 1024);
     const fetcher = (async (url: string) => {
       asked.push(url);
       if (url.includes("torproject")) return new Response("nope", { status: 200 });
-      if (url.includes("iptoasn")) return new Response("gone", { status: 404 });
+      if (url.includes("firehol")) return new Response("gone", { status: 404 });
+      if (url.includes("iptoasn")) return new Response(table);
       return new Response(`${"203.0.113.0/24\n".repeat(20)}`);
     }) as unknown as typeof fetch;
-    expect((await refreshReputation(dir, fetcher, T0)).sort()).toEqual([
-      "firehol-level1",
-      "spamhaus-drop",
+    const first = await refreshReputation(dir, fetcher, T0);
+    expect(first.replaced.sort()).toEqual(["asn", "spamhaus-drop"]);
+    expect(first.failed).toEqual([
+      { name: "firehol-level1", why: "answered 404" },
+      { name: "tor-exit", why: "only 4 bytes came back" },
     ]);
     expect(asked).toHaveLength(4);
+    expect(new Reputation(dir).loaded.asn).toBeGreaterThan(0);
     // An hour later only what failed is asked for again.
     asked.length = 0;
     await refreshReputation(dir, fetcher, Date.now() + 3_600_000);
-    expect(asked.some((u) => u.includes("spamhaus"))).toBe(false);
+    expect(asked.some((u) => u.includes("spamhaus") || u.includes("iptoasn"))).toBe(false);
     expect(asked.some((u) => u.includes("torproject"))).toBe(true);
   });
 });
